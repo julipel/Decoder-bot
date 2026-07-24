@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dekoder"
+version = "0.1.0"
+description = "MVP персонального AI-ассистента «Декодер» — модульный монолит (Clean Architecture / Ports & Adapters)"
+requires-python = ">=3.11"
+# Зависимости намеренно не зафиксированы на этом шаге (создаётся структура
+# проекта, установка пакетов не выполняется). Ожидаемые на этапе реализации:
+# fastapi, uvicorn, библиотека клиента Telegram Bot API (не выбрана в
+# утверждённых документах), qdrant-client, httpx (клиенты YandexGPT/OpenAI),
+# argon2-cffi или passlib (хеширование пароля администратора, docs/02, §13).
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]

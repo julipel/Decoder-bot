@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+.env.local
+.env.production
+.env.test
+uv.lock
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+data/
+*.sqlite3
+.DS_Store
