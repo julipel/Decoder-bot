@@ -7,7 +7,10 @@
 
 from __future__ import annotations
 
-from dekoder.modules.knowledge_base.application.ports import CaseRepositoryPort, DocumentRepositoryPort
+from dekoder.modules.knowledge_base.application.ports import (
+    CaseRepositoryPort,
+    DocumentRepositoryPort,
+)
 from dekoder.modules.knowledge_base.domain.case import Case
 from dekoder.modules.knowledge_base.domain.document import Document
 

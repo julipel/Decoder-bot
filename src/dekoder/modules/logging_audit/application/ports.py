@@ -11,8 +11,12 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from dekoder.modules.logging_audit.domain.entries import (
+    AuditEntry,
+    SystemEventEntry,
+    TechnicalLogEvent,
+)
 from dekoder.shared.domain.identifiers import CorrelationId
-from dekoder.modules.logging_audit.domain.entries import AuditEntry, SystemEventEntry, TechnicalLogEvent
 
 
 class LoggerPort(Protocol):

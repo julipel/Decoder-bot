@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-from dekoder.shared.domain.identifiers import CaseId, DocumentId
 from dekoder.modules.knowledge_base.application.ports import (
     CaseRepositoryPort,
     DocumentRepositoryPort,
@@ -16,6 +15,7 @@ from dekoder.modules.knowledge_base.application.ports import (
 from dekoder.modules.search.application.ports import EmbeddingPort, IndexingPort, VectorStorePort
 from dekoder.modules.search.application.services.chunking import DocumentChunker
 from dekoder.modules.search.domain.fragment import FragmentSourceType
+from dekoder.shared.domain.identifiers import CaseId, DocumentId
 
 
 class IndexDocumentUseCase(IndexingPort):

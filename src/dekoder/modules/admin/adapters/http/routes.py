@@ -8,7 +8,10 @@ use cases.
 from __future__ import annotations
 
 from dekoder.modules.admin.application.use_cases.authenticate_admin import AuthenticateAdminUseCase
-from dekoder.modules.admin.application.use_cases.list_knowledge_base import ListCasesUseCase, ListDocumentsUseCase
+from dekoder.modules.admin.application.use_cases.list_knowledge_base import (
+    ListCasesUseCase,
+    ListDocumentsUseCase,
+)
 from dekoder.modules.admin.application.use_cases.manage_cases import (
     ArchiveCaseUseCase,
     CreateCaseUseCase,

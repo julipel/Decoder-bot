@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dekoder.shared.domain.identifiers import CaseId, DocumentId
 from dekoder.modules.knowledge_base.application.ports import CaseRepositoryPort
 from dekoder.modules.knowledge_base.domain.case import Case
 from dekoder.modules.logging_audit.application.ports import AuditPort
 from dekoder.modules.search.application.ports import IndexingPort
+from dekoder.shared.domain.identifiers import CaseId, DocumentId
 
 
 class CreateCaseUseCase:

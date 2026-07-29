@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dekoder.infrastructure.sqlite.connection import SqliteConnectionFactory
-from dekoder.shared.domain.identifiers import CaseId, DocumentId
 from dekoder.modules.knowledge_base.application.ports import CaseRepositoryPort
 from dekoder.modules.knowledge_base.domain.case import Case
+from dekoder.shared.domain.identifiers import CaseId, DocumentId
 
 
 class SqliteCaseRepository(CaseRepositoryPort):

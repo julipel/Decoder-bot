@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dekoder.infrastructure.sqlite.connection import SqliteConnectionFactory
-from dekoder.shared.domain.identifiers import FactDraftId, FactId, UserId
 from dekoder.modules.memory.application.ports import FactRepositoryPort
 from dekoder.modules.memory.domain.fact import Fact
 from dekoder.modules.memory.domain.fact_draft import FactDraft
+from dekoder.shared.domain.identifiers import FactDraftId, FactId, UserId
 
 
 class SqliteFactRepository(FactRepositoryPort):

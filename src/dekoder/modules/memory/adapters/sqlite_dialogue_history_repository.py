@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dekoder.infrastructure.sqlite.connection import SqliteConnectionFactory
-from dekoder.shared.domain.identifiers import ChatId, CorrelationId, DialogueMessageId
 from dekoder.modules.memory.application.ports import DialogueHistoryPort
 from dekoder.modules.memory.domain.dialogue_message import DialogueMessage
+from dekoder.shared.domain.identifiers import ChatId, CorrelationId, DialogueMessageId
 
 
 class SqliteDialogueHistoryRepository(DialogueHistoryPort):
@@ -21,9 +21,7 @@ class SqliteDialogueHistoryRepository(DialogueHistoryPort):
     def get_recent(self, dialogue_id: ChatId, limit: int) -> list[DialogueMessage]:
         raise NotImplementedError
 
-    def record_user_message(
-        self, dialogue_id: ChatId, text: str, correlation_id: CorrelationId
-    ) -> DialogueMessage:
+    def record_user_message(self, dialogue_id: ChatId, text: str, correlation_id: CorrelationId) -> DialogueMessage:
         raise NotImplementedError
 
     def record_assistant_message(

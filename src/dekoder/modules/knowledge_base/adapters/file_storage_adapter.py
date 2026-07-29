@@ -6,8 +6,8 @@
 
 from __future__ import annotations
 
-from dekoder.shared.domain.identifiers import DocumentId
 from dekoder.modules.knowledge_base.application.ports import FileStoragePort
+from dekoder.shared.domain.identifiers import DocumentId
 
 
 class LocalFileStorageAdapter(FileStoragePort):

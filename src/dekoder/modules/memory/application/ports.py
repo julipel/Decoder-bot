@@ -11,10 +11,17 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from dekoder.shared.domain.identifiers import ChatId, CorrelationId, DialogueMessageId, FactDraftId, FactId, UserId
 from dekoder.modules.memory.domain.dialogue_message import DialogueMessage
 from dekoder.modules.memory.domain.fact import Fact
 from dekoder.modules.memory.domain.fact_draft import FactDraft
+from dekoder.shared.domain.identifiers import (
+    ChatId,
+    CorrelationId,
+    DialogueMessageId,
+    FactDraftId,
+    FactId,
+    UserId,
+)
 
 
 class DialogueHistoryPort(Protocol):
@@ -28,9 +35,7 @@ class DialogueHistoryPort(Protocol):
 
     def get_recent(self, dialogue_id: ChatId, limit: int) -> list[DialogueMessage]: ...
 
-    def record_user_message(
-        self, dialogue_id: ChatId, text: str, correlation_id: CorrelationId
-    ) -> DialogueMessage:
+    def record_user_message(self, dialogue_id: ChatId, text: str, correlation_id: CorrelationId) -> DialogueMessage:
         """Создаёт новую запись реплики пользователя со статусом received (docs/02, §8)."""
         ...
 

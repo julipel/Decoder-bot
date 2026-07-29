@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from dekoder.modules.search.application.ports import EmbeddingPort, KnowledgeSearchPort, VectorStorePort
+from dekoder.modules.search.application.ports import (
+    EmbeddingPort,
+    KnowledgeSearchPort,
+    VectorStorePort,
+)
 from dekoder.modules.search.domain.fragment import Fragment
 
 

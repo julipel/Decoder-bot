@@ -7,10 +7,10 @@ FactRepositoryPort, а не потому что между ними есть о�
 
 from __future__ import annotations
 
-from dekoder.shared.domain.identifiers import FactDraftId, FactId, UserId
 from dekoder.modules.memory.application.ports import FactRepositoryPort
 from dekoder.modules.memory.domain.fact import Fact
 from dekoder.modules.memory.domain.fact_draft import FactDraft
+from dekoder.shared.domain.identifiers import FactDraftId, FactId, UserId
 
 
 class StageFactUseCase:

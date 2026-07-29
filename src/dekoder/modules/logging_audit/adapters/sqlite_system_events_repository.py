@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dekoder.infrastructure.sqlite.connection import SqliteConnectionFactory
-from dekoder.shared.domain.identifiers import CorrelationId
 from dekoder.modules.logging_audit.application.ports import AnalyticsReadPort
 from dekoder.modules.logging_audit.domain.entries import SystemEventEntry, TechnicalLogEvent
+from dekoder.shared.domain.identifiers import CorrelationId
 
 
 class SqliteSystemEventsRepository(AnalyticsReadPort):

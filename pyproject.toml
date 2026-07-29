@@ -7,12 +7,94 @@ name = "dekoder"
 version = "0.1.0"
 description = "MVP персонального AI-ассистента «Декодер» — модульный монолит (Clean Architecture / Ports & Adapters)"
 requires-python = ">=3.11"
-# Зависимости намеренно не зафиксированы на этом шаге (создаётся структура
-# проекта, установка пакетов не выполняется). Ожидаемые на этапе реализации:
-# fastapi, uvicorn, библиотека клиента Telegram Bot API (не выбрана в
-# утверждённых документах), qdrant-client, httpx (клиенты YandexGPT/OpenAI),
-# argon2-cffi или passlib (хеширование пароля администратора, docs/02, §13).
-dependencies = []
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "pydantic-settings",
+    "httpx",
+    "python-telegram-bot",
+    "structlog",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "respx",
+    "ruff",
+    "mypy",
+    "pre-commit",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+# 120, а не типичные 88/100: кодовая база документирована на русском
+# (docstring'и/комментарии со ссылками на docs/NN, §…), что естественно
+# длиннее — иначе правило E501 создавало бы трение без пользы для MVP.
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors (синтаксис/стиль)
+    "W",     # pycodestyle warnings (стиль)
+    "F",     # pyflakes (неиспользуемые переменные/импорты, потенциальные ошибки)
+    "I",     # isort (импорты)
+    "UP",    # pyupgrade (устаревший синтаксис)
+    "B",     # flake8-bugbear (потенциальные ошибки)
+    "C4",    # flake8-comprehensions (упрощения)
+    "SIM",   # flake8-simplify (упрощения)
+    "ANN",   # flake8-annotations (аннотации типов)
+    "ASYNC", # flake8-async (асинхронный код)
+]
+# ANN401 (запрет Any) намеренно не включён — на этапе MVP типы адаптеров
+# внешних API (httpx-ответы, python-telegram-bot) не всегда можно выразить
+# точнее Any, а строгий запрет создавал бы трение без пользы для MVP.
+# UP042 (str+Enum -> StrEnum) намеренно не включён — потребовал бы правки
+# доменных enum'ов (knowledge_base/memory/search) вне рамок задачи S1-02
+# (настройка инструментов, не рефакторинг доменной модели).
+ignore = ["ANN401", "UP042"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dekoder"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+packages = ["dekoder"]
+warn_unused_configs = true
+# Первый этап (S1-02): осознанно не полный strict-режим — набор проверок
+# ниже сужен, чтобы не мешать разработке MVP; расширение до strict = true —
+# отдельное решение следующего этапа.
+check_untyped_defs = true
+disallow_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = "telegram.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+addopts = "--cov=dekoder --cov-report=term-missing"
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["src/dekoder"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+]

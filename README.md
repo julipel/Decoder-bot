@@ -30,11 +30,22 @@ Python 3.11+, FastAPI, python-telegram-bot, SQLite, Qdrant, structlog.
 uv venv
 uv pip install -e ".[dev]"
 cp .env.example .env.local   # заполнить значения локально
+pre-commit install
 pytest
 ```
 
 Подробности об окружении, переменных `.env.local` и Docker-окружении — в
 [`docs/06_development_environment.md`](docs/06_development_environment.md).
+
+## Проверка качества кода
+
+```powershell
+ruff check .        # линт: синтаксис, импорты, стиль, ошибки, упрощения, аннотации, async
+ruff format --check .
+mypy src
+pytest
+pre-commit run --all-files
+```
 
 ## Разработка
 

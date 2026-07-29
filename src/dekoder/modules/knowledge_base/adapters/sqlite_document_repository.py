@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dekoder.infrastructure.sqlite.connection import SqliteConnectionFactory
-from dekoder.shared.domain.identifiers import DocumentId
 from dekoder.modules.knowledge_base.application.ports import DocumentRepositoryPort
 from dekoder.modules.knowledge_base.domain.document import Document
+from dekoder.shared.domain.identifiers import DocumentId
 
 
 class SqliteDocumentRepository(DocumentRepositoryPort):

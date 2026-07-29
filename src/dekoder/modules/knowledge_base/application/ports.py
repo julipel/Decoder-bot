@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from dekoder.shared.domain.identifiers import CaseId, DocumentId
 from dekoder.modules.knowledge_base.domain.case import Case
 from dekoder.modules.knowledge_base.domain.document import Document
+from dekoder.shared.domain.identifiers import CaseId, DocumentId
 
 
 class DocumentRepositoryPort(Protocol):

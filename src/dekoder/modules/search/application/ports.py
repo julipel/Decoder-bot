@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from dekoder.shared.domain.identifiers import CaseId, DocumentId
 from dekoder.modules.search.domain.fragment import Fragment, FragmentSourceType
+from dekoder.shared.domain.identifiers import CaseId, DocumentId
 
 
 class KnowledgeSearchPort(Protocol):

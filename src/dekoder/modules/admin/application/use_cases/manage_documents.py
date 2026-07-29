@@ -6,11 +6,11 @@
 
 from __future__ import annotations
 
-from dekoder.shared.domain.identifiers import DocumentId
 from dekoder.modules.knowledge_base.application.ports import DocumentRepositoryPort, FileStoragePort
 from dekoder.modules.knowledge_base.domain.document import Document
 from dekoder.modules.logging_audit.application.ports import AuditPort
 from dekoder.modules.search.application.ports import IndexingPort
+from dekoder.shared.domain.identifiers import DocumentId
 
 
 class UploadDocumentUseCase:
