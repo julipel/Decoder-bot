@@ -30,6 +30,7 @@ repos:
           - pydantic-settings
           - fastapi
           - python-telegram-bot
+          - structlog
         args: [--config-file=pyproject.toml]
         pass_filenames: false
         files: ^src/
