@@ -1,7 +1,8 @@
 """
-Системный health-check (docs/03, §3 не привязывает его ни к одному
-бизнес-модулю — это ASGI-уровень, а не use case). Живёт в `composition/`,
-единственном пакете, для которого docs/03, §5 делает исключение из
+Системный health-check — не привязан ни к одному бизнес-модулю из
+docs/versions/03_project_structure_v2.0.md, §5 (это ASGI-уровень, а не
+use case). Живёт в `composition/`, единственном пакете, для которого
+docs/versions/03_project_structure_v2.0.md, §8 делает исключение из
 правила «application/domain не импортируют FastAPI».
 """
 

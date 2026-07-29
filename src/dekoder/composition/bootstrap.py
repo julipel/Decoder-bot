@@ -1,8 +1,9 @@
 """
 Сборка приложения: конфигурация → контейнер → HTTP/Telegram driving adapters.
 
-По потоку из docs/02, §9: при старте приложения незавершённые задания
-индексации переводятся в состояние, допускающее повторный запуск.
+При старте приложения незавершённые задания индексации переводятся в
+состояние, допускающее повторный запуск (см. docs/versions/02_system_architecture_v2.0.md,
+§12 — обработка ошибок индексации).
 """
 
 from __future__ import annotations
@@ -21,13 +22,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     `settings` принимается параметром, а не читается глобально внутри
     функции (единственная точка чтения окружения — `shared.config.
-    settings.load_settings()`, вызываемая один раз в `main.py`) — это позволяет
-    подставлять тестовые настройки без переменных окружения. Параметр
-    пока не используется телом функции: DI-контейнер (`build_container`),
-    HTTP-роуты панели администратора, Telegram driving adapter и
-    восстановление незавершённой индексации (`recover_interrupted_
-    indexing_jobs`, docs/02, §9) подключаются здесь на следующем шаге —
-    вне объёма текущей задачи (только FastAPI + health-check).
+    settings.load_settings()`, вызываемая один раз в `main.py`) — это
+    позволяет подставлять тестовые настройки без переменных окружения.
+    Параметр пока не используется телом функции: DI-контейнер
+    (`build_container`), HTTP-роуты панели администратора, Telegram
+    driving adapter и восстановление незавершённой индексации
+    (`recover_interrupted_indexing_jobs`) подключаются здесь на
+    следующем шаге — вне объёма текущей задачи (только FastAPI +
+    health-check).
     """
     app = FastAPI(title=APP_NAME, version=APP_VERSION)
     app.include_router(health_router)
