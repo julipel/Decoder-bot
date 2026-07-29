@@ -1,10 +1,9 @@
 """
-Общие идентификаторы предметной области.
+Общие идентификаторы предметной области (v2.0).
 
 Единая точка правды для типов идентификаторов, пересекающих границы
-модулей (например, DocumentId нужен и Knowledge Base, и Search), — чтобы
-модули не были вынуждены импортировать чужие domain-пакеты только ради
-типа идентификатора.
+модулей, — чтобы модули не были вынуждены импортировать чужие
+domain-пакеты только ради типа идентификатора (docs/versions/03, §4).
 """
 
 from __future__ import annotations
@@ -12,14 +11,19 @@ from __future__ import annotations
 from typing import NewType
 
 UserId = NewType("UserId", str)
-ChatId = NewType("ChatId", str)
 CorrelationId = NewType("CorrelationId", str)
 
 ProfileId = NewType("ProfileId", str)
-DialogueMessageId = NewType("DialogueMessageId", str)
+SkillId = NewType("SkillId", str)
+SessionId = NewType("SessionId", str)
+ModelId = NewType("ModelId", str)
+
+DialogueEntryId = NewType("DialogueEntryId", str)
+DraftId = NewType("DraftId", str)
 FactId = NewType("FactId", str)
-FactDraftId = NewType("FactDraftId", str)
 
 DocumentId = NewType("DocumentId", str)
 CaseId = NewType("CaseId", str)
 FragmentId = NewType("FragmentId", str)
+
+AuditRecordId = NewType("AuditRecordId", str)

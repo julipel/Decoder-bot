@@ -28,6 +28,8 @@ repos:
         additional_dependencies:
           - pydantic
           - pydantic-settings
+          - fastapi
+          - python-telegram-bot
         args: [--config-file=pyproject.toml]
         pass_filenames: false
         files: ^src/

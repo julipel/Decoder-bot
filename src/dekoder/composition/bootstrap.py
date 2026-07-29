@@ -7,22 +7,31 @@
 
 from __future__ import annotations
 
+from fastapi import FastAPI
+
 from dekoder.composition.container import Container
+from dekoder.composition.health import APP_NAME, APP_VERSION
+from dekoder.composition.health import router as health_router
+from dekoder.shared.config.settings import Settings
 
 
-def create_app() -> object:
+def create_app(settings: Settings | None = None) -> FastAPI:
     """
-    Точка сборки процесса:
-    1) загружает конфигурацию (config.settings.load_settings);
-    2) строит DI-контейнер (composition.container.build_container);
-    3) регистрирует HTTP-роуты панели администратора (admin.adapters.http.routes);
-    4) подключает Telegram driving adapter (telegram.adapters.bot);
-    5) восстанавливает незавершённые задания индексации (recover_interrupted_indexing_jobs).
+    Собирает ASGI-приложение: FastAPI-инстанс + системный `/health`.
 
-    Реализация появится вместе с подключением FastAPI и Telegram-библиотеки
-    и не входит в объём текущей задачи (создание структуры проекта).
+    `settings` принимается параметром, а не читается глобально внутри
+    функции (единственная точка чтения окружения — `shared.config.
+    settings.load_settings()`, вызываемая один раз в `main.py`) — это позволяет
+    подставлять тестовые настройки без переменных окружения. Параметр
+    пока не используется телом функции: DI-контейнер (`build_container`),
+    HTTP-роуты панели администратора, Telegram driving adapter и
+    восстановление незавершённой индексации (`recover_interrupted_
+    indexing_jobs`, docs/02, §9) подключаются здесь на следующем шаге —
+    вне объёма текущей задачи (только FastAPI + health-check).
     """
-    raise NotImplementedError
+    app = FastAPI(title=APP_NAME, version=APP_VERSION)
+    app.include_router(health_router)
+    return app
 
 
 def recover_interrupted_indexing_jobs(container: Container) -> None:

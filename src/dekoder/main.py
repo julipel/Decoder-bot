@@ -7,8 +7,6 @@ ASGI-точка входа процесса (например, uvicorn dekoder.m
 
 from __future__ import annotations
 
-from dekoder.composition.bootstrap import (
-    create_app,  # noqa: F401  (используется после подключения FastAPI)
-)
+from dekoder.composition.bootstrap import create_app
 
-app = None  # заполняется create_app() после подключения FastAPI/Telegram — вне объёма текущей задачи
+app = create_app()
