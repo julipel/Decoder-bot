@@ -9,5 +9,6 @@ ASGI-точка входа процесса (например, uvicorn dekoder.m
 from __future__ import annotations
 
 from dekoder.composition.bootstrap import create_app
+from dekoder.shared.config import Settings
 
-app = create_app()
+app = create_app(Settings())

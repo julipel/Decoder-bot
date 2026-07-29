@@ -48,7 +48,7 @@ from dekoder.application.prompt_engine.ports import PromptBuilder
 from dekoder.application.rag.ports import VectorRepository
 from dekoder.application.session.ports import SessionRepository
 from dekoder.application.skills.ports import ContentSkillRepository
-from dekoder.shared.config.settings import Settings
+from dekoder.shared.config import Settings
 from dekoder.shared.utils.clock import Clock
 from dekoder.shared.utils.correlation import CorrelationIdGenerator
 

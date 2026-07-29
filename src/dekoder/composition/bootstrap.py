@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from dekoder.composition.container import Container
 from dekoder.composition.health import APP_NAME, APP_VERSION
 from dekoder.composition.health import router as health_router
-from dekoder.shared.config.settings import Settings
+from dekoder.shared.config import Settings
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -21,8 +21,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     Собирает ASGI-приложение: FastAPI-инстанс + системный `/health`.
 
     `settings` принимается параметром, а не читается глобально внутри
-    функции (единственная точка чтения окружения — `shared.config.
-    settings.load_settings()`, вызываемая один раз в `main.py`) — это
+    функции — создание `Settings()` происходит в bootstrap-слое
+    (`main.py`), а не здесь и не при импорте `shared.config` — это
     позволяет подставлять тестовые настройки без переменных окружения.
     Параметр пока не используется телом функции: DI-контейнер
     (`build_container`), HTTP-роуты панели администратора, Telegram
