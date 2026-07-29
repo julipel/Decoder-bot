@@ -1,7 +1,7 @@
 # Структура проекта — MVP персонального AI-ассистента «Декодер» (версия 2.0)
 
 **Версия документа:** 2.0
-**Статус:** Draft
+**Статус:** Approved
 **Дата:** 2026-07-28
 **Основание:** [`01_requirements_analysis_v2.0.md`](01_requirements_analysis_v2.0.md) (требования, версия 2.0, Approved), [`02_system_architecture_v2.0.md`](02_system_architecture_v2.0.md) (архитектура, версия 2.0, Approved)
 **Соотношение с версией 1.0:** [`docs/03_project_structure.md`](../03_project_structure.md) описывает структуру проекта для состава MVP версии 1.0 (модуль на bounded context: `modules/<module>/{domain,application,adapters}`) и не изменяется этим документом. Состав компонентов версии 2.0 (Author Profile Service, Content Skill Service, Session Manager, Prompt Engine, Model Catalog, Model Gateway) и организация архитектуры вокруг единого AI Core (`02_system_architecture_v2.0.md`) делают точечное редактирование структуры версии 1.0 нецелесообразным — структура спроектирована заново.
