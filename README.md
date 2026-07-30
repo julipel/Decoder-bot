@@ -80,9 +80,9 @@ uv venv
 uv pip install -e ".[dev]"
 
 cp .env.example .env.local   # заполнить TELEGRAM_BOT_TOKEN и OPENROUTER_API_KEY
-pre-commit install
+uv run pre-commit install
 
-pytest   # должно пройти без реальных секретов — внешние вызовы замоканы
+uv run pytest   # должно пройти без реальных секретов — внешние вызовы замоканы
 ```
 
 Запуск двух процессов (в отдельных терминалах):
