@@ -21,7 +21,9 @@ from telegram.ext import Application
 from dekoder.bootstrap.container import build_container
 from dekoder.presentation.telegram.bot import build_telegram_application
 from dekoder.shared.config import Settings
-from dekoder.shared.logging import configure_logging
+from dekoder.shared.logging import configure_logging, get_logger
+
+_logger = get_logger(__name__)
 
 
 def main() -> None:
@@ -41,11 +43,18 @@ def main() -> None:
         process_user_message=container.process_user_message,
     )
 
+    async def _log_started(_: Application) -> None:
+        # post_init вызывается после успешной Application.initialize()
+        # (в т.ч. getMe) — если этот лог не появился, polling не начался.
+        _logger.info("telegram_polling_started")
+
     async def _close_http_client(_: Application) -> None:
         # Вызывается run_polling() при штатной остановке (после
         # обработки SIGINT/SIGTERM) — здесь http_client реально закрывается.
+        _logger.info("telegram_polling_stopping")
         await http_client.aclose()
 
+    application.post_init = _log_started
     application.post_shutdown = _close_http_client
     application.run_polling()
 

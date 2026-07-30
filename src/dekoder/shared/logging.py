@@ -71,6 +71,13 @@ def _bind_environment(environment: str) -> Processor:
     return processor
 
 
+def _rename_logger_name_field(_logger: object, _method_name: str, event_dict: EventDict) -> EventDict:
+    """`get_logger()` кладёт имя логгера под ключ `logger_name` (см. его докстринг) — здесь оно становится `logger`."""
+    if "logger_name" in event_dict:
+        event_dict["logger"] = event_dict.pop("logger_name")
+    return event_dict
+
+
 def configure_logging(environment: str, level: str = "INFO") -> None:
     """Настраивает structlog на JSON-вывод в stdout. Вызывается один раз при старте процесса."""
     structlog.configure(
@@ -79,6 +86,7 @@ def configure_logging(environment: str, level: str = "INFO") -> None:
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso", utc=True, key="timestamp"),
             _bind_environment(environment),
+            _rename_logger_name_field,
             _redact_sensitive_fields,
             structlog.processors.JSONRenderer(),
         ],
@@ -89,8 +97,22 @@ def configure_logging(environment: str, level: str = "INFO") -> None:
 
 
 def get_logger(name: str) -> Any:
-    """Логгер с привязанным полем `logger` (имя модуля/компонента)."""
-    return structlog.get_logger(name).bind(logger=name)
+    """
+    Логгер с полем `logger` (имя модуля/компонента). Остаётся полностью
+    ленивым до первого реального вызова (`.info()`/`.warning()`/...) —
+    именно поэтому здесь `get_logger(logger_name=name)`, а не
+    `.bind(logger=name)`: `.bind()` на `BoundLoggerLazyProxy` резолвит
+    логгер немедленно, под ту конфигурацию structlog, что действует
+    ПРЯМО СЕЙЧАС, и (при `cache_logger_on_first_use=True`, наша настройка)
+    кэширует её навсегда. Модули часто создают логгер на уровне модуля
+    (`_logger = get_logger(__name__)`) — это происходит при импорте, до
+    вызова `configure_logging()` в bootstrap-слое; с `.bind()` логгер
+    необратимо застревал бы на дефолтной консольной конфигурации
+    structlog, даже после успешного вызова `configure_logging()`.
+    (`logger_name` → `logger` — переименовывается `_rename_logger_name_field`,
+    т.к. `logger` — зарезервированное имя параметра в structlog.)
+    """
+    return structlog.get_logger(logger_name=name)
 
 
 def bind_request_context(

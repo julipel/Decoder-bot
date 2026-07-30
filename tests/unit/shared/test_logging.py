@@ -28,6 +28,30 @@ def _read_last_log_line(capsys: pytest.CaptureFixture[str]) -> dict[str, object]
     return json.loads(out[-1])
 
 
+class TestLoggerCreatedBeforeConfiguration:
+    def test_module_level_logger_still_renders_json_after_late_configure(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """
+        Регрессия, найденная при ручной проверке в Docker: `get_logger()`
+        раньше вызывал `.bind()` немедленно, из-за чего логгер, созданный
+        на уровне модуля (обычный паттерн `_logger = get_logger(__name__)`
+        — при импорте, до `configure_logging()` в bootstrap-слое),
+        навсегда застревал на дефолтной консольной конфигурации
+        structlog вместо JSON, даже после успешного `configure_logging()`.
+        """
+        early_logger = get_logger("dekoder.early")
+
+        configure_logging(environment="test")
+        early_logger.info("event_after_late_configure")
+
+        entry = _read_last_log_line(capsys)
+
+        assert entry["event"] == "event_after_late_configure"
+        assert entry["logger"] == "dekoder.early"
+        assert entry["environment"] == "test"
+
+
 class TestRequiredFields:
     def test_log_entry_contains_required_fields(self, capsys: pytest.CaptureFixture[str]) -> None:
         configure_logging(environment="test")
