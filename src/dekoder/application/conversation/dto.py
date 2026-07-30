@@ -6,12 +6,19 @@ use case обработки пользовательского сообщени�
 (FastAPI/Telegram/OpenRouter) — это внутренний контракт application-слоя,
 не HTTP-модель и не тело запроса конкретного провайдера.
 
-`message_text`/`model_id`/`provider_id` используют доменные value objects
-из `domain/conversation/value_objects.py`, где значение — это ввод
-пользователя или устойчивый идентификатор. Свободный текст без такой
-семантики (системный промпт, текст ответа модели — может быть длиннее
-MessageText.MAX_LENGTH, рассчитанного на ввод пользователя) остаётся
-обычной `str`.
+`model_id`/`provider_id` используют доменные value objects из
+`domain/conversation/value_objects.py` — устойчивые идентификаторы.
+Свободный текст без такой семантики (системный промпт, текст ответа
+модели — может быть длиннее MessageText.MAX_LENGTH, рассчитанного на
+ввод пользователя) остаётся обычной `str`.
+
+`ProcessUserMessageCommand.message_text` — намеренно `str`, а не
+`MessageText`: это сырой текст, пришедший из driving-адаптера (Telegram
+и т. п.), ещё не проверенный. Проверка — ответственность
+`ProcessUserMessage.execute()` (доменный `MessageText`, требование
+«для проверки текста используй доменный MessageText»), а не самого DTO —
+иначе невалидный ввод падал бы при создании команды, а не как
+наблюдаемый исход выполнения use case'а.
 """
 
 from __future__ import annotations
@@ -31,7 +38,7 @@ class TokenUsage:
 @dataclass(frozen=True)
 class ProcessUserMessageCommand:
     external_user_id: str
-    message_text: MessageText
+    message_text: str
     correlation_id: CorrelationId
     model_id: ModelId | None = None
 
