@@ -50,6 +50,24 @@ pytest
 pre-commit run --all-files
 ```
 
+## Docker
+
+Один образ (`Python 3.11 slim`, непривилегированный пользователь) —
+два сервиса, каждый со своей командой запуска:
+
+- **`api`** — `uvicorn dekoder.main:app`, порт `8000`, healthcheck на `/health`;
+- **`telegram-bot`** — `python -m dekoder.telegram_main` (long polling), без открытого порта.
+
+Секреты не хранятся в `docker-compose.yml` и не копируются в образ —
+только через `env_file: .env` (создать из `.env.example`, сам `.env` не коммитится).
+
+```powershell
+cp .env.example .env   # заполнить реальными значениями, не коммитится
+docker compose build
+docker compose up
+docker compose down
+```
+
 ## Разработка
 
 Правила именования веток, коммитов и общий рабочий процесс — в

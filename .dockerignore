@@ -1,0 +1,29 @@
+# Виртуальные окружения и кэши — не нужны в образе
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Git и служебные файлы
+.git/
+.gitignore
+.github/
+
+# Секреты — никогда не должны попасть в образ
+.env
+.env.local
+.env.production
+.env.test
+
+# Не нужны для сборки/запуска приложения
+tests/
+docs/
+data/
+*.md
