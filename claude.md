@@ -1242,16 +1242,15 @@ Telegram
 * [x] `ProcessUserMessage` (`application/conversation/use_cases/process_user_message.py`);
 * [x] OpenRouter Adapter (`infrastructure/llm/openrouter_adapter.py`);
 * [x] bootstrap-слой без DI-библиотеки (`bootstrap/container.py`, `bootstrap/application.py`);
-* [ ] Telegram `/start`;
-* [ ] обработка текстового сообщения (Telegram → `ProcessUserMessage`);
-* [ ] Docker;
-* [x] тесты (unit + integration на каждый пункт выше; сквозного Telegram-теста пока нет — не с чем);
-* [ ] README (описывает архитектуру `docs/versions/*_v2.0.md`, не этот вертикальный срез — требует обновления).
+* [x] Telegram `/start`;
+* [x] обработка текстового сообщения (Telegram → `ProcessUserMessage`);
+* [x] Docker;
+* [x] тесты (unit + integration + сквозной e2e-сценарий диалога, `tests/e2e/`);
+* [x] README (описывает реально работающий срез, а не `docs/versions/*_v2.0.md`).
 
-Осталось до завершения Спринта 1: presentation-слой для Telegram
-(`/start` + обработка сообщения, единственное оставшееся звено цепочки
-`Telegram → ProcessUserMessage → LLMProvider → OpenRouter → ответ`),
-Docker, актуализация README.
+Спринт 1 завершён: вертикальный срез
+`Telegram → ProcessUserMessage → LLMProvider → OpenRouter → ответ`
+работает целиком, ruff/mypy/pytest проходят (143 теста).
 
 ## В текущий спринт не входят
 
@@ -1375,11 +1374,12 @@ Docker, актуализация README.
 # 36. Журнал текущего состояния
 
 Этот раздел необходимо обновлять после завершения заметных задач.
-Переписан по итогам сессии реализации большей части Спринта 1.
+Переписан по итогам завершения Спринта 1 целиком (Telegram-слой,
+Docker, e2e-тест, README) и актуализации README/§32.
 
 ## Реализовано
 
-Вертикальный срез почти работает целиком, кроме входной точки Telegram:
+Вертикальный срез работает целиком, включая вход через Telegram:
 
 * `src/dekoder/shared/config.py` — `Settings` (`ApplicationSettings`,
   `TelegramSettings`, `LLMSettings`, `OpenRouterSettings`), pydantic-settings,
@@ -1404,18 +1404,36 @@ Docker, актуализация README.
   `ApplicationContainer` (без DI-библиотеки), `create_application()`,
   жизненный цикл `httpx.AsyncClient` через FastAPI lifespan;
 * `src/dekoder/main.py` — вызывает `bootstrap.application.create_application`;
-* тесты на каждый пункт выше (`tests/unit/...`, `tests/integration/...`) —
-  ruff/mypy/pytest проходят на каждом коммите (pre-commit).
+* `src/dekoder/presentation/telegram/` — `/start`
+  (`handlers/start.py`), обработчик текстовых сообщений
+  (`handlers/messages.py`, единственное место presentation-слоя,
+  вызывающее `ProcessUserMessage`), `mapper.py` (Update →
+  `ProcessUserMessageCommand`, разбиение длинных ответов на части по
+  лимиту Telegram), `bot.py` (сборка `telegram.ext.Application`);
+* `src/dekoder/telegram_main.py` — второй процесс (long polling),
+  тонкая обёртка над bootstrap, как `main.py`; `PYTHONUNBUFFERED=1` в
+  образе обязателен — иначе structlog-логи этого процесса не долетают
+  до `docker compose logs` (не TTY, буферизация stdout);
+* `Dockerfile` + `docker-compose.yml` — один образ (`python:3.11-slim`,
+  непривилегированный пользователь `dekoder`), два сервиса (`api` —
+  uvicorn + healthcheck на `/health`, `telegram-bot` — polling),
+  секреты только через `env_file: .env`, в образ не копируются;
+  `Application.run_polling()` сам обрабатывает SIGINT/SIGTERM;
+* `README.md` — переписан под реально работающий срез (было: описание
+  `docs/versions/*_v2.0.md`, аспирационное); содержит инструкцию по
+  локальному запуску (uv, `.env.local`, два процесса) и Docker;
+* тесты на каждый пункт выше (`tests/unit/...`, `tests/integration/...`,
+  `tests/e2e/test_conversation_scenario.py` — сквозной сценарий диалога
+  поверх всего среза) — 143 теста, ruff/mypy/pytest проходят на каждом
+  коммите (pre-commit).
 
 ## В разработке
 
-* presentation-слой для Telegram (`/start`, обработка текстового
-  сообщения — единственное недостающее звено рабочей цепочки).
+Ничего — Спринт 1 закрыт полностью, включая README. Следующий шаг —
+начало Спринта 2 (§33), отдельным запросом.
 
 ## Не реализовано
 
-* Docker;
-* README (актуального для этого среза — текущий описывает `docs/versions/*_v2.0.md`);
 * диалоги, история, профили, Prompt Engine, память, RAG, каталог моделей,
   административные функции — по плану, следующие спринты (§33).
 
@@ -1456,12 +1474,17 @@ ports.py::LLMProvider` (этот срез, async, только текст, ре�
 
 ## Последнее принятое решение
 
-Продолжать строить вертикальный срез Спринта 1 по этому файлу, не
-трогая параллельное дерево `docs/versions/*_v2.0.md`-миграции и не
-реконсилируя два дерева без отдельного запроса.
+Спринт 1 завершён по этому файлу (`bootstrap/`,
+`application/conversation/`, `domain/conversation/`,
+`infrastructure/llm/`, `presentation/telegram/`); параллельное дерево
+`docs/versions/*_v2.0.md`-миграции (`composition/`, `interfaces/` и
+связанные модули) осталось нетронутым и не реконсилировано — решение
+по-прежнему в силе, реконсиляция не предпринимается без отдельного
+запроса.
 
 ## Следующее действие
 
-Реализовать `presentation/telegram/` (`/start`, обработка текстового
-сообщения через `bootstrap.application.get_process_user_message`),
-затем Docker и обновление README — этим Спринт 1 завершается.
+Начать Спринт 2 (§33): `User`, `Conversation`, `Message`, SQLite,
+SQLAlchemy, Alembic, repositories, история сообщений, политика
+контекста, `/new`, `/clear` — по отдельному запросу пользователя, не
+автоматически.
