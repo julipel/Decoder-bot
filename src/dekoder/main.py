@@ -1,14 +1,20 @@
 """
 ASGI-точка входа процесса (например, uvicorn dekoder.main:app).
 
-Тонкая обёртка над composition root — main.py не содержит конфигурации
-и не знает деталей сборки приложения (docs/versions/02_system_architecture_v2.0.md,
-§3 — Modular Monolith, один процесс).
+Тонкая обёртка над bootstrap-слоем — main.py не содержит конфигурации и
+не знает деталей сборки приложения (Modular Monolith, один процесс).
+
+Переключено с `composition.bootstrap.create_app` на
+`bootstrap.application.create_application`: первый вертикальный срез
+(Telegram → ProcessUserMessage → LLMProvider → OpenRouter → ответ)
+собирается через новый, более простой bootstrap-слой. `composition/`
+не удалён — это отдельное, более крупное дерево заглушек прежней
+миграции, которое сейчас этим приложением не используется.
 """
 
 from __future__ import annotations
 
-from dekoder.composition.bootstrap import create_app
+from dekoder.bootstrap.application import create_application
 from dekoder.shared.config import Settings
 
-app = create_app(Settings())
+app = create_application(Settings())
