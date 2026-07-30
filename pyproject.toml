@@ -38,6 +38,11 @@ target-version = "py311"
 # длиннее — иначе правило E501 создавало бы трение без пользы для MVP.
 line-length = 120
 src = ["src", "tests"]
+# claude.md — управляющий документ (проектные инструкции для Claude Code),
+# не код проекта; ruff 0.16+ форматирует Python-блоки внутри Markdown —
+# автоматическая правка этого файла без ревью здесь так же нежелательна,
+# как и для docs/ (см. .pre-commit-config.yaml).
+extend-exclude = ["claude.md"]
 
 [tool.ruff.lint]
 select = [
