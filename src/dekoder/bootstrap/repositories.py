@@ -1,5 +1,5 @@
 """
-Bootstrap-фабрики репозиториев (Sprint 2, задачи S2-03/S2-04/S2-05).
+Bootstrap-фабрики репозиториев (Sprint 2, задачи S2-03/S2-04/S2-05/S2-06).
 
 Единственное место, которому разрешено знать одновременно про порты
 `UserRepository`/`ConversationRepository`/`MessageRepository`
@@ -9,24 +9,39 @@ user_repository.py, conversation_repository.py, message_repository.py}`)
 — то же правило единственной точки сборки, что и у `bootstrap/
 container.py` для `LLMProvider` (claude.md §8.5, §29).
 
-Задачи S2-03/S2-04/S2-05 намеренно НЕ подключают эти фабрики ни в
-`ApplicationContainer`, ни в `ProcessUserMessage` — расширение сценария
-обработки сообщения историей диалога (а вместе с ней и всеми тремя
-репозиториями) запланировано отдельной задачей Sprint 2 (S2-06,
-backlog_2.md §9/§14). Функции ниже — точки сборки, которые эта будущая
-задача сможет вызвать, передав уже открытую `AsyncSession`
-(`infrastructure/persistence/session.py::session_scope`) — bootstrap не
-создаёт и не хранит сессию заранее в глобальном состоянии.
+`build_user_repository`/`build_conversation_repository`/
+`build_message_repository` (S2-03/S2-04/S2-05) собирают один репозиторий
+поверх уже открытой `AsyncSession` — низкоуровневые строительные блоки.
+
+`build_conversation_repositories_factory` (S2-06) — точка сборки, которую
+использует `ProcessUserMessage` (через `ConversationRepositoriesFactory`,
+`application/conversation/ports.py`): каждый вызов возвращённой фабрики
+открывает НОВУЮ короткую транзакцию поверх `session_scope()`
+(`infrastructure/persistence/session.py`, задача S2-01) — commit при
+успешном выходе из `async with`, rollback при исключении, сессия
+закрывается в обоих случаях — и отдаёт `ConversationRepositories`,
+собранные тремя функциями выше поверх этой сессии. `ProcessUserMessage`
+сам не создаёт и не закрывает `AsyncSession` и не импортирует
+SQLAlchemy — этим по-прежнему занимается только bootstrap.
 """
 
 from __future__ import annotations
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
-from dekoder.application.conversation.ports import ConversationRepository, MessageRepository
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from dekoder.application.conversation.ports import (
+    ConversationRepositories,
+    ConversationRepositoriesFactory,
+    ConversationRepository,
+    MessageRepository,
+)
 from dekoder.application.user.ports import UserRepository
 from dekoder.infrastructure.persistence.conversation_repository import SQLAlchemyConversationRepository
 from dekoder.infrastructure.persistence.message_repository import SQLAlchemyMessageRepository
+from dekoder.infrastructure.persistence.session import session_scope
 from dekoder.infrastructure.persistence.user_repository import SQLAlchemyUserRepository
 
 
@@ -43,3 +58,27 @@ def build_conversation_repository(session: AsyncSession) -> ConversationReposito
 def build_message_repository(session: AsyncSession) -> MessageRepository:
     """Собирает `MessageRepository` поверх переданной `AsyncSession`."""
     return SQLAlchemyMessageRepository(session)
+
+
+def build_conversation_repositories_factory(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> ConversationRepositoriesFactory:
+    """
+    Собирает `ConversationRepositoriesFactory` поверх единой фабрики сессий
+    (`bootstrap/database.py::init_database`). Каждый вызов возвращённого
+    callable — новая независимая короткая транзакция (`session_scope()`
+    открывает `AsyncSession`, `ConversationRepositories` строятся поверх
+    неё тремя функциями выше, коммит/rollback/close — на выходе из
+    `async with`).
+    """
+
+    @asynccontextmanager
+    async def _open_repositories() -> AsyncIterator[ConversationRepositories]:
+        async with session_scope(session_factory) as session:
+            yield ConversationRepositories(
+                users=build_user_repository(session),
+                conversations=build_conversation_repository(session),
+                messages=build_message_repository(session),
+            )
+
+    return _open_repositories

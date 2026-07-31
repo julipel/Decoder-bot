@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dekoder.application.conversation.dto import LLMRequest, LLMResponse
+from dekoder.application.conversation.dto import LLMMessage, LLMRequest, LLMResponse
 from dekoder.application.conversation.ports import LLMProvider
-from dekoder.domain.conversation.value_objects import MessageText, ModelId, ProviderId
+from dekoder.domain.conversation.value_objects import ModelId, ProviderId
 from dekoder.shared.domain.identifiers import CorrelationId
 
 
@@ -23,7 +23,7 @@ class FakeLLMProvider:
 def _make_request() -> LLMRequest:
     return LLMRequest(
         system_prompt="Ты — ассистент.",
-        user_message=MessageText("Привет!"),
+        messages=[LLMMessage(role="user", content="Привет!")],
         model_id=ModelId("openai/gpt-4o-mini"),
         temperature=0.7,
         max_tokens=512,

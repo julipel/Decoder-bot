@@ -32,7 +32,7 @@ def to_command(update: Update) -> ProcessUserMessageCommand:
         raise ValueError("Update does not contain a text message from a known user")
 
     return ProcessUserMessageCommand(
-        external_user_id=str(user.id),
+        telegram_user_id=user.id,
         message_text=message.text,
         correlation_id=CorrelationId(str(uuid.uuid4())),
     )

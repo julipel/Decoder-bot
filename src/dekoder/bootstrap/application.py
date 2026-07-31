@@ -14,6 +14,14 @@ create_application — фабрика FastAPI-приложения (bootstrap-с
 FastAPI завершить запуск (fail-fast), а не проявляется позже как ошибка
 первого запроса. `AsyncEngine` создаётся и уничтожается (`dispose()`) в
 одном и том же event loop — loop'е uvicorn, обслуживающем `_lifespan`.
+
+С задачи S2-06 `db_session_factory` передаётся в `build_container()` —
+`ProcessUserMessage` внутри контейнера получает `ConversationRepositoriesFactory`
+(`bootstrap/repositories.py`), поверх которой сам открывает короткие
+транзакции. Инициализация БД по-прежнему выполняется до сборки контейнера
+внутри одного и того же `_lifespan` (единый event loop uvicorn) — здесь,
+в отличие от `telegram_main.py`, нет ограничения на event loop, поэтому
+порядок остался прежним.
 """
 
 from __future__ import annotations
@@ -47,7 +55,7 @@ def create_application(settings: Settings) -> FastAPI:
                 base_url=settings.openrouter.base_url,
                 timeout=settings.llm.timeout,
             ) as http_client:
-                app.state.container = build_container(settings, http_client)
+                app.state.container = build_container(settings, http_client, db_session_factory)
                 app.state.db_engine = db_engine
                 app.state.db_session_factory = db_session_factory
                 yield

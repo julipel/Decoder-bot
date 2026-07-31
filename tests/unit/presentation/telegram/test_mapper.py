@@ -23,11 +23,11 @@ def _make_update(text: str = "Привет!", user_id: int = 12345) -> MagicMock
 
 
 class TestToCommand:
-    def test_maps_text_and_external_user_id(self) -> None:
+    def test_maps_text_and_telegram_user_id(self) -> None:
         command = to_command(_make_update(text="Привет!", user_id=999))
 
         assert command.message_text == "Привет!"
-        assert command.external_user_id == "999"
+        assert command.telegram_user_id == 999
         assert command.model_id is None
 
     def test_generates_a_correlation_id(self) -> None:

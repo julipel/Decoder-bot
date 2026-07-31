@@ -1,9 +1,11 @@
 """
 Тесты presentation/telegram/handlers/messages.py — без обращения к
 реальному Telegram API. `ProcessUserMessage` собирается по-настоящему,
-но поверх fake `LLMProvider` (как в tests/unit/application/
-test_process_user_message.py) — так handler-тесты проверяют реальную
-цепочку Update → Command → use case → ответ, не подменяя use case целиком.
+но поверх fake `LLMProvider` и in-memory fake-репозиториев (Sprint 2,
+задача S2-06 — `ProcessUserMessage` теперь зависит от репозиториев, не
+только от `LLMProvider`; см. `tests/support/fake_conversation_repositories.py`)
+— так handler-тесты проверяют реальную цепочку
+Update → Command → use case → ответ, не подменяя use case целиком.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 from telegram import Update
+from tests.support.fake_conversation_repositories import make_in_memory_repositories_factory
 
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
@@ -42,6 +45,7 @@ class FakeLLMProvider:
 def _make_process_user_message(provider: FakeLLMProvider) -> ProcessUserMessage:
     return ProcessUserMessage(
         llm_provider=provider,
+        repositories=make_in_memory_repositories_factory(),
         default_model=ModelId("openai/gpt-4o-mini"),
         system_prompt="Ты — ассистент.",
         temperature=0.7,
@@ -85,7 +89,7 @@ class TestSuccessfulMessage:
 
         await handler(_make_update(text="Как дела?"), MagicMock())
 
-        assert provider.received_requests[0].user_message.value == "Как дела?"
+        assert provider.received_requests[0].messages[-1].content == "Как дела?"
 
     async def test_generates_a_fresh_correlation_id_per_call(self) -> None:
         provider = FakeLLMProvider(response=_make_response())

@@ -1,6 +1,6 @@
 """
-DTO прикладного слоя первого вертикального среза — вход/выход одного
-use case обработки пользовательского сообщения и вызова LLM-провайдера.
+DTO прикладного слоя — вход/выход use case обработки пользовательского
+сообщения и вызова LLM-провайдера.
 
 Обычные `dataclass`, без Pydantic и без привязки к API-фреймворку
 (FastAPI/Telegram/OpenRouter) — это внутренний контракт application-слоя,
@@ -19,13 +19,38 @@ use case обработки пользовательского сообщени�
 «для проверки текста используй доменный MessageText»), а не самого DTO —
 иначе невалидный ввод падал бы при создании команды, а не как
 наблюдаемый исход выполнения use case'а.
+
+`ProcessUserMessageCommand.telegram_user_id` (Sprint 2, задача S2-06,
+было `external_user_id: str`) — переименован и типизирован как `int`,
+чтобы совпадать буквально с сигнатурой `UserRepository.
+get_or_create_by_telegram_user_id(telegram_user_id: int)`
+(`application/user/ports.py`): единственный источник этого значения —
+`Update.effective_user.id` (Telegram SDK, всегда `int`), промежуточное
+преобразование в `str` было артефактом Sprint 1 (ещё не было ни одного
+репозитория) и никакой сохранившейся причины для него не осталось.
+
+`LLMMessage`/`LLMRequest.messages` (Sprint 2, задача S2-06) заменяют
+`LLMRequest.user_message: MessageText` — порт `LLMProvider` теперь несёт
+всю историю активного диалога (система формирует контекст из
+`MessageRepository.history()`, backlog_2.md §11), а не одно сообщение.
+`LLMMessage` — минимальная роль+текст, без какой-либо специфики
+конкретного SDK (OpenAI/OpenRouter/Anthropic/...): её вводит и
+преобразует во внешний формат исключительно `infrastructure/llm/`
+(`OpenRouterLLMAdapter`). `role` — обычная `str` (не доменный
+`MessageRole`): `LLMRequest` — контракт LLM-порта, а не диалоговый
+агрегат, и не должен быть жёстко привязан к `domain/conversation/
+entities.py`; преобразование `MessageRole.USER/ASSISTANT -> "user"/
+"assistant"` выполняет вызывающий Use Case (значения enum и так
+совпадают со строками ролей, см. `domain/conversation/entities.py`).
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
+from uuid import UUID
 
-from dekoder.domain.conversation.value_objects import MessageText, ModelId, ProviderId
+from dekoder.domain.conversation.value_objects import ModelId, ProviderId
 from dekoder.shared.domain.identifiers import CorrelationId
 
 
@@ -37,7 +62,7 @@ class TokenUsage:
 
 @dataclass(frozen=True)
 class ProcessUserMessageCommand:
-    external_user_id: str
+    telegram_user_id: int
     message_text: str
     correlation_id: CorrelationId
     model_id: ModelId | None = None
@@ -49,13 +74,23 @@ class ProcessUserMessageResult:
     provider_id: ProviderId
     model_id: ModelId
     duration_ms: float
+    conversation_id: UUID
+    message_id: UUID
     usage: TokenUsage | None = None
+
+
+@dataclass(frozen=True)
+class LLMMessage:
+    """Одно сообщение истории диалога в форме, которую видит LLM-порт — роль + текст, без специфики SDK."""
+
+    role: str
+    content: str
 
 
 @dataclass(frozen=True)
 class LLMRequest:
     system_prompt: str
-    user_message: MessageText
+    messages: Sequence[LLMMessage]
     model_id: ModelId
     temperature: float
     max_tokens: int

@@ -1318,8 +1318,12 @@ Telegram
   (`infrastructure/persistence/message_repository.py`) + bootstrap-фабрика
   (`bootstrap/repositories.py`) — репозитории для Sprint 2 завершены, см.
   §36 для подробностей;
-* [ ] S2-06 и далее — расширение `ProcessUserMessage` историей (впервые
-  подключающее все три репозитория), `/new`, `/clear` — не начаты.
+* [x] S2-06 — расширение `ProcessUserMessage` историей диалога: теперь
+  идентифицирует пользователя, получает/создаёт активный диалог,
+  сохраняет сообщения (короткие транзакции ДО и ПОСЛЕ вызова LLM) и
+  формирует LLM-контекст из истории (впервые подключены все три
+  репозитория) — см. §36 для подробностей;
+* [ ] `/new`, `/clear` (`StartNewConversation`/`ClearConversation`) — не начаты.
 
 ---
 
@@ -1436,8 +1440,9 @@ Telegram
 Docker, e2e-тест, README) и актуализации README/§32. Дополнен по итогам
 задач S2-01 (подключение SQLAlchemy/Alembic), S2-02 (доменная модель
 `User`/`Conversation`/`Message`, ORM, mapper, первая миграция), S2-03
-(`UserRepository`), S2-04 (`ConversationRepository`) и S2-05
-(`MessageRepository`) — Спринт 2; репозитории Спринта 2 завершены.
+(`UserRepository`), S2-04 (`ConversationRepository`), S2-05
+(`MessageRepository`) и S2-06 (расширение `ProcessUserMessage` историей
+диалога — впервые подключены все три репозитория) — Спринт 2.
 
 ## Реализовано
 
@@ -1874,21 +1879,174 @@ bootstrap-фабрика (репозитории Sprint 2 завершены; б
   изменён; Unit of Work/Generic Repository не введены; `update`/`edit`/
   `change_role` для сообщений не существуют.
 
+**Спринт 2, S2-06 — расширение `ProcessUserMessage` историей диалога
+(впервые подключены все три репозитория Sprint 2 одновременно; `/new`/
+`/clear` не реализованы — следующая задача Sprint 2):**
+
+* `src/dekoder/application/conversation/dto.py` — `ProcessUserMessageCommand.
+  external_user_id: str` переименован в `telegram_user_id: int` (единственный
+  источник значения — `Update.effective_user.id`, Telegram SDK, всегда
+  `int`; строковое промежуточное представление было артефактом Sprint 1,
+  когда ещё не было ни одного репозитория); `ProcessUserMessageResult`
+  расширен `conversation_id: UUID`/`message_id: UUID` (`message_id` —
+  `id` сохранённого сообщения ассистента), `usage` остался последним
+  полем со значением по умолчанию. `LLMRequest.user_message: MessageText`
+  (одно сообщение) заменён на `LLMRequest.messages: Sequence[LLMMessage]`
+  (вся история активного диалога); добавлен `LLMMessage(role: str,
+  content: str)` — минимальная роль+текст без специфики конкретного SDK
+  (OpenAI/OpenRouter/Anthropic/...), `role` — обычная `str`, не доменный
+  `MessageRole` (`LLMRequest` — контракт LLM-порта, не диалоговый
+  агрегат);
+* `src/dekoder/application/conversation/ports.py` — добавлены
+  `ConversationRepositories` (frozen dataclass — `users`/`conversations`/
+  `messages`, по одному полю на каждый из трёх портов Sprint 2) и
+  `ConversationRepositoriesFactory` (`Callable[[], AbstractAsyncContextManager[
+  ConversationRepositories]]`). Это НЕ standalone Unit of Work
+  (backlog_2.md §15, инвариант 14 — явно запрещён): `ConversationRepositories`
+  не предоставляет `begin()`/`commit()`/`rollback()` и вообще не знает про
+  транзакции — просто именованный набор уже существующих портов; момент
+  открытия/коммита/отката транзакции остаётся инфраструктурной
+  ответственностью `session_scope()` (S2-01), в которую фабрику оборачивает
+  bootstrap. Это единственный способ, которым `ProcessUserMessage`
+  получает доступ к хранилищу — сам use case не импортирует SQLAlchemy,
+  `AsyncSession` или `async_sessionmaker` (проверено grep'ом, см. ниже);
+* `src/dekoder/application/conversation/use_cases/process_user_message.py`
+  — `ProcessUserMessage` теперь принимает `repositories:
+  ConversationRepositoriesFactory` вторым параметром конструктора (после
+  `llm_provider`). Поток `execute()`: провалидировать текст (без
+  изменений, как в Sprint 1) → `_save_user_message()` (короткая
+  транзакция 1: `UserRepository.get_or_create_by_telegram_user_id()` →
+  `ConversationRepository.get_or_create_active()` → построить доменный
+  `Message(id=uuid4(), role=USER, content=..., created_at=datetime.now(UTC))`
+  → `MessageRepository.save()`; commit при выходе из `async with`) →
+  `_load_history()` (короткая read-only транзакция 2, ВНЕ транзакции 1 и
+  ВНЕ вызова LLM — отдельный вызов `self._repositories()`, как
+  рекомендует backlog_2.md §9: «Вне транзакции: load history, call LLM») →
+  построить `LLMRequest` (роль `MessageRole.USER/ASSISTANT` →
+  `message.role.value`, история уже содержит только что сохранённое
+  сообщение пользователя — оно НЕ добавляется повторно) → вызвать
+  `LLMProvider.generate()` (полностью вне какой-либо открытой сессии) →
+  `_save_assistant_message()` (короткая транзакция 3: построить доменный
+  `Message(role=ASSISTANT, content=response.text, ...)` →
+  `MessageRepository.save()`; commit при выходе из `async with`) →
+  вернуть `ProcessUserMessageResult`. Три независимых коротких вызова
+  `self._repositories()` вместо одной обёрнутой транзакции на весь
+  сценарий — намеренно, чтобы: (а) пользовательское сообщение
+  коммитилось до сетевого вызова LLM (обязательное требование задачи),
+  (б) чтение истории не удерживало ту же транзакцию, что и запись, (в)
+  ошибка сохранения ответа ассистента не откатывала уже закоммиченное
+  сообщение пользователя. Обработка ошибок: `MessageRepository.save()`
+  падает `InfrastructureError` → пробрасывается как есть, LLM не
+  вызывается (ошибка при сохранении user message) или не вызывается
+  повторно (ошибка при сохранении assistant message) — `ProcessUserMessage`
+  не перехватывает и не оборачивает исключения репозиториев/LLM-провайдера
+  дополнительно, использует существующую иерархию `shared/errors.py` как
+  есть (как и в Sprint 1);
+* `src/dekoder/infrastructure/llm/openrouter_adapter.py` —
+  `OpenRouterLLMAdapter.generate()` строит `messages=[system, *history]`
+  (распаковка `request.messages`, преобразованных 1:1 в
+  `OpenRouterChatMessage(role=message.role, content=message.content)`)
+  вместо `[system, user]` Sprint 1; `schemas.py` не менялся (`OpenRouterChatMessage`
+  уже была `role`+`content`, wire-формат не изменился);
+* `src/dekoder/bootstrap/repositories.py` — добавлена
+  `build_conversation_repositories_factory(session_factory) ->
+  ConversationRepositoriesFactory`: каждый вызов возвращённого callable
+  открывает новую `session_scope()` и строит `ConversationRepositories` из
+  уже существующих `build_user_repository`/`build_conversation_repository`/
+  `build_message_repository` (S2-03/S2-04/S2-05) поверх этой сессии — эти
+  три фабрики впервые подключены к реальному сценарию;
+* `src/dekoder/bootstrap/container.py` — `build_container()` получил
+  третий параметр `db_session_factory: async_sessionmaker[AsyncSession]`,
+  собирает `repositories_factory` через `build_conversation_repositories_factory`
+  и передаёт его в `ProcessUserMessage`;
+* `src/dekoder/bootstrap/application.py` — `_lifespan` передаёт уже
+  готовую `db_session_factory` (S2-01, `init_database()`) в
+  `build_container()`; порядок вызовов не изменился (инициализация БД
+  всё ещё предшествует сборке контейнера в одном и том же event loop
+  uvicorn);
+* `src/dekoder/presentation/telegram/bot.py` — `build_telegram_application()`
+  разделена на `build_telegram_application(bot_token)` (только `/start`) и
+  `register_message_handler(application, process_user_message)`
+  (обработчик текста отдельно). Причина: `telegram_main.py` теперь должен
+  собирать `ProcessUserMessage` (через `build_container()`, которому нужна
+  `db_session_factory`) только ПОСЛЕ `init_database()`, а `init_database()`
+  по-прежнему обязана выполняться внутри `post_init` `run_polling()`
+  (S2-01: `aiosqlite`-соединения привязаны к event loop'у, в котором были
+  открыты, `run_polling()` создаёт собственный loop) — до S2-06 весь
+  `Application` собирался одной функцией до `run_polling()`, теперь
+  обработчик текста регистрируется отдельно, внутри `post_init`;
+* `src/dekoder/telegram_main.py` — `main()` больше не строит
+  `ApplicationContainer`/`ProcessUserMessage` заранее: `build_telegram_application()`
+  вызывается без `process_user_message` (только `/start`), а внутри
+  `post_init` (`_startup`) — `init_database()` → `build_container()` →
+  `register_message_handler()`, в этом порядке, в одном и том же event
+  loop'е `run_polling()`;
+* `src/dekoder/presentation/telegram/mapper.py` — `to_command()` передаёт
+  `telegram_user_id=user.id` (`int` напрямую из `Update.effective_user.id`)
+  вместо `external_user_id=str(user.id)`;
+* `pyproject.toml` — добавлен `[tool.pytest.ini_options] pythonpath =
+  ["."]`, чтобы тестовые модули могли импортировать общий helper
+  `tests/support/fake_conversation_repositories.py` (in-memory
+  fake-реализации `UserRepository`/`ConversationRepository`/
+  `MessageRepository` + `ConversationRepositoriesFactory` поверх них, без
+  SQLAlchemy) как пакет `tests.support...`;
+* тесты: `tests/unit/application/test_process_user_message.py` переписан
+  под новый контракт — richer in-memory fake-репозитории (с инструментацией
+  `fail_on_save_call(n, error)` для инъекции сбоя сохранения N-го
+  сообщения) + fake `LLMProvider`, без SQLAlchemy; покрывает все
+  обязательные сценарии backlog_2_tasks.md (S2-06): новый пользователь
+  (создание User+Conversation, сохранение user message, LLM получает
+  историю, сохранение assistant message, возврат ответа), существующий
+  пользователь/диалог (не создаются повторно, история продолжается),
+  порядок и отсутствие дублирования истории, assistant message появляется
+  в истории только после успешного LLM-вызова, следующий запрос видит
+  предыдущий assistant message, ошибка LLM (user message сохранено,
+  assistant отсутствует, ошибка проброшена), ошибка сохранения user
+  message (LLM не вызывается), ошибка сохранения assistant message (user
+  message остаётся, LLM не вызывается повторно), возвращаемый тип —
+  `ProcessUserMessageResult`, не ORM/сырой SDK response; `tests/unit/
+  application/test_llm_provider_port.py`, `tests/integration/llm/
+  test_openrouter_adapter.py` (добавлен тест `[system, *history]` из трёх
+  сообщений в правильном порядке), `tests/unit/presentation/telegram/
+  {test_mapper.py,test_messages_handler.py}`, `tests/e2e/
+  test_conversation_scenario.py` — адаптированы под новые сигнатуры
+  (`telegram_user_id`, `request.messages`, `repositories=...`,
+  `register_message_handler()`); `tests/integration/
+  test_process_user_message_persistence.py` (новый, обязательный по
+  backlog_2_tasks.md S2-06) — реальные SQLAlchemy-репозитории поверх
+  временной SQLite (`tmp_path`, `Base.metadata.create_all()`) + fake LLM
+  (без сети): первое сообщение → 2 записи `messages` (user, assistant),
+  второе сообщение в том же диалоге → 4 записи, порядок ролей
+  user/assistant/user/assistant, один `conversation_id`, второй вызов LLM
+  реально получил `[{"Сообщение 1"}, {"Ответ 1"}, {"Сообщение 2"}]` —
+  подтверждает, что история из БД действительно доходит до LLM-порта;
+  `tests/integration/test_repositories_bootstrap.py` расширен —
+  `build_conversation_repositories_factory()` (каждый вызов — независимая
+  закоммиченная транзакция; исключение внутри `async with` откатывает
+  незакоммиченную запись). `grep -rln "sqlalchemy" src/dekoder/application/
+  conversation` — пусто (в т.ч. `process_user_message.py` не импортирует
+  SQLAlchemy впрямую — единственная зависимость от хранилища,
+  `ConversationRepositoriesFactory`, объявлена в `application/conversation/
+  ports.py` через `Callable`/`AbstractAsyncContextManager`, оба —
+  стандартная библиотека); Generic Repository/standalone Unit of
+  Work/Domain Events/Prompt Engine/Memory/RAG/summary/token
+  counting/retry/очереди — не добавлены; `/new`/`/clear` не реализованы.
+
 ## В разработке
 
-Ничего — репозитории Sprint 2 (`UserRepository`/`ConversationRepository`/
-`MessageRepository`, задачи S2-03/S2-04/S2-05) полностью реализованы.
-Следующий шаг — S2-06: расширение `ProcessUserMessage` историей диалога —
-первая задача, впервые подключающая все три репозитория одновременно
-(§33, backlog_2.md §9).
+Ничего — S2-06 завершена, `ProcessUserMessage` теперь stateful (история
+диалога сохраняется и передаётся в LLM). Следующий шаг — `/new`/`/clear`
+как отдельные use case (`StartNewConversation`/`ClearConversation`, §33,
+backlog_2.md §10).
 
 ## Не реализовано
 
-* расширение `ProcessUserMessage` историей диалога (впервые подключающее
-  уже готовые `UserRepository`/`ConversationRepository`/
-  `MessageRepository`), команды `/new`/`/clear` как use case
-  (`StartNewConversation`/`ClearConversation`) — следующие задачи Sprint 2
-  (S2-06 и далее, §33);
+* команды `/new`/`/clear` как use case (`StartNewConversation`/
+  `ClearConversation`) — следующие задачи Sprint 2 (§33, backlog_2.md
+  §10); `ProcessUserMessage` не анализирует текст на предмет команд
+  управления диалогом (backlog_2.md §9, «Отдельные сценарии управления
+  диалогом») — маршрутизация между `ProcessUserMessage` и будущими
+  `StartNewConversation`/`ClearConversation` тоже не реализована;
 * профили, Prompt Engine, память, RAG, каталог моделей, административные
   функции — по плану, следующие спринты (§33).
 
@@ -2057,14 +2215,57 @@ S2-05 (`MessageRepository`) реализован строго в граница�
 задачи S2-05, а не забытое подключение (см. `## Не реализовано` выше).
 ORM-моделей `sqlite_*.py` (мёртвое дерево) снова не касались.
 
+S2-06 (расширение `ProcessUserMessage` историей диалога) реализован
+эволюционно — существующий Sprint 1 use case расширен новыми
+зависимостями и этапами, второй параллельный use case или второй
+LLM-порт не создавались (backlog_2.md §9, ADR-2.6). Ключевое
+архитектурное решение — как передать `ProcessUserMessage` доступ к трём
+уже готовым репозиториям, не давая use case знать про `AsyncSession`/
+SQLAlchemy и не вводя запрещённый standalone Unit of Work
+(backlog_2.md §15, инвариант 14): `ConversationRepositoriesFactory`
+(`application/conversation/ports.py`) — узкий, специфичный для этого
+use case тип (`Callable[[], AbstractAsyncContextManager[
+ConversationRepositories]]`, `ConversationRepositories` — просто три поля
+`users`/`conversations`/`messages`, без методов транзакций), а не общая
+абстракция для произвольных агрегатов; конкретная реализация
+(`bootstrap/repositories.py::build_conversation_repositories_factory`)
+оборачивает уже существующий `session_scope()` (S2-01) — новый
+механизм транзакций не введён, использован принятый. Транзакционные
+границы — три коротких независимых вызова `self._repositories()`
+(сохранить user message + get/create user/conversation → отдельно
+прочитать историю → отдельно сохранить assistant message), а не одна
+обёрнутая транзакция на весь `execute()`: так гарантируется, что (а)
+LLM вызывается строго вне какой-либо открытой сессии, (б) ошибка
+сохранения assistant message не откатывает уже закоммиченное user
+message. `LLMRequest.user_message: MessageText` (одно сообщение) заменён
+на `LLMRequest.messages: Sequence[LLMMessage]` (вся история) — это
+расширение существующего порта `LLMProvider`, не новый порт;
+`OpenRouterLLMAdapter` — единственная реализация — обновлена вместе с
+портом, ничего провайдер-специфичного в `LLMMessage` нет (`role: str,
+content: str`). `ProcessUserMessageCommand.external_user_id: str`
+переименован в `telegram_user_id: int` — единственный источник значения
+это и требовал (`Update.effective_user.id`), строковое промежуточное
+представление не имело сохранившегося обоснования. Побочный эффект для
+`telegram_main.py`/`presentation/telegram/bot.py`: `ProcessUserMessage`
+теперь нельзя собрать до `init_database()`, а `init_database()` обязана
+жить внутри `post_init` `run_polling()` (ограничение S2-01, event loop);
+`build_telegram_application()` разделена на сборку `/start` (до
+`run_polling()`) и `register_message_handler()` (внутри `post_init`,
+после того как `ProcessUserMessage` готов) — минимальное изменение
+composition root, продиктованное новой зависимостью use case, а не
+рефакторинг ради рефакторинга. `/new`/`/clear` в этой задаче не
+реализовывались и не обсуждались текстом сообщения — `ProcessUserMessage`
+по-прежнему не анализирует, является ли сообщение командой управления
+диалогом (backlog_2.md §9, «Отдельные сценарии управления диалогом»).
+
 ## Следующее действие
 
-Репозитории Sprint 2 завершены (`UserRepository`/`ConversationRepository`/
-`MessageRepository` — S2-03/S2-04/S2-05). Начать S2-06 (§33, внешняя
-спецификация `backlog_2.md`, §9): расширение `ProcessUserMessage`
-историей диалога — первая задача, впервые подключающая все три
-репозитория одновременно (идентификация пользователя → активный диалог →
-сохранение сообщения пользователя → история → вызов LLM → сохранение
-ответа ассистента), команды `/new`/`/clear` как отдельные use case
-(`StartNewConversation`/`ClearConversation`) — по отдельному запросу
-пользователя, не автоматически.
+S2-06 завершена — `ProcessUserMessage` теперь stateful: идентифицирует
+пользователя, получает/создаёт активный диалог, сохраняет сообщения (две
+короткие транзакции вокруг вызова LLM, третья — для чтения истории) и
+формирует LLM-контекст из истории активного диалога. Следующий шаг —
+`/new`/`/clear` как отдельные use case (`StartNewConversation`/
+`ClearConversation`, §33, backlog_2.md §10) — по отдельному запросу
+пользователя, не автоматически; `ProcessUserMessage` не должен
+анализировать текст на предмет этих команд, маршрутизация — на уровне
+Telegram Adapter/будущего диспетчера команд.

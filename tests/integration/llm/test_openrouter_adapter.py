@@ -13,8 +13,8 @@ import httpx
 import pytest
 import respx
 
-from dekoder.application.conversation.dto import LLMRequest
-from dekoder.domain.conversation.value_objects import MessageText, ModelId
+from dekoder.application.conversation.dto import LLMMessage, LLMRequest
+from dekoder.domain.conversation.value_objects import ModelId
 from dekoder.infrastructure.llm.openrouter_adapter import OpenRouterLLMAdapter
 from dekoder.shared.domain.identifiers import CorrelationId
 from dekoder.shared.errors import LLMProviderError
@@ -32,7 +32,7 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
 def _make_request(model: str = "openai/gpt-4o-mini") -> LLMRequest:
     return LLMRequest(
         system_prompt="Ты — ассистент.",
-        user_message=MessageText("Привет!"),
+        messages=[LLMMessage(role="user", content="Привет!")],
         model_id=ModelId(model),
         temperature=0.7,
         max_tokens=512,
@@ -90,6 +90,35 @@ class TestSuccessfulGeneration:
             "temperature": 0.7,
             "max_tokens": 512,
         }
+
+    @respx.mock
+    async def test_sends_full_history_in_order_after_system_prompt(self, client: httpx.AsyncClient) -> None:
+        """Sprint 2 (S2-06): LLMRequest.messages несёт всю историю, адаптер строит [system, *history]."""
+        route = respx.post(CHAT_COMPLETIONS_URL).mock(return_value=httpx.Response(200, json=_success_payload()))
+        adapter = OpenRouterLLMAdapter(client=client, api_key="sk-test")
+        request = LLMRequest(
+            system_prompt="Ты — ассистент.",
+            messages=[
+                LLMMessage(role="user", content="Привет!"),
+                LLMMessage(role="assistant", content="Здравствуйте!"),
+                LLMMessage(role="user", content="Как дела?"),
+            ],
+            model_id=ModelId("openai/gpt-4o-mini"),
+            temperature=0.7,
+            max_tokens=512,
+            correlation_id=CorrelationId("corr-1"),
+        )
+
+        await adapter.generate(request)
+
+        sent = route.calls.last.request
+        body = json.loads(sent.content)
+        assert body["messages"] == [
+            {"role": "system", "content": "Ты — ассистент."},
+            {"role": "user", "content": "Привет!"},
+            {"role": "assistant", "content": "Здравствуйте!"},
+            {"role": "user", "content": "Как дела?"},
+        ]
 
     @respx.mock
     async def test_adds_optional_headers_when_provided(self, client: httpx.AsyncClient) -> None:

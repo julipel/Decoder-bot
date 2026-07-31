@@ -21,6 +21,17 @@ init_database`) инициализируется и проверяется вн�
 останавливает запуск процесса (`Application.__run` пробрасывает
 исключение из `post_init` дальше, после штатной попытки завершения) —
 то же fail-fast поведение, что и в `bootstrap/application.py`.
+
+С задачи S2-06 по той же причине (event loop) внутри `post_init`
+собирается и весь `ApplicationContainer` (`build_container()`), а не
+только `AsyncEngine`/фабрика сессий: `ProcessUserMessage` теперь зависит
+от `ConversationRepositoriesFactory`, построенной поверх
+`db_session_factory`, которая должна принадлежать loop'у `run_polling()`.
+Поэтому обработчик текстовых сообщений (`presentation/telegram/bot.py::
+register_message_handler`) регистрируется тоже внутри `post_init`, уже
+после того как `container.process_user_message` готов — `/start` не
+зависит от БД и регистрируется заранее, как и раньше, через
+`build_telegram_application()`.
 """
 
 from __future__ import annotations
@@ -31,7 +42,7 @@ from telegram.ext import Application
 
 from dekoder.bootstrap.container import build_container
 from dekoder.bootstrap.database import dispose_database, init_database
-from dekoder.presentation.telegram.bot import build_telegram_application
+from dekoder.presentation.telegram.bot import build_telegram_application, register_message_handler
 from dekoder.shared.config import Settings
 from dekoder.shared.logging import configure_logging, get_logger
 
@@ -49,11 +60,7 @@ def main() -> None:
         base_url=settings.openrouter.base_url,
         timeout=settings.llm.timeout,
     )
-    container = build_container(settings, http_client)
-    application = build_telegram_application(
-        bot_token=settings.telegram.bot_token.get_secret_value(),
-        process_user_message=container.process_user_message,
-    )
+    application = build_telegram_application(bot_token=settings.telegram.bot_token.get_secret_value())
 
     # Заполняется внутри `_startup`, читается внутри `_shutdown` — оба
     # колбэка выполняются в одном и том же loop'е `run_polling()`, простая
@@ -61,12 +68,15 @@ def main() -> None:
     # модуля (движок нигде не хранится за пределами этой функции).
     db_engine_holder: dict[str, AsyncEngine] = {}
 
-    async def _startup(_: Application) -> None:
+    async def _startup(app: Application) -> None:
         # post_init вызывается после успешной Application.initialize()
         # (в т.ч. getMe) — если этот лог не появился, polling не начался.
         _logger.info("telegram_polling_started")
-        db_engine, _db_session_factory = await init_database(settings)
+        db_engine, db_session_factory = await init_database(settings)
         db_engine_holder["engine"] = db_engine
+
+        container = build_container(settings, http_client, db_session_factory)
+        register_message_handler(app, container.process_user_message)
 
     async def _shutdown(_: Application) -> None:
         # Вызывается run_polling() при штатной остановке (после

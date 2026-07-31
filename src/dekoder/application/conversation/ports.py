@@ -1,8 +1,11 @@
 """
 `LLMProvider` — абстрактный контракт вызова генеративной модели,
 `ConversationRepository` — абстрактный контракт доступа к диалогам
-(Sprint 2, задача S2-04), и `MessageRepository` — абстрактный контракт
-доступа к сообщениям диалога (Sprint 2, задача S2-05).
+(Sprint 2, задача S2-04), `MessageRepository` — абстрактный контракт
+доступа к сообщениям диалога (Sprint 2, задача S2-05), и
+`ConversationRepositories`/`ConversationRepositoriesFactory` — контракт
+получения короткоживущей группы из всех трёх репозиториев для одной
+транзакции (Sprint 2, задача S2-06, см. ниже).
 
 `application/conversation/` не импортирует OpenRouter (или любого другого
 конкретного провайдера) — только этот протокол. Конкретные реализации
@@ -27,10 +30,14 @@ ports.py`), `Conversation`/`Message` — часть агрегата `conversati
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
+from dekoder.application.user.ports import UserRepository
 from dekoder.domain.conversation.entities import Conversation, Message
 
 
@@ -166,3 +173,54 @@ class MessageRepository(Protocol):
         истории возвращает `0`, не является ошибкой.
         """
         ...
+
+
+@dataclass(frozen=True)
+class ConversationRepositories:
+    """
+    Группа из трёх репозиториев, нужных `ProcessUserMessage` внутри ОДНОЙ
+    короткоживущей транзакции (Sprint 2, задача S2-06).
+
+    Это не Generic Repository и не самостоятельный Unit of Work —
+    абстрактный Unit of Work из backlog_2.md §15 (инвариант 14) явно
+    запрещён; `ConversationRepositories` не предоставляет
+    `begin()`/`commit()`/`rollback()` и вообще не знает про транзакции —
+    просто именованный набор из уже готовых `UserRepository`/
+    `ConversationRepository`/`MessageRepository`, каждый из которых
+    остаётся тем же протоколом, что и раньше. Транзакционные границы
+    (когда открыть/закрыть сессию, когда закоммитить) остаются
+    инфраструктурной ответственностью `session_scope()`
+    (`infrastructure/persistence/session.py`, задача S2-01) — `bootstrap/
+    repositories.py` оборачивает его в `ConversationRepositoriesFactory`
+    ниже.
+    """
+
+    users: UserRepository
+    conversations: ConversationRepository
+    messages: MessageRepository
+
+
+ConversationRepositoriesFactory = Callable[[], AbstractAsyncContextManager[ConversationRepositories]]
+"""
+Фабрика короткоживущих транзакций для `ProcessUserMessage` (Sprint 2,
+задача S2-06).
+
+Вызов `repositories_factory()` возвращает асинхронный контекстный
+менеджер: вход в `async with` открывает новую независимую транзакцию
+(в инфраструктурной реализации — `session_scope()` поверх новой
+`AsyncSession`) и отдаёт `ConversationRepositories`, построенные над ней;
+успешный выход из блока коммитит транзакцию, исключение внутри блока —
+откатывает. Каждый вызов `repositories_factory()` — новая, независимая
+транзакция (backlog_2.md §9, «Транзакционные границы»: «короткие
+транзакции», не одна долгая на весь сценарий).
+
+Это единственный способ, которым `ProcessUserMessage` получает доступ к
+хранилищу — сам он не импортирует SQLAlchemy, `AsyncSession` или
+`async_sessionmaker` (`application/conversation/use_cases/
+process_user_message.py`, claude.md §6/§24, backlog_2.md §15, инварианты
+3/4). Конкретная реализация (`bootstrap/repositories.py::
+build_conversation_repositories_factory`) — единственное место, которому
+разрешено знать одновременно про этот тип и про `AsyncSession`/
+`session_scope()` — то же правило единственной точки сборки, что и у
+остальных bootstrap-фабрик (claude.md §8.5).
+"""

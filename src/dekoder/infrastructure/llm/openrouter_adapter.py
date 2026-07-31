@@ -9,6 +9,15 @@ Completions API (`POST /chat/completions`, OpenAI-совместимый фор�
 конструктор и переиспользуется — адаптер не знает базовый URL OpenRouter
 (это настройка клиента, конфигурируется в bootstrap-слое) и не создаёт
 клиент сам.
+
+Sprint 2 (задача S2-06): `LLMRequest.messages` несёт всю историю
+активного диалога (`LLMMessage(role, content)`, роль уже "user"/
+"assistant" — строковая, не доменный `MessageRole`), не одно сообщение
+(`user_message: MessageText` из Sprint 1 удалён). Адаптер строит
+`messages=[system, *history]` — переводит `LLMMessage` в
+`OpenRouterChatMessage` один в один (`role`/`content`), никакой
+дополнительной интерпретации истории здесь нет: решение о том, какие
+сообщения входят в контекст, принимает `ProcessUserMessage`, не адаптер.
 """
 
 from __future__ import annotations
@@ -50,7 +59,7 @@ class OpenRouterLLMAdapter(LLMProvider):
             model=request.model_id.value,
             messages=[
                 OpenRouterChatMessage(role="system", content=request.system_prompt),
-                OpenRouterChatMessage(role="user", content=request.user_message.value),
+                *(OpenRouterChatMessage(role=message.role, content=message.content) for message in request.messages),
             ],
             temperature=request.temperature,
             max_tokens=request.max_tokens,

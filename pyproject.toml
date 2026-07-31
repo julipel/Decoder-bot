@@ -97,6 +97,10 @@ minversion = "7.0"
 testpaths = ["tests"]
 addopts = "--cov=dekoder --cov-report=term-missing"
 asyncio_mode = "auto"
+# Sprint 2 (задача S2-06): tests/support/ — общий helper (in-memory fake
+# репозитории) для нескольких тестовых модулей ProcessUserMessage;
+# без этого `tests` не резолвится как пакет для `tests.support....` импортов.
+pythonpath = ["."]
 
 [tool.coverage.run]
 source = ["src/dekoder"]

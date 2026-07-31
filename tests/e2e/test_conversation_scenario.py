@@ -36,6 +36,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler
+from tests.support.fake_conversation_repositories import make_in_memory_repositories_factory
 
 from dekoder.application.conversation.dto import (
     LLMRequest,
@@ -45,7 +46,7 @@ from dekoder.application.conversation.dto import (
 )
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
-from dekoder.presentation.telegram.bot import build_telegram_application
+from dekoder.presentation.telegram.bot import build_telegram_application, register_message_handler
 from dekoder.presentation.telegram.handlers.messages import UNEXPECTED_ERROR_MESSAGE
 from dekoder.presentation.telegram.handlers.start import START_MESSAGE
 from dekoder.presentation.telegram.mapper import TELEGRAM_SAFE_MESSAGE_LIMIT
@@ -75,6 +76,7 @@ class FakeLLMProvider:
 def _make_process_user_message(provider: FakeLLMProvider) -> ProcessUserMessage:
     return ProcessUserMessage(
         llm_provider=provider,
+        repositories=make_in_memory_repositories_factory(),
         default_model=ModelId("openai/gpt-4o-mini"),
         system_prompt="Ты — ассистент.",
         temperature=0.7,
@@ -83,7 +85,9 @@ def _make_process_user_message(provider: FakeLLMProvider) -> ProcessUserMessage:
 
 
 def _build_application(process_user_message: ProcessUserMessage) -> Application:
-    return build_telegram_application(bot_token=_TEST_BOT_TOKEN, process_user_message=process_user_message)
+    application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
+    register_message_handler(application, process_user_message)
+    return application
 
 
 def _handlers(application: Application) -> tuple[object, object]:
@@ -150,9 +154,9 @@ class TestFullConversationScenario:
         await message_callback(update, MagicMock())
 
         # текст извлекается
-        assert provider.received_requests[0].user_message.value == "Как дела?"
+        assert provider.received_requests[0].messages[-1].content == "Как дела?"
         # user id передаётся
-        assert captured_commands[0].external_user_id == "999"
+        assert captured_commands[0].telegram_user_id == 999
         # correlation id создаётся
         assert captured_commands[0].correlation_id
         # use case вызывается один раз
