@@ -7,6 +7,13 @@ create_application — фабрика FastAPI-приложения (bootstrap-с
 клиент создаётся при старте приложения (внутри `async with` в
 `_lifespan`) и закрывается при остановке (выход из `async with`) — не
 при импорте модуля и не внутри `OpenRouterLLMAdapter.generate()`.
+
+С задачи S2-01 `_lifespan` также инициализирует постоянное хранилище
+данных (`bootstrap/database.py::init_database`) до того, как приложение
+начнёт принимать запросы: ошибка подключения к базе данных не даёт
+FastAPI завершить запуск (fail-fast), а не проявляется позже как ошибка
+первого запроса. `AsyncEngine` создаётся и уничтожается (`dispose()`) в
+одном и том же event loop — loop'е uvicorn, обслуживающем `_lifespan`.
 """
 
 from __future__ import annotations
@@ -19,6 +26,7 @@ from fastapi import FastAPI, Request
 
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.bootstrap.container import ApplicationContainer, build_container
+from dekoder.bootstrap.database import dispose_database, init_database
 from dekoder.composition.health import APP_VERSION
 from dekoder.composition.health import router as health_router
 from dekoder.shared.config import Settings
@@ -33,15 +41,21 @@ def create_application(settings: Settings) -> FastAPI:
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-        async with httpx.AsyncClient(
-            base_url=settings.openrouter.base_url,
-            timeout=settings.llm.timeout,
-        ) as http_client:
-            app.state.container = build_container(settings, http_client)
-            yield
-            # Дошли сюда при остановке приложения: `async with` сейчас
-            # выйдет из блока и закроет http_client (httpx.AsyncClient.
-            # __aexit__) — единственное место, где клиент закрывается.
+        db_engine, db_session_factory = await init_database(settings)
+        try:
+            async with httpx.AsyncClient(
+                base_url=settings.openrouter.base_url,
+                timeout=settings.llm.timeout,
+            ) as http_client:
+                app.state.container = build_container(settings, http_client)
+                app.state.db_engine = db_engine
+                app.state.db_session_factory = db_session_factory
+                yield
+                # Дошли сюда при остановке приложения: `async with` сейчас
+                # выйдет из блока и закроет http_client (httpx.AsyncClient.
+                # __aexit__) — единственное место, где клиент закрывается.
+        finally:
+            await dispose_database(db_engine)
 
     app = FastAPI(title=settings.application.name, version=APP_VERSION, lifespan=_lifespan)
     app.include_router(health_router)

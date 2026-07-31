@@ -15,6 +15,9 @@ dependencies = [
     "httpx",
     "python-telegram-bot",
     "structlog",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.22.1",
+    "alembic>=1.18.5",
 ]
 
 [project.optional-dependencies]

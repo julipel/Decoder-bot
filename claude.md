@@ -1286,6 +1286,21 @@ Telegram
 
 Не реализовывать эти функции в рамках спринта 1.
 
+## Текущий спринт (обновление)
+
+**Спринт 2: постоянное хранилище данных, диалоги, история — начат.**
+
+Цель и полный состав спринта — внешняя архитектурная спецификация
+`backlog_2.md` (не входит в этот репозиторий) и §33 ниже. Прогресс по
+задачам:
+
+* [x] S2-01 — подключение SQLAlchemy 2.x (async) и Alembic: только
+  инфраструктура (`infrastructure/persistence/`, `alembic/`,
+  `bootstrap/database.py`), без ORM-моделей, репозиториев и таблиц —
+  см. §36 для подробностей;
+* [ ] S2-02 и далее — доменные сущности `User`/`Conversation`/`Message`,
+  репозитории, история сообщений, `/new`, `/clear` — не начаты.
+
 ---
 
 # 33. План следующих спринтов
@@ -1398,7 +1413,8 @@ Telegram
 
 Этот раздел необходимо обновлять после завершения заметных задач.
 Переписан по итогам завершения Спринта 1 целиком (Telegram-слой,
-Docker, e2e-тест, README) и актуализации README/§32.
+Docker, e2e-тест, README) и актуализации README/§32. Дополнен по итогам
+задачи S2-01 (подключение SQLAlchemy/Alembic, Спринт 2).
 
 ## Реализовано
 
@@ -1450,15 +1466,78 @@ Docker, e2e-тест, README) и актуализации README/§32.
   поверх всего среза) — 143 теста, ruff/mypy/pytest проходят на каждом
   коммите (pre-commit).
 
+**Спринт 2, S2-01 — подключение SQLAlchemy и Alembic (только
+инфраструктура, без ORM-моделей/репозиториев/таблиц):**
+
+* `src/dekoder/shared/config.py` — добавлен `DatabaseSettings`
+  (`env_prefix="DATABASE_"`), поле `url` со значением по умолчанию
+  `sqlite+aiosqlite:///./data/app.db` (относительный путь, без
+  зависимости от конкретной машины), подключён к `Settings.database`;
+* `src/dekoder/infrastructure/persistence/base.py` — единая
+  `Base(DeclarativeBase)` для всех будущих ORM-моделей;
+* `src/dekoder/infrastructure/persistence/engine.py` —
+  `create_database_engine()` (единый `AsyncEngine`, `aiosqlite`,
+  `echo=False` по умолчанию, URL логируется без пароля), централизованное
+  включение `PRAGMA foreign_keys=ON` для каждого нового SQLite-соединения
+  (`event.listens_for(engine.sync_engine, "connect")`),
+  `verify_database_connection()` (`SELECT 1`, ошибка → `InfrastructureError`);
+* `src/dekoder/infrastructure/persistence/session.py` —
+  `create_session_factory()` (`async_sessionmaker`, `expire_on_commit=False`,
+  `autoflush=False`) и `session_scope()` — единый механизм получения
+  `AsyncSession` (commit при успехе / rollback при исключении / close всегда);
+* `src/dekoder/bootstrap/database.py` — `init_database()` (каталог для
+  SQLite-файла → engine → проверка подключения → session factory) и
+  `dispose_database()`; единственное место, создающее каталог `./data/`
+  (не файл БД и не таблицы — только Alembic создаёт схему);
+* `src/dekoder/bootstrap/application.py` — `_lifespan` вызывает
+  `init_database()` до приёма трафика (fail-fast при недоступной БД) и
+  `dispose_database()` при остановке, в одном event loop'е (uvicorn);
+  `AsyncEngine`/`async_sessionmaker` доступны через `app.state.db_engine`/
+  `app.state.db_session_factory`;
+* `src/dekoder/telegram_main.py` — DB-инициализация выполняется внутри
+  `post_init` (а не до `run_polling()`) и disposal — внутри
+  `post_shutdown`: `run_polling()` создаёт собственный event loop, а
+  `aiosqlite`-соединения привязаны к тому loop'у, в котором были открыты;
+  ошибка подключения к БД внутри `post_init` останавливает запуск процесса;
+* `alembic/` + `alembic.ini` — инициализированы шаблоном `-t async`;
+  `alembic/env.py` использует `DatabaseSettings().url` (не весь `Settings`
+  — миграции не должны требовать `TELEGRAM_BOT_TOKEN`/`OPENROUTER_API_KEY`)
+  и `target_metadata = Base.metadata` для autogenerate; `alembic.ini` без
+  абсолютных путей (`%(here)s`), плейсхолдер `sqlalchemy.url` не
+  используется (перезаписывается в `env.py`);
+  `alembic/versions/` пока пуст (`.gitkeep`) — ORM-моделей ещё нет,
+  `alembic upgrade head`/`downgrade base`/`upgrade head`/`revision
+  --autogenerate` вручную проверены на пустом списке миграций;
+* `.env.example` — добавлен `DATABASE_URL`; `.gitignore` — `data/*.db`,
+  `data/*.sqlite`, `data/*.sqlite3` игнорируются, `data/.gitkeep`
+  (пустой каталог) отслеживается через явное исключение;
+  `pyproject.toml`/`uv.lock` — добавлены `sqlalchemy[asyncio]`,
+  `aiosqlite`, `alembic` (`uv add`);
+* тесты: `tests/unit/shared/test_config.py` (расширен —
+  `DatabaseSettings`), `tests/integration/persistence/{test_engine.py,
+  test_session.py}`, `tests/integration/test_database_bootstrap.py`,
+  `tests/integration/test_application_bootstrap.py` (расширен —
+  `DATABASE_URL` в тестовой фикстуре указывает на `tmp_path`, иначе
+  реальный lifespan писал бы `./data/app.db` при прогоне тестов);
+  Domain и Application Layer по-прежнему не импортируют SQLAlchemy
+  (`domain/conversation`, `application/conversation` — проверено grep'ом).
+* README.md — раздел «База данных и миграции» (команды `alembic
+  upgrade/downgrade/current/history/revision --autogenerate`).
+
 ## В разработке
 
-Ничего — Спринт 1 закрыт полностью, включая README. Следующий шаг —
-начало Спринта 2 (§33), отдельным запросом.
+Ничего в рамках S2-01 — задача закрыта полностью (инфраструктура,
+тесты, README, claude.md). Следующий шаг — S2-02: доменные сущности
+`User`/`Conversation`/`Message`, первая Alembic-миграция схемы,
+репозитории (§33).
 
 ## Не реализовано
 
-* диалоги, история, профили, Prompt Engine, память, RAG, каталог моделей,
-  административные функции — по плану, следующие спринты (§33).
+* доменные сущности `User`/`Conversation`/`Message`, ORM-модели,
+  репозитории, первая Alembic-миграция схемы, история сообщений, `/new`,
+  `/clear` — следующая задача Sprint 2 (S2-02 и далее, §33);
+* профили, Prompt Engine, память, RAG, каталог моделей, административные
+  функции — по плану, следующие спринты (§33).
 
 ## Известные расхождения
 
@@ -1513,9 +1592,23 @@ ports.py::LLMProvider` (этот срез, async, только текст, ре�
 по-прежнему в силе, реконсиляция не предпринимается без отдельного
 запроса.
 
+S2-01 (подключение SQLAlchemy/Alembic) реализован строго как
+инфраструктура, отдельно от `composition/infrastructure/persistence/
+sqlite_*.py` (мёртвое дерево, старые sync-репозитории — не тронуты,
+новые async-файлы добавлены в тот же каталог `infrastructure/
+persistence/`, но не конфликтуют по именам). Engine — bootstrap-singleton
+(создаётся в `bootstrap/database.py`, не в use case и не в Telegram-слое);
+для `telegram_main.py` инициализация вынесена в `post_init`/`post_shutdown`
+`Application`, а не в тело `main()` до `run_polling()` — осознанное
+решение из-за привязки `aiosqlite`-соединений к event loop'у, в котором
+они были открыты (`run_polling()` создаёт собственный loop).
+
 ## Следующее действие
 
-Начать Спринт 2 (§33): `User`, `Conversation`, `Message`, SQLite,
-SQLAlchemy, Alembic, repositories, история сообщений, политика
-контекста, `/new`, `/clear` — по отдельному запросу пользователя, не
+Начать S2-02 (§33, внешняя спецификация `backlog_2.md`): доменные
+сущности `User`, `Conversation`, `Message` (Domain Layer, без ORM),
+ORM-модели поверх `Base` (`infrastructure/persistence/`), первая
+Alembic-миграция схемы (таблицы/внешние ключи/индексы из `backlog_2.md`,
+§7), репозитории (`UserRepository`/`ConversationRepository`/
+`MessageRepository`) — по отдельному запросу пользователя, не
 автоматически.

@@ -8,12 +8,20 @@ claude.md §36). Совпадение поведения `/health` между д
 случайно (обе переиспользуют `composition.health.router`) и не защищает
 от регрессии в реальном `create_application` — лишний слой (lifespan,
 сборка `ApplicationContainer`) там был не покрыт.
+
+С задачи S2-01 `settings` также переопределяет `DATABASE_URL` на файл
+внутри `tmp_path`: реальный lifespan теперь инициализирует постоянное
+хранилище данных (`bootstrap/database.py`), и без переопределения тесты
+писали бы `./data/app.db` в рабочую директорию репозитория.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from dekoder.bootstrap.application import create_application
 from dekoder.bootstrap.container import ApplicationContainer
@@ -21,10 +29,11 @@ from dekoder.shared.config import Settings
 
 
 @pytest.fixture
-def settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
+def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Settings:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "test-webhook-secret")
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-api-key")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'test-app.db'}")
     return Settings()
 
 
@@ -57,3 +66,14 @@ def test_lifespan_wires_container_with_process_user_message(settings: Settings) 
 
     assert isinstance(container, ApplicationContainer)
     assert container.process_user_message is not None
+
+
+def test_lifespan_initializes_database_engine_and_session_factory(settings: Settings) -> None:
+    app = create_application(settings)
+
+    with TestClient(app):
+        db_engine = app.state.db_engine
+        db_session_factory = app.state.db_session_factory
+
+    assert isinstance(db_engine, AsyncEngine)
+    assert isinstance(db_session_factory, async_sessionmaker)

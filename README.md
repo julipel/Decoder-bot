@@ -38,8 +38,9 @@ src/dekoder/
 ├── domain/conversation/            # MessageText, ModelId, ProviderId
 ├── application/conversation/       # DTO, LLMProvider (порт), ProcessUserMessage
 ├── infrastructure/llm/             # OpenRouterLLMAdapter
+├── infrastructure/persistence/     # base.py/engine.py/session.py — SQLAlchemy async (S2-01, без ORM-моделей)
 ├── presentation/telegram/          # /start, обработчик текстовых сообщений
-├── bootstrap/                      # container.py, application.py — единственное место сборки
+├── bootstrap/                      # container.py, application.py, database.py — единственное место сборки
 └── shared/                         # config.py, logging.py, errors.py
 ```
 
@@ -59,9 +60,13 @@ src/dekoder/
 ## Технологический стек
 
 Python 3.11+, FastAPI, uvicorn, python-telegram-bot, httpx,
-pydantic / pydantic-settings, structlog. SQLite, Qdrant и остальной
-стек из `docs/versions/01_requirements_analysis_v2.0.md` относятся к
-будущим спринтам и в этом срезе не подключены.
+pydantic / pydantic-settings, structlog. С задачи S2-01 (Sprint 2)
+подключены SQLAlchemy 2.x (async, `AsyncEngine`/`AsyncSession`),
+`aiosqlite` и Alembic — только инфраструктура постоянного хранения
+(`src/dekoder/infrastructure/persistence/`, `alembic/`), без ORM-моделей,
+репозиториев и прикладных таблиц (появятся в следующей задаче Sprint 2).
+Qdrant и остальной стек из `docs/versions/01_requirements_analysis_v2.0.md`
+по-прежнему относятся к будущим спринтам и в этом срезе не подключены.
 
 ## Быстрый старт (локальная разработка)
 
@@ -101,6 +106,40 @@ uv run python -m dekoder.telegram_main
 `.env` и `.env.local` поддерживаются оба, `.env.local` имеет приоритет
 (см. `src/dekoder/shared/config.py`); ни один из них не коммитится.
 
+## База данных и миграции
+
+Постоянное хранилище (Sprint 2) — SQLite через SQLAlchemy 2.x (async,
+`aiosqlite`); строка подключения читается из `DATABASE_URL`
+(`.env.example`, по умолчанию `sqlite+aiosqlite:///./data/app.db`).
+Схема базы данных создаётся и изменяется **только** через Alembic —
+`Base.metadata.create_all()` не используется в рабочем коде.
+
+```powershell
+# Применить все миграции (создаёт/обновляет схему БД)
+uv run alembic upgrade head
+
+# Откатить последнюю миграцию / все миграции
+uv run alembic downgrade -1
+uv run alembic downgrade base
+
+# Посмотреть текущую применённую ревизию
+uv run alembic current
+
+# Посмотреть историю миграций
+uv run alembic history
+
+# Создать новую миграцию по изменениям ORM-моделей (autogenerate)
+uv run alembic revision --autogenerate -m "краткое описание изменения"
+```
+
+Каталог для файла SQLite (`./data/`) при необходимости создаётся
+автоматически при старте приложения (`bootstrap/database.py`) — сам файл
+БД и таблицы приложение не создаёт, только Alembic. На этапе S2-01 (эта
+задача) в проекте ещё нет ORM-моделей и прикладных таблиц — миграции
+появятся вместе с `User`/`Conversation`/`Message` в следующей задаче
+Sprint 2; команды выше уже работают (проверено на пустом списке
+миграций).
+
 ## Переменные окружения
 
 Полный список с комментариями — в [`.env.example`](.env.example).
@@ -113,6 +152,7 @@ uv run python -m dekoder.telegram_main
 | `TelegramSettings` | `TELEGRAM_` | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` | — |
 | `LLMSettings` | `LLM_` | — | `LLM_TIMEOUT`, `LLM_MAX_TOKENS`, `LLM_TEMPERATURE` |
 | `OpenRouterSettings` | `OPENROUTER_` | `OPENROUTER_API_KEY` | `OPENROUTER_BASE_URL`, `OPENROUTER_DEFAULT_MODEL` |
+| `DatabaseSettings` | `DATABASE_` | — | `DATABASE_URL` |
 
 Отсутствие обязательного секрета в окружении останавливает процесс при
 создании `Settings()` (fail-fast), а не на первом запросе.

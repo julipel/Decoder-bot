@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from dekoder.shared.config import (
     ApplicationSettings,
+    DatabaseSettings,
     LLMSettings,
     OpenRouterSettings,
     Settings,
@@ -116,6 +117,27 @@ class TestLLMSettingsDefaults:
         assert settings.temperature == valid_temperature
 
 
+class TestDatabaseSettingsDefaults:
+    def test_default_value_is_a_relative_sqlite_url(self) -> None:
+        settings = DatabaseSettings(_env_file=None)
+
+        assert settings.url == "sqlite+aiosqlite:///./data/app.db"
+        # без зависимости от абсолютного локального пути конкретной машины
+        assert not settings.url.startswith("sqlite+aiosqlite:////")
+
+    def test_can_be_overridden_via_environment_variable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///./data/custom.db")
+
+        settings = DatabaseSettings(_env_file=None)
+
+        assert settings.url == "sqlite+aiosqlite:///./data/custom.db"
+
+    def test_can_be_overridden_directly_in_tests_without_environment(self) -> None:
+        settings = DatabaseSettings(_env_file=None, url="sqlite+aiosqlite:///:memory:")
+
+        assert settings.url == "sqlite+aiosqlite:///:memory:"
+
+
 class TestSecretsHaveNoDefaults:
     def test_telegram_settings_require_bot_token(self) -> None:
         with pytest.raises(ValidationError):
@@ -164,7 +186,9 @@ class TestSettingsAggregation:
         assert isinstance(settings.telegram, TelegramSettings)
         assert isinstance(settings.llm, LLMSettings)
         assert isinstance(settings.openrouter, OpenRouterSettings)
+        assert isinstance(settings.database, DatabaseSettings)
         assert settings.application.port == 8080
         assert settings.llm.temperature == 0.3
         assert settings.telegram.bot_token.get_secret_value() == "token"
         assert settings.openrouter.api_key.get_secret_value() == "api-key"
+        assert settings.database.url == "sqlite+aiosqlite:///./data/app.db"

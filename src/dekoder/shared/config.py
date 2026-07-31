@@ -56,6 +56,26 @@ class LLMSettings(BaseSettings):
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
 
 
+class DatabaseSettings(BaseSettings):
+    """
+    Настройки постоянного хранилища данных (Sprint 2, S2-01). `url` —
+    единственный источник строки подключения для SQLAlchemy async engine
+    и Alembic (`infrastructure/persistence/engine.py`, `alembic/env.py`) —
+    ни то, ни другое не читает `.env`/`os.getenv` самостоятельно.
+
+    Значение по умолчанию — относительный путь (`./data/app.db`), не
+    зависящий от абсолютного пути конкретной машины; переопределяется
+    переменной окружения `DATABASE_URL` (в т.ч. в тестах, через
+    `monkeypatch.setenv` или `_env_file=None` + явный `url=...`).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="DATABASE_", env_file=_ENV_FILES, env_file_encoding="utf-8", extra="ignore"
+    )
+
+    url: str = "sqlite+aiosqlite:///./data/app.db"
+
+
 class OpenRouterSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="OPENROUTER_", env_file=_ENV_FILES, env_file_encoding="utf-8", extra="ignore"
@@ -82,3 +102,4 @@ class Settings(BaseSettings):
     telegram: TelegramSettings = Field(default_factory=TelegramSettings)  # type: ignore[arg-type]
     llm: LLMSettings = Field(default_factory=LLMSettings)
     openrouter: OpenRouterSettings = Field(default_factory=OpenRouterSettings)  # type: ignore[arg-type]
+    database: DatabaseSettings = Field(default_factory=DatabaseSettings)
