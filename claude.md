@@ -1312,8 +1312,14 @@ Telegram
   (`infrastructure/persistence/conversation_repository.py`) +
   bootstrap-фабрика (`bootstrap/repositories.py`) — см. §36 для
   подробностей;
-* [ ] S2-05 и далее — `MessageRepository`, расширение
-  `ProcessUserMessage` историей, `/new`, `/clear` — не начаты.
+* [x] S2-05 — `MessageRepository`: порт (`application/conversation/
+  ports.py`, рядом с `LLMProvider`/`ConversationRepository`) +
+  SQLAlchemy-реализация
+  (`infrastructure/persistence/message_repository.py`) + bootstrap-фабрика
+  (`bootstrap/repositories.py`) — репозитории для Sprint 2 завершены, см.
+  §36 для подробностей;
+* [ ] S2-06 и далее — расширение `ProcessUserMessage` историей (впервые
+  подключающее все три репозитория), `/new`, `/clear` — не начаты.
 
 ---
 
@@ -1430,7 +1436,8 @@ Telegram
 Docker, e2e-тест, README) и актуализации README/§32. Дополнен по итогам
 задач S2-01 (подключение SQLAlchemy/Alembic), S2-02 (доменная модель
 `User`/`Conversation`/`Message`, ORM, mapper, первая миграция), S2-03
-(`UserRepository`) и S2-04 (`ConversationRepository`) — Спринт 2.
+(`UserRepository`), S2-04 (`ConversationRepository`) и S2-05
+(`MessageRepository`) — Спринт 2; репозитории Спринта 2 завершены.
 
 ## Реализовано
 
@@ -1780,18 +1787,108 @@ bootstrap-фабрика (без `ConversationRepository`/`MessageRepository`, �
   application/user/ports.py` — пусто; `ProcessUserMessage` не изменён;
   `MessageRepository`/Unit of Work не введены.
 
+**Спринт 2, S2-05 — `MessageRepository`: порт + SQLAlchemy-реализация +
+bootstrap-фабрика (репозитории Sprint 2 завершены; без изменений
+`ProcessUserMessage`/`/new`/`/clear` — следующая задача Sprint 2, S2-06):**
+
+* `src/dekoder/application/conversation/ports.py` — расширен: рядом с
+  `LLMProvider`/`ConversationRepository` добавлен
+  `MessageRepository(Protocol)`, `@runtime_checkable`, тот же стиль. Порт
+  живёт в `application/conversation/` (не в отдельном подпакете) — по
+  аналогии с `ConversationRepository`: `Message` входит в
+  conversation-агрегат (ADR-2.3). Методы: `save` (сохраняет НОВОЕ
+  сообщение — никакого `update`/`edit`, сообщения неизменяемы; повторный
+  `id` должен быть отклонён БД через первичный ключ, не скрывается),
+  `history` (возвращает `list[Message]` всех сообщений диалога, строго
+  `created_at ASC, id ASC`, пустая история — `[]`, не исключение и не
+  `None`), `clear` (удаляет все сообщения диалога одной операцией,
+  возвращает число удалённых строк — `int`, идемпотентна). Возвращаемый
+  тип коллекции — `list[...]`, а не `Sequence[...]`: это единственная
+  используемая в проекте конвенция для коллекций в сигнатурах портов (не
+  считая мёртвого дерева `composition/`). Сигнатуры используют только
+  доменные типы и типы стандартной библиотеки — ни одного упоминания
+  SQLAlchemy (проверено grep'ом, см. ниже);
+* `src/dekoder/infrastructure/persistence/message_repository.py` —
+  `SQLAlchemyMessageRepository`, реализует порт структурно, поверх
+  `MessageORM`/`mappers.py` (S2-02), тот же стиль, что и
+  `SQLAlchemyUserRepository`/`SQLAlchemyConversationRepository`. Не
+  проверяет существование диалога и не вызывает `ConversationRepository`
+  — эту гарантию даёт внешний ключ `messages.conversation_id →
+  conversations.id` (S2-02); получение/создание `Conversation` —
+  ответственность вызывающего Use Case. Не решает роль сообщения, не
+  формирует LLM-контекст, не считает токены, не суммирует/не кэширует
+  историю. `history()` — typed `select()` с `.order_by(MessageORM.
+  created_at.asc(), MessageORM.id.asc())` — вторичная сортировка по `id`
+  обязательна для детерминизма при совпадающих `created_at` (подтверждено
+  интеграционным тестом с искусственно одинаковым `created_at` и разными
+  `id`). `clear()` — одна `sqlalchemy.delete()` с `WHERE conversation_id
+  = ...`, не построчная загрузка и не ORM-каскад (`MessageORM` и так без
+  `relationship()`, S2-02); число удалённых строк берётся из
+  `CursorResult.rowcount` (`AsyncSession.execute()` для DML-`delete()`
+  типизирован как `Result[Any]`, но во время выполнения это
+  `CursorResult` — `cast()` к `CursorResult` понадобился, чтобы mypy не
+  ругался на отсутствие `rowcount` на общем `Result`). Транзакционная
+  политика — как у `UserRepository`/`ConversationRepository`: `save()`
+  делает `add()` + `flush()` без `commit()` (момент фиксации — за
+  вызывающим кодом), `history()` — только `SELECT`, `clear()` — `DELETE`
+  + `flush()` без `commit()`, той же причине, что и `save()`. Нарушение
+  первичного ключа при `save()` (повтор `id`) или внешнего ключа
+  (неизвестный `conversation_id`) — `rollback()` + `InfrastructureError`,
+  не глотается молча;
+* `src/dekoder/bootstrap/repositories.py` — добавлена
+  `build_message_repository(session) -> MessageRepository`, рядом с
+  `build_user_repository`/`build_conversation_repository`, тем же стилем.
+  Сознательно НЕ подключена ни в `ApplicationContainer`, ни в
+  `ProcessUserMessage` — как и обе предыдущие фабрики, расширение
+  сценария историей диалога (впервые подключающее все три репозитория)
+  запланировано отдельной задачей Sprint 2 (S2-06);
+* тесты: `tests/unit/application/test_message_repository_port.py`
+  (контракт на fake in-memory реализации — `save` сохраняет и возвращает
+  сущность с исходными `id`/`content`, пустая история → `[]`, история
+  только своего диалога при нескольких диалогах в хранилище —
+  изоляция, сообщения, добавленные не по порядку, возвращаются
+  отсортированными по `created_at` затем `id`, `clear` удаляет только
+  сообщения своего диалога, повторный `clear` на пустой истории → `0` без
+  ошибки); `tests/integration/persistence/test_message_repository.py`
+  (SQLAlchemy-реализация на временной SQLite — сохранение user- и
+  assistant-сообщения с проверкой всех полей через `history()`, пустая
+  история для только что созданного диалога, изоляция между двумя
+  диалогами двух разных пользователей — у одного пользователя не может
+  быть двух активных диалогов одновременно, `uq_conversations_active_user`
+  из S2-02, поэтому тест использует двух пользователей, а не два диалога
+  одного, попытка сохранить сообщение с несуществующим `conversation_id` →
+  `InfrastructureError`/FK, запись не создана, `clear` реально удаляет
+  строки — проверено прямым `COUNT`, `Conversation` и его `closed_at`
+  остаются нетронутыми, **обязательный тест стабильности сортировки** —
+  два сообщения с искусственно одинаковым `created_at`, но разными `id`
+  (`00000000-...`/`ffffffff-...`, специально не совпадающими с порядком
+  вставки), результат `history()` детерминирован по `id ASC`); `tests/
+  integration/test_repositories_bootstrap.py` расширен
+  (`build_message_repository()` возвращает структурно совместимую и
+  реально работающую реализацию, связка `UserRepository` →
+  `ConversationRepository` → `MessageRepository` поверх одной `AsyncSession`
+  round-trip'ится). `grep -rln "sqlalchemy" src/dekoder/domain src/dekoder/
+  application/conversation/ports.py src/dekoder/application/user/
+  ports.py` — пусто (совпадения только в docstring'ах, упоминающих
+  отсутствие зависимости от SQLAlchemy текстом); `ProcessUserMessage` не
+  изменён; Unit of Work/Generic Repository не введены; `update`/`edit`/
+  `change_role` для сообщений не существуют.
+
 ## В разработке
 
-Ничего в рамках S2-04 — задача закрыта полностью (порт, SQLAlchemy-
-реализация, bootstrap-фабрика, тесты, claude.md). Следующий шаг — S2-05:
-`MessageRepository` (§33).
+Ничего — репозитории Sprint 2 (`UserRepository`/`ConversationRepository`/
+`MessageRepository`, задачи S2-03/S2-04/S2-05) полностью реализованы.
+Следующий шаг — S2-06: расширение `ProcessUserMessage` историей диалога —
+первая задача, впервые подключающая все три репозитория одновременно
+(§33, backlog_2.md §9).
 
 ## Не реализовано
 
-* `MessageRepository`, расширение `ProcessUserMessage` историей диалога
-  (включая подключение уже готовых `UserRepository`/
-  `ConversationRepository`), команды `/new`/`/clear` — следующие задачи
-  Sprint 2 (S2-05 и далее, §33);
+* расширение `ProcessUserMessage` историей диалога (впервые подключающее
+  уже готовые `UserRepository`/`ConversationRepository`/
+  `MessageRepository`), команды `/new`/`/clear` как use case
+  (`StartNewConversation`/`ClearConversation`) — следующие задачи Sprint 2
+  (S2-06 и далее, §33);
 * профили, Prompt Engine, память, RAG, каталог моделей, административные
   функции — по плану, следующие спринты (§33).
 
@@ -1930,11 +2027,44 @@ users.id` (S2-02); получение/создание `User` осталось �
 подключение (см. `## Не реализовано` выше). ORM-моделей `sqlite_*.py`
 (мёртвое дерево) снова не касались.
 
+S2-05 (`MessageRepository`) реализован строго в границах задачи — этим
+завершены все три репозитория Sprint 2 (`UserRepository`/
+`ConversationRepository`/`MessageRepository`), без изменений
+`ProcessUserMessage`/`/new`/`/clear` — следующая задача Sprint 2 (S2-06).
+Порт добавлен рядом с `LLMProvider`/`ConversationRepository` в
+`application/conversation/ports.py` — по аналогии с `ConversationRepository`:
+`Message` входит в conversation-агрегат (ADR-2.3). В отличие от
+`UserRepository`/`ConversationRepository`, метод `save()` не имеет
+парного `get_or_create*` — Sprint 2 не требует идемпотентного создания
+сообщений (каждое сообщение создаётся один раз явным вызовом Use Case), и
+метод не проверяет существование диалога — эту гарантию, как и у
+`ConversationRepository` относительно `User`, даёт внешний ключ
+(`messages.conversation_id → conversations.id`, S2-02), а не собственная
+проверка или вызов `ConversationRepository`. `history()` возвращает
+`list[Message]` в порядке `created_at ASC, id ASC` — вторичная сортировка
+по `id` обязательна для детерминизма при совпадающих `created_at`;
+подтверждено интеграционным тестом с искусственно равными `created_at` и
+намеренно «перевёрнутыми» относительно порядка вставки `id`
+(`00000000-...` вставлен вторым, но должен оказаться первым в результате).
+`clear()` — одна `DELETE`-операция (`sqlalchemy.delete()`), не построчное
+удаление и не ORM-каскад — `MessageORM` и так без `relationship()` (S2-02);
+возвращает `CursorResult.rowcount`, приведённый через `cast()`, поскольку
+`AsyncSession.execute()` типизирован как `Result[Any]`, не как
+`CursorResult`, хотя во время выполнения для DML `delete()` это всегда
+`CursorResult`. Bootstrap-фабрика (`build_message_repository`,
+`bootstrap/repositories.py`) подготовлена, но сознательно не подключена
+ни в `ApplicationContainer`, ни в `ProcessUserMessage` — явная граница
+задачи S2-05, а не забытое подключение (см. `## Не реализовано` выше).
+ORM-моделей `sqlite_*.py` (мёртвое дерево) снова не касались.
+
 ## Следующее действие
 
-Начать S2-05 (§33, внешняя спецификация `backlog_2.md`, §8):
-`MessageRepository` (интерфейс + SQLAlchemy-реализация поверх
-`MessageORM`/mapper'ов S2-02 — сохранение сообщения, получение истории
-диалога в хронологическом порядке `created_at ASC, id ASC`, удаление всех
-сообщений диалога для будущей команды `/clear`) — по отдельному запросу
+Репозитории Sprint 2 завершены (`UserRepository`/`ConversationRepository`/
+`MessageRepository` — S2-03/S2-04/S2-05). Начать S2-06 (§33, внешняя
+спецификация `backlog_2.md`, §9): расширение `ProcessUserMessage`
+историей диалога — первая задача, впервые подключающая все три
+репозитория одновременно (идентификация пользователя → активный диалог →
+сохранение сообщения пользователя → история → вызов LLM → сохранение
+ответа ассистента), команды `/new`/`/clear` как отдельные use case
+(`StartNewConversation`/`ClearConversation`) — по отдельному запросу
 пользователя, не автоматически.

@@ -1,7 +1,8 @@
 """
-`LLMProvider` — абстрактный контракт вызова генеративной модели, и
+`LLMProvider` — абстрактный контракт вызова генеративной модели,
 `ConversationRepository` — абстрактный контракт доступа к диалогам
-(Sprint 2, задача S2-04).
+(Sprint 2, задача S2-04), и `MessageRepository` — абстрактный контракт
+доступа к сообщениям диалога (Sprint 2, задача S2-05).
 
 `application/conversation/` не импортирует OpenRouter (или любого другого
 конкретного провайдера) — только этот протокол. Конкретные реализации
@@ -12,15 +13,16 @@
 use case'а, который бы его вызывал (см. задачу: не создавать
 неиспользуемые методы).
 
-`ConversationRepository` живёт здесь, а не в отдельном `application/
-conversation/` подпакете (которого и так уже нет — он и есть текущий
-пакет) — в отличие от `UserRepository` (`application/user/ports.py`),
-`Conversation` — часть агрегата `conversation` (ADR-2.3, backlog_2.md §6
-«Границы агрегатов»), поэтому её порт размещается рядом с `LLMProvider` в
-том же пакете, что и доменная сущность (`domain/conversation/entities.py`).
-Стиль — тот же: `Protocol` + `@runtime_checkable`, только доменные типы и
-типы стандартной библиотеки в сигнатурах (backlog_2.md §8, «Доменные и
-инфраструктурные типы»; §15, инварианты 3/4/12).
+`ConversationRepository`/`MessageRepository` живут здесь, а не в отдельном
+`application/conversation/` подпакете (которого и так уже нет — он и есть
+текущий пакет) — в отличие от `UserRepository` (`application/user/
+ports.py`), `Conversation`/`Message` — часть агрегата `conversation`
+(ADR-2.3, backlog_2.md §6 «Границы агрегатов»), поэтому их порты
+размещаются рядом с `LLMProvider` в том же пакете, что и доменные сущности
+(`domain/conversation/entities.py`). Стиль — тот же: `Protocol` +
+`@runtime_checkable`, только доменные типы и типы стандартной библиотеки в
+сигнатурах (backlog_2.md §8, «Доменные и инфраструктурные типы»; §15,
+инварианты 3/4/12).
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
-from dekoder.domain.conversation.entities import Conversation
+from dekoder.domain.conversation.entities import Conversation, Message
 
 
 @runtime_checkable
@@ -109,5 +111,58 @@ class ConversationRepository(Protocol):
         (`uq_conversations_active_user`, S2-02), не проверка «сначала
         SELECT, затем INSERT» на уровне Python (backlog_2.md §8,
         «Конкурентный доступ»).
+        """
+        ...
+
+
+@runtime_checkable
+class MessageRepository(Protocol):
+    """
+    `@runtime_checkable` — как у `LLMProvider`/`ConversationRepository`:
+    позволяет утверждать структурное соответствие fake-реализаций в
+    тестах, не требуя наследования от протокола.
+
+    `MessageRepository` не решает роль сообщения, не создаёт диалог и не
+    создаёт пользователя — эти данные передаёт вызывающий Use Case
+    (backlog_2.md §8, «MessageRepository», «Сохранение сообщений»).
+    Репозиторий не вызывает `ConversationRepository`/`UserRepository` и не
+    проверяет существование диалога сам — эту гарантию даёт внешний ключ
+    `messages.conversation_id → conversations.id` на уровне БД (S2-02), по
+    аналогии с тем, как `ConversationRepository` полагается на FK
+    `conversations.user_id → users.id`, а не на собственную проверку.
+    """
+
+    async def save(self, message: Message) -> Message:
+        """
+        Сохраняет НОВОЕ сообщение. Сообщения неизменяемы (backlog_2.md §6:
+        «после сохранения содержимое сообщения не изменяется») — отдельного
+        `update()`/`edit()` не существует и не появится. Повторное
+        сохранение с уже использованным `id` должно быть отклонено базой
+        данных через первичный ключ, реализация не должна скрывать это
+        нарушение. Сохраняет исходные `id`/`role`/`content`/`created_at`
+        без изменений.
+        """
+        ...
+
+    async def history(self, conversation_id: UUID) -> list[Message]:
+        """
+        Возвращает все сообщения одного диалога в детерминированном
+        хронологическом порядке `created_at ASC, id ASC` — вторичная
+        сортировка по `id` обязательна для детерминизма при совпадающих
+        `created_at` (backlog_2.md §7, «Порядок сообщений»). Пустая
+        история — пустой список, не исключение и не `None`. Фильтр строго
+        по `conversation_id` — сообщения других диалогов никогда не
+        попадают в результат.
+        """
+        ...
+
+    async def clear(self, conversation_id: UUID) -> int:
+        """
+        Удаляет ВСЕ сообщения диалога одной операцией удаления (не
+        построчно, не через ORM-каскад) и возвращает количество удалённых
+        строк. Не удаляет сам `Conversation`, не изменяет `closed_at`, не
+        создаёт новый диалог (backlog_2.md §7, «Правила удаления»; §8,
+        «Очистка истории»). Идемпотентна: повторный вызов на уже пустой
+        истории возвращает `0`, не является ошибкой.
         """
         ...
