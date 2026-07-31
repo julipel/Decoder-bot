@@ -6,6 +6,12 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+# Импортируется исключительно ради побочного эффекта — регистрации всех
+# ORM-моделей (User/Conversation/Message, задача S2-02) в Base.metadata
+# до того, как autogenerate начнёт сравнивать схему (см. docstring
+# infrastructure/persistence/models.py). Сам объект `models` не
+# используется напрямую.
+from dekoder.infrastructure.persistence import models  # noqa: F401
 from dekoder.infrastructure.persistence.base import Base
 from dekoder.shared.config import DatabaseSettings
 

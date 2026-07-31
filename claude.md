@@ -1298,8 +1298,13 @@ Telegram
   инфраструктура (`infrastructure/persistence/`, `alembic/`,
   `bootstrap/database.py`), без ORM-моделей, репозиториев и таблиц —
   см. §36 для подробностей;
-* [ ] S2-02 и далее — доменные сущности `User`/`Conversation`/`Message`,
-  репозитории, история сообщений, `/new`, `/clear` — не начаты.
+* [x] S2-02 — доменные сущности `User`/`Conversation`/`Message`,
+  ORM-модели, mapper Domain↔ORM, первая Alembic-миграция схемы
+  (`users`/`conversations`/`messages` + внешние ключи/индексы/
+  ограничения) — см. §36 для подробностей;
+* [ ] S2-03 и далее — репозитории (`UserRepository`/
+  `ConversationRepository`/`MessageRepository`), расширение
+  `ProcessUserMessage` историей, `/new`, `/clear` — не начаты.
 
 ---
 
@@ -1524,18 +1529,114 @@ Docker, e2e-тест, README) и актуализации README/§32. Допо�
 * README.md — раздел «База данных и миграции» (команды `alembic
   upgrade/downgrade/current/history/revision --autogenerate`).
 
+**Спринт 2, S2-02 — доменные сущности `User`/`Conversation`/`Message`,
+ORM-модели, mapper Domain↔ORM, первая Alembic-миграция схемы (без
+репозиториев и без изменений `ProcessUserMessage`/`/new`/`/clear` —
+следующая задача Sprint 2):**
+
+* `src/dekoder/domain/user/entities.py` — `User` (frozen dataclass,
+  `slots=True`): `id: UUID`, `telegram_user_id: int`, `created_at`/
+  `updated_at: datetime`. Инварианты в `__post_init__` (обычный
+  `ValueError`, как в `value_objects.py` — claude.md §20):
+  `telegram_user_id > 0`, `updated_at >= created_at`; неизменность
+  `telegram_user_id` после создания обеспечивается `frozen=True` — в
+  Sprint 2 нет сценария, обновляющего `User`. Новый подпакет
+  `domain/user/` (не внутри `domain/conversation/`) — `User` не входит в
+  агрегат `Conversation`;
+* `src/dekoder/domain/conversation/entities.py` — рядом с уже
+  существующим `value_objects.py`: `MessageRole` (`Enum`: `USER`,
+  `ASSISTANT` — только эти два значения, без system/tool/function),
+  `Message` (frozen dataclass, неизменяем — нет `updated_at` и методов
+  изменения; инвариант — `content.strip()` не пустой) и `Conversation`
+  (Aggregate Root, ADR-2.3: `dataclass(slots=True)`, НЕ frozen — метод
+  `close(closed_at)` устанавливает `closed_at`/обновляет `updated_at`,
+  запрещает повторное закрытие и `closed_at` раньше `created_at`;
+  свойство `is_active`). Ни один из трёх файлов не импортирует
+  SQLAlchemy — проверено grep'ом (см. ниже);
+* `src/dekoder/infrastructure/persistence/{user_orm.py,
+  conversation_orm.py,message_orm.py}` — typed declarative ORM-модели
+  (`Mapped[...]`/`mapped_column(...)`) поверх `Base` (S2-01), по одному
+  файлу на сущность. Без `relationship()` — доступ к диалогам/сообщениям
+  через будущие репозитории (S2-03+), не через ORM-навигацию; это же
+  исключает случайную загрузку всей истории сообщений (`lazy="joined"`)
+  и ORM-каскады, которые заменили бы будущую явную реализацию `/clear`.
+  Явные стабильные имена ограничений/индексов: `uq_users_telegram_user_id`,
+  `ix_conversations_user_id`, `uq_conversations_active_user` (частичный
+  уникальный индекс — `sa.Index(..., unique=True, sqlite_where=sa.text(
+  "closed_at IS NULL"))` — единственная защита инварианта «не более
+  одного активного диалога на пользователя» на уровне БД: обычный
+  `UNIQUE(user_id, closed_at)` недостаточен, SQL допускает несколько
+  строк с `NULL`), `ck_messages_role`, `ck_messages_content_not_empty`
+  (`length(trim(content, ' ' || char(9) || char(10) || char(13))) > 0` —
+  **не** просто `trim(content)`: SQLite `trim(X)` без второго аргумента
+  обрезает только пробелы (0x20), не табы/переводы строк — строка из
+  одних табов проходила бы как «непустая», обнаружено интеграционным
+  тестом при реализации задачи), `ix_messages_conversation_created`
+  (составной, `(conversation_id, created_at)`). `role` — обычный
+  `String` + `CheckConstraint`, не `sqlalchemy.Enum` — доменный
+  `MessageRole` остаётся чистым Python Enum;
+* `src/dekoder/infrastructure/persistence/mappers.py` — явные функции
+  `user_to_orm/user_to_domain`, `conversation_to_orm/
+  conversation_to_domain`, `message_to_orm/message_to_domain`. Не делают
+  запросов, не коммитят. Отдельно решена проблема таймстемпов: домен
+  всегда использует timezone-aware UTC `datetime`, но SQLite не
+  сохраняет offset (`DateTime(timezone=True)` возвращает *naive*
+  `datetime` после round-trip через `aiosqlite` — проверено вручную)
+  — mapper явно снимает tzinfo перед записью (`_to_naive_utc`) и
+  восстанавливает `tzinfo=UTC` при чтении (`_to_aware_utc`);
+* `src/dekoder/infrastructure/persistence/models.py` — единая точка
+  импорта всех ORM-моделей ради побочного эффекта регистрации в
+  `Base.metadata`; импортируется только из `alembic/env.py` (`# noqa:
+  F401` — единственный оправданный, документированный случай) — иначе
+  autogenerate не увидел бы таблицы;
+* `alembic/versions/a96ab72bfa8a_create_users_conversations_messages.py`
+  — первая миграция схемы: сгенерирована `alembic revision
+  --autogenerate` и вручную выверена (autogenerate верно распознал CHECK
+  и частичный индекс, но потребовалась ручная правка выражения `trim()`,
+  см. выше, и порядка операций). `upgrade` создаёт таблицы `users` →
+  `conversations` → `messages`, затем индексы; `downgrade` — строго в
+  обратном порядке (сначала индексы, включая частичный, затем таблицы
+  `messages` → `conversations` → `users`). `alembic check` подтверждает
+  отсутствие расхождений между ORM-моделями и применённой миграцией.
+  `alembic/env.py` дополнен импортом `infrastructure/persistence/models`
+  (только ради регистрации метаданных, см. выше);
+* тесты: `tests/unit/domain/{test_user_entity.py,
+  test_conversation_entity.py,test_message_entity.py}` (инварианты,
+  неизменяемость, `close()`); `tests/unit/infrastructure/persistence/
+  test_mappers.py` (round-trip Domain→ORM→Domain для всех трёх сущностей,
+  включая сохранение UTC-момента времени при разных исходных часовых
+  поясах); `tests/integration/persistence/test_orm_constraints.py` на
+  временной SQLite (`tmp_path`, схема — `Base.metadata.create_all()`,
+  единственное допустимое исключение для тестового окружения,
+  backlog_2.md §3): уникальность `telegram_user_id`, FK на
+  несуществующего user/conversation, CHECK на роль и на пустой/
+  пробельный `content`, и ключевой тест — второй активный диалог для
+  одного пользователя падает `IntegrityError` на уровне БД (подтверждено
+  вручную: `UNIQUE constraint failed: conversations.user_id`), после
+  закрытия первого — создание нового активного проходит;
+  `tests/integration/persistence/test_migrations.py` (`upgrade head` →
+  `downgrade base` → `upgrade head`, синхронные тесты — `alembic/env.py`
+  вызывает `asyncio.run()`, что упало бы `RuntimeError` из уже
+  работающего event loop `async def`-теста под `pytest-asyncio`);
+  Domain Layer по-прежнему не импортирует SQLAlchemy (`domain/
+  conversation`, `domain/user` — проверено grep'ом), `create_all()` не
+  вызывается нигде в рабочем коде (`grep -rn "create_all(" src` — пусто,
+  единственная ссылка на `Base.metadata.create_all` — в тестовой
+  фикстуре).
+
 ## В разработке
 
-Ничего в рамках S2-01 — задача закрыта полностью (инфраструктура,
-тесты, README, claude.md). Следующий шаг — S2-02: доменные сущности
-`User`/`Conversation`/`Message`, первая Alembic-миграция схемы,
-репозитории (§33).
+Ничего в рамках S2-02 — задача закрыта полностью (доменная модель,
+ORM, mapper, миграция, тесты, claude.md). Следующий шаг — S2-03:
+репозитории `UserRepository`/`ConversationRepository`/
+`MessageRepository` (§33).
 
 ## Не реализовано
 
-* доменные сущности `User`/`Conversation`/`Message`, ORM-модели,
-  репозитории, первая Alembic-миграция схемы, история сообщений, `/new`,
-  `/clear` — следующая задача Sprint 2 (S2-02 и далее, §33);
+* репозитории (`UserRepository`/`ConversationRepository`/
+  `MessageRepository`), расширение `ProcessUserMessage` историей
+  диалога, команды `/new`/`/clear` — следующие задачи Sprint 2 (S2-03 и
+  далее, §33);
 * профили, Prompt Engine, память, RAG, каталог моделей, административные
   функции — по плану, следующие спринты (§33).
 
@@ -1603,12 +1704,26 @@ persistence/`, но не конфликтуют по именам). Engine — b
 решение из-за привязки `aiosqlite`-соединений к event loop'у, в котором
 они были открыты (`run_polling()` создаёт собственный loop).
 
+S2-02 (доменная модель `User`/`Conversation`/`Message`, ORM, mapper,
+первая миграция) реализован строго в границах задачи: без репозиториев,
+без Unit of Work, без изменений `ProcessUserMessage`/`/new`/`/clear` —
+следующая задача Sprint 2 (S2-03). `User` получил собственный подпакет
+`domain/user/` (не внутри `domain/conversation/`), поскольку не входит
+в агрегат `Conversation` (ADR-2.3, backlog_2.md §6 «Границы агрегатов»);
+`Conversation`/`Message`/`MessageRole` — рядом с существующим
+`domain/conversation/value_objects.py`. ORM-модели — без `relationship()`
+(осознанно: доступ к диалогам/сообщениям будет через репозитории S2-03,
+не через ORM-навигацию — исключает случайную загрузку всей истории и
+избавляет от соблазна использовать ORM-каскады вместо явной реализации
+`/clear`). Частичный уникальный индекс на активный диалог пользователя
+— единственная защита инварианта на уровне БД, подтверждена
+интеграционным тестом (падает `IntegrityError`, не молча). ORM-моделей
+`sqlite_*.py` (мёртвое дерево) снова не касались.
+
 ## Следующее действие
 
-Начать S2-02 (§33, внешняя спецификация `backlog_2.md`): доменные
-сущности `User`, `Conversation`, `Message` (Domain Layer, без ORM),
-ORM-модели поверх `Base` (`infrastructure/persistence/`), первая
-Alembic-миграция схемы (таблицы/внешние ключи/индексы из `backlog_2.md`,
-§7), репозитории (`UserRepository`/`ConversationRepository`/
-`MessageRepository`) — по отдельному запросу пользователя, не
+Начать S2-03 (§33, внешняя спецификация `backlog_2.md`, §8):
+репозитории `UserRepository`/`ConversationRepository`/
+`MessageRepository` (интерфейсы + SQLAlchemy-реализации поверх ORM-
+моделей и mapper'ов S2-02) — по отдельному запросу пользователя, не
 автоматически.
