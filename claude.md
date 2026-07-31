@@ -1302,9 +1302,12 @@ Telegram
   ORM-модели, mapper Domain↔ORM, первая Alembic-миграция схемы
   (`users`/`conversations`/`messages` + внешние ключи/индексы/
   ограничения) — см. §36 для подробностей;
-* [ ] S2-03 и далее — репозитории (`UserRepository`/
-  `ConversationRepository`/`MessageRepository`), расширение
-  `ProcessUserMessage` историей, `/new`, `/clear` — не начаты.
+* [x] S2-03 — `UserRepository`: порт (`application/user/ports.py`) +
+  SQLAlchemy-реализация (`infrastructure/persistence/user_repository.py`)
+  + bootstrap-фабрика (`bootstrap/repositories.py`) — см. §36 для
+  подробностей;
+* [ ] S2-04 и далее — `ConversationRepository`/`MessageRepository`,
+  расширение `ProcessUserMessage` историей, `/new`, `/clear` — не начаты.
 
 ---
 
@@ -1419,7 +1422,9 @@ Telegram
 Этот раздел необходимо обновлять после завершения заметных задач.
 Переписан по итогам завершения Спринта 1 целиком (Telegram-слой,
 Docker, e2e-тест, README) и актуализации README/§32. Дополнен по итогам
-задачи S2-01 (подключение SQLAlchemy/Alembic, Спринт 2).
+задач S2-01 (подключение SQLAlchemy/Alembic), S2-02 (доменная модель
+`User`/`Conversation`/`Message`, ORM, mapper, первая миграция) и S2-03
+(`UserRepository`) — Спринт 2.
 
 ## Реализовано
 
@@ -1624,19 +1629,83 @@ ORM-модели, mapper Domain↔ORM, первая Alembic-миграция с�
   единственная ссылка на `Base.metadata.create_all` — в тестовой
   фикстуре).
 
+**Спринт 2, S2-03 — `UserRepository`: порт + SQLAlchemy-реализация +
+bootstrap-фабрика (без `ConversationRepository`/`MessageRepository`, без
+изменений `ProcessUserMessage`/`/new`/`/clear` — следующая задача Sprint 2):**
+
+* `src/dekoder/application/user/ports.py` — `UserRepository(Protocol)`,
+  `@runtime_checkable`, тот же стиль, что и `LLMProvider`
+  (`application/conversation/ports.py`). Отдельный подпакет
+  `application/user/` (не `application/conversation/`) — по аналогии с
+  тем, куда S2-02 положил доменную сущность (`domain/user/`, не
+  `domain/conversation/`): `User` не входит в агрегат `Conversation`.
+  Методы: `get_by_id`, `get_by_telegram_user_id` (оба — `User | None`,
+  отсутствие записи не исключение), `save` (сохраняет НОВУЮ сущность;
+  отдельного `update()` нет — `User` в Sprint 2 без изменяемых полей
+  бизнес-смысла), `get_or_create_by_telegram_user_id` (идемпотентна).
+  Сигнатуры используют только доменные типы и типы стандартной
+  библиотеки — ни одного упоминания SQLAlchemy (проверено grep'ом,
+  см. ниже);
+* `src/dekoder/infrastructure/persistence/user_repository.py` —
+  `SQLAlchemyUserRepository`, реализует порт структурно (без
+  наследования), поверх `UserORM`/`mappers.py` (S2-02). `AsyncSession`
+  получает через конструктор, не создаёт и не закрывает её сама, не
+  раскрывает `UserORM` наружу (все публичные методы возвращают `User`).
+  Транзакционная политика: `get_by_id`/`get_by_telegram_user_id` — только
+  `SELECT`; `save()` делает `add()` + `flush()` БЕЗ `commit()` (момент
+  фиксации остаётся за вызывающим кодом/`session_scope()`), при
+  `IntegrityError` — `rollback()` и `InfrastructureError`;
+  `get_or_create_by_telegram_user_id()` — единственное исключение с
+  собственным `commit()`/`rollback()` внутри (автономная операция без
+  сетевых вызовов, backlog_2.md §8 это прямо допускает). Разрешение
+  гонки: сначала `SELECT` по `telegram_user_id` → если не найден, `INSERT`
+  + `commit()` → при `IntegrityError` — `rollback()`, проверка, что это
+  именно нарушение `uq_users_telegram_user_id` (подстрока
+  `"users.telegram_user_id"` в `exc.orig` — SQLite не передаёт имя
+  constraint'а), а не произвольная ошибка целостности → повторный `SELECT`
+  по `telegram_user_id` → найден — вернуть найденного; не найден или
+  `IntegrityError` был не про `telegram_user_id` — `InfrastructureError`
+  (исходная ошибка не глотается молча). Единственный источник истины
+  против дублей — уникальное ограничение БД (S2-02), не `SELECT`-затем-
+  `INSERT` на уровне Python;
+* `src/dekoder/bootstrap/repositories.py` — `build_user_repository(session)
+  -> UserRepository`, единственное место, знающее одновременно про порт и
+  `SQLAlchemyUserRepository` (правило единственной точки сборки,
+  claude.md §8.5). Сознательно НЕ подключено ни в `ApplicationContainer`,
+  ни в `ProcessUserMessage` — расширение сценария историей диалога
+  запланировано отдельной задачей Sprint 2 (S2-06);
+* тесты: `tests/unit/application/test_user_repository_port.py` (контракт
+  на fake in-memory реализации — `get_by_id`/`get_by_telegram_user_id`
+  найден/не найден, `save`, идемпотентность `get_or_create`);
+  `tests/integration/persistence/test_user_repository.py` (SQLAlchemy-
+  реализация на временной SQLite — `get_by_id`/`get_by_telegram_user_id`,
+  `save` + дубликат `telegram_user_id` → `InfrastructureError`,
+  повторный `get_or_create` возвращает того же пользователя,
+  **обязательный тест конкурентности**: `asyncio.gather()` двух вызовов
+  `get_or_create_by_telegram_user_id()` с одним `telegram_user_id`,
+  каждый на собственной независимой `AsyncSession`, сходятся на одном
+  `id`, в БД — ровно одна строка; ORM-модель не протекает наружу —
+  явная проверка `isinstance(result, User)`/`not isinstance(result,
+  UserORM)`); `tests/integration/test_repositories_bootstrap.py`
+  (`build_user_repository()` возвращает структурно совместимую и реально
+  работающую реализацию поверх SQLite). `grep -rln "sqlalchemy" src/
+  dekoder/domain src/dekoder/application/conversation/ports.py src/
+  dekoder/application/user/ports.py` — пусто; `ProcessUserMessage` не
+  изменён; `ConversationRepository`/`MessageRepository`/Unit of Work не
+  введены.
+
 ## В разработке
 
-Ничего в рамках S2-02 — задача закрыта полностью (доменная модель,
-ORM, mapper, миграция, тесты, claude.md). Следующий шаг — S2-03:
-репозитории `UserRepository`/`ConversationRepository`/
-`MessageRepository` (§33).
+Ничего в рамках S2-03 — задача закрыта полностью (порт, SQLAlchemy-
+реализация, bootstrap-фабрика, тесты, claude.md). Следующий шаг — S2-04:
+`ConversationRepository` (§33).
 
 ## Не реализовано
 
-* репозитории (`UserRepository`/`ConversationRepository`/
-  `MessageRepository`), расширение `ProcessUserMessage` историей
-  диалога, команды `/new`/`/clear` — следующие задачи Sprint 2 (S2-03 и
-  далее, §33);
+* `ConversationRepository`/`MessageRepository`, расширение
+  `ProcessUserMessage` историей диалога (включая подключение уже
+  готового `UserRepository`), команды `/new`/`/clear` — следующие задачи
+  Sprint 2 (S2-04 и далее, §33);
 * профили, Prompt Engine, память, RAG, каталог моделей, административные
   функции — по плану, следующие спринты (§33).
 
@@ -1720,10 +1789,33 @@ S2-02 (доменная модель `User`/`Conversation`/`Message`, ORM, mappe
 интеграционным тестом (падает `IntegrityError`, не молча). ORM-моделей
 `sqlite_*.py` (мёртвое дерево) снова не касались.
 
+S2-03 (`UserRepository`) реализован строго в границах задачи: только
+пользователи, без `ConversationRepository`/`MessageRepository`, без
+Unit of Work/Generic Repository, без изменений `ProcessUserMessage`/
+`/new`/`/clear` — следующая задача Sprint 2 (S2-04). Порт получил
+собственный подпакет `application/user/` (не внутри
+`application/conversation/`, где лежит `LLMProvider`) — по аналогии с
+`domain/user/` из S2-02, `User` не входит в агрегат `Conversation`.
+Гонка при `get_or_create_by_telegram_user_id()` разрешается исключительно
+уникальным ограничением БД `uq_users_telegram_user_id` (S2-02): вторая из
+двух конкурентных транзакций падает `IntegrityError` на `commit()`,
+откатывается и повторно находит запись, созданную первой — подтверждено
+интеграционным тестом с `asyncio.gather()` на двух независимых
+`AsyncSession`. `IntegrityError` не считается автоматически доказательством
+гонки — проверяется, что это именно нарушение `uq_users_telegram_user_id`
+(по подстроке в `exc.orig`), иначе ошибка пробрасывается как
+`InfrastructureError`, не глотается молча. Отдельный `DuplicateUserError`
+не создан — `get_or_create` разрешает конфликт сам, как и требовала
+задача. Bootstrap-фабрика (`bootstrap/repositories.py`) подготовлена, но
+сознательно не подключена ни в `ApplicationContainer`, ни в
+`ProcessUserMessage` — это явная граница задачи S2-03, а не забытое
+подключение (см. `## Не реализовано` выше). ORM-моделей `sqlite_*.py`
+(мёртвое дерево) снова не касались.
+
 ## Следующее действие
 
-Начать S2-03 (§33, внешняя спецификация `backlog_2.md`, §8):
-репозитории `UserRepository`/`ConversationRepository`/
-`MessageRepository` (интерфейсы + SQLAlchemy-реализации поверх ORM-
-моделей и mapper'ов S2-02) — по отдельному запросу пользователя, не
+Начать S2-04 (§33, внешняя спецификация `backlog_2.md`, §8):
+`ConversationRepository` (интерфейс + SQLAlchemy-реализация поверх
+`ConversationORM`/mapper'ов S2-02, включая `get_or_create_active_for_user`
+и закрытие диалога) — по отдельному запросу пользователя, не
 автоматически.
