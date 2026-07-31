@@ -1,8 +1,8 @@
 """
-Тесты `bootstrap/repositories.py` (задача S2-03) — единственной точки
-сборки `UserRepository` поверх переданной `AsyncSession`. Проверяет, что
-фабрика возвращает структурно совместимую реализацию, которая реально
-работает поверх SQLite (не мок).
+Тесты `bootstrap/repositories.py` (задачи S2-03/S2-04) — единственной
+точки сборки `UserRepository`/`ConversationRepository` поверх переданной
+`AsyncSession`. Проверяет, что фабрики возвращают структурно совместимые
+реализации, которые реально работают поверх SQLite (не мок).
 """
 
 from __future__ import annotations
@@ -13,8 +13,9 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
+from dekoder.application.conversation.ports import ConversationRepository
 from dekoder.application.user.ports import UserRepository
-from dekoder.bootstrap.repositories import build_user_repository
+from dekoder.bootstrap.repositories import build_conversation_repository, build_user_repository
 from dekoder.infrastructure.persistence.base import Base
 from dekoder.infrastructure.persistence.engine import create_database_engine
 from dekoder.infrastructure.persistence.session import create_session_factory
@@ -46,6 +47,25 @@ class TestBuildUserRepository:
             assert isinstance(repository, UserRepository)
 
             created = await repository.get_or_create_by_telegram_user_id(4242)
+            fetched = await repository.get_by_id(created.id)
+
+        assert fetched == created
+
+
+class TestBuildConversationRepository:
+    async def test_returns_a_working_repository_satisfying_the_port(
+        self,
+        session_factory: async_sessionmaker,  # type: ignore[type-arg]
+    ) -> None:
+        async with session_factory() as session:
+            user_repository = build_user_repository(session)
+            user = await user_repository.get_or_create_by_telegram_user_id(4343)
+
+            repository = build_conversation_repository(session)
+
+            assert isinstance(repository, ConversationRepository)
+
+            created = await repository.get_or_create_active(user.id)
             fetched = await repository.get_by_id(created.id)
 
         assert fetched == created

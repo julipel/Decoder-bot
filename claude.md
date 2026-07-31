@@ -1306,8 +1306,14 @@ Telegram
   SQLAlchemy-реализация (`infrastructure/persistence/user_repository.py`)
   + bootstrap-фабрика (`bootstrap/repositories.py`) — см. §36 для
   подробностей;
-* [ ] S2-04 и далее — `ConversationRepository`/`MessageRepository`,
-  расширение `ProcessUserMessage` историей, `/new`, `/clear` — не начаты.
+* [x] S2-04 — `ConversationRepository`: порт
+  (`application/conversation/ports.py`, рядом с `LLMProvider`) +
+  SQLAlchemy-реализация
+  (`infrastructure/persistence/conversation_repository.py`) +
+  bootstrap-фабрика (`bootstrap/repositories.py`) — см. §36 для
+  подробностей;
+* [ ] S2-05 и далее — `MessageRepository`, расширение
+  `ProcessUserMessage` историей, `/new`, `/clear` — не начаты.
 
 ---
 
@@ -1423,8 +1429,8 @@ Telegram
 Переписан по итогам завершения Спринта 1 целиком (Telegram-слой,
 Docker, e2e-тест, README) и актуализации README/§32. Дополнен по итогам
 задач S2-01 (подключение SQLAlchemy/Alembic), S2-02 (доменная модель
-`User`/`Conversation`/`Message`, ORM, mapper, первая миграция) и S2-03
-(`UserRepository`) — Спринт 2.
+`User`/`Conversation`/`Message`, ORM, mapper, первая миграция), S2-03
+(`UserRepository`) и S2-04 (`ConversationRepository`) — Спринт 2.
 
 ## Реализовано
 
@@ -1694,18 +1700,98 @@ bootstrap-фабрика (без `ConversationRepository`/`MessageRepository`, �
   изменён; `ConversationRepository`/`MessageRepository`/Unit of Work не
   введены.
 
+**Спринт 2, S2-04 — `ConversationRepository`: порт + SQLAlchemy-
+реализация + bootstrap-фабрика (без `MessageRepository`, без изменений
+`ProcessUserMessage`/`/new`/`/clear` — следующая задача Sprint 2):**
+
+* `src/dekoder/application/conversation/ports.py` — расширен: рядом с
+  `LLMProvider` добавлен `ConversationRepository(Protocol)`,
+  `@runtime_checkable`, тот же стиль. Порт живёт в
+  `application/conversation/` (не в отдельном подпакете, как
+  `UserRepository` в `application/user/`) — `Conversation` входит в
+  conversation-агрегат (ADR-2.3), в отличие от `User`. Методы:
+  `get_by_id`, `get_active_by_user_id` (оба — `Conversation | None`,
+  активность строго `closed_at is None`, отсутствие — не исключение),
+  `save` (сохраняет НОВЫЙ диалог, нарушение
+  `uq_conversations_active_user` не скрывается), `close` (принимает
+  сущность, уже закрытую доменным методом `Conversation.close(...)` —
+  проверка инвариантов остаётся в Domain Layer), `get_or_create_active`
+  (идемпотентна). Сигнатуры используют только доменные типы — ни одного
+  упоминания SQLAlchemy (проверено grep'ом, см. ниже);
+* `src/dekoder/infrastructure/persistence/conversation_repository.py` —
+  `SQLAlchemyConversationRepository`, реализует порт структурно, поверх
+  `ConversationORM`/`mappers.py` (S2-02), тот же стиль, что и
+  `SQLAlchemyUserRepository`. Не проверяет существование пользователя и
+  не вызывает `UserRepository` — эту гарантию даёт внешний ключ
+  `conversations.user_id → users.id`; получение/создание `User` —
+  ответственность вызывающего Use Case. `get_active_by_user_id()`
+  использует `scalar_one_or_none()` (не `.first()`) — если БД вопреки
+  `uq_conversations_active_user` содержит больше одного активного
+  диалога, метод падает (`MultipleResultsFound`, обёрнут в
+  `InfrastructureError`), а не молча выбирает первую строку. `close()`
+  получает ORM-запись через `session.get()` и точечно обновляет только
+  `closed_at`/`updated_at` — сознательно БЕЗ `session.merge()`, чтобы не
+  перезаписать `user_id`/`created_at`; вызов `close()` с ещё активной
+  сущностью (`closed_at is None`) — `ValidationError` (ошибка вызова
+  контракта, не тихая перезапись); отсутствие записи с данным `id` в БД
+  на момент `close()` — `InfrastructureError` (в отличие от `get_by_id`,
+  где отсутствие нормально: вызывающий код уже должен был получить эту
+  сущность через репозиторий раньше). Транзакционная политика — как у
+  `UserRepository`: `save()`/`close()` делают `flush()` без `commit()`
+  (момент фиксации — за вызывающим кодом), `get_or_create_active()` —
+  самостоятельная транзакция с `commit()`/`rollback()` внутри. Разрешение
+  гонки: `SELECT` активного → не найден → `INSERT` + `commit()` → при
+  `IntegrityError` — `rollback()`, проверка подстроки
+  `"conversations.user_id"` в `exc.orig` (единственная UNIQUE-ошибка на
+  этой колонке — частичный индекс `uq_conversations_active_user`; FK-
+  нарушение даёт другое сообщение — `"FOREIGN KEY constraint failed"`,
+  проверено вручную) → повторный `SELECT` активного → найден — вернуть;
+  не найден или `IntegrityError` был не про активный диалог —
+  `InfrastructureError` (исходная ошибка не глотается молча);
+* `src/dekoder/bootstrap/repositories.py` — добавлена
+  `build_conversation_repository(session) -> ConversationRepository`,
+  рядом с `build_user_repository`, тем же стилем. Сознательно НЕ
+  подключена ни в `ApplicationContainer`, ни в `ProcessUserMessage` —
+  как и `build_user_repository` (S2-03), расширение сценария историей
+  диалога запланировано отдельной задачей Sprint 2 (S2-06);
+* тесты: `tests/unit/application/test_conversation_repository_port.py`
+  (контракт на fake in-memory реализации — активный диалог найден/не
+  найден с игнорированием закрытых, `get_or_create_active` создаёт при
+  первом вызове, идемпотентна при повторном, после `close()` создаёт
+  новый диалог с другим `id`, старый остаётся в хранилище);
+  `tests/integration/persistence/test_conversation_repository.py`
+  (SQLAlchemy-реализация на временной SQLite — `save`+`get_by_id`
+  round-trip, `get_active_by_user_id` находит активный/игнорирует
+  закрытый, `close` обновляет только `closed_at`/`updated_at` и не трогает
+  остальные поля, попытка сохранить диалог с несуществующим `user_id` →
+  `InfrastructureError`/FK, запись не создана, **обязательный тест
+  одного активного диалога** (второй активный того же пользователя →
+  `InfrastructureError` → закрыть первый → новый активный проходит),
+  **обязательный тест конкурентности** (`asyncio.gather()` двух
+  `get_or_create_active()` на независимых `AsyncSession` для одного
+  `user_id` — сходятся на одном `id`, в БД ровно одна активная строка),
+  проверка отсутствия eager-load `messages` (`not hasattr(result,
+  "messages")` — тривиально верно: у домена `Conversation` в принципе
+  нет такого поля, а `ConversationORM` не имеет `relationship()`, см.
+  S2-02); `tests/integration/test_repositories_bootstrap.py` расширен
+  (`build_conversation_repository()` возвращает структурно совместимую и
+  реально работающую реализацию). `grep -rln "sqlalchemy" src/dekoder/
+  domain src/dekoder/application/conversation/ports.py src/dekoder/
+  application/user/ports.py` — пусто; `ProcessUserMessage` не изменён;
+  `MessageRepository`/Unit of Work не введены.
+
 ## В разработке
 
-Ничего в рамках S2-03 — задача закрыта полностью (порт, SQLAlchemy-
-реализация, bootstrap-фабрика, тесты, claude.md). Следующий шаг — S2-04:
-`ConversationRepository` (§33).
+Ничего в рамках S2-04 — задача закрыта полностью (порт, SQLAlchemy-
+реализация, bootstrap-фабрика, тесты, claude.md). Следующий шаг — S2-05:
+`MessageRepository` (§33).
 
 ## Не реализовано
 
-* `ConversationRepository`/`MessageRepository`, расширение
-  `ProcessUserMessage` историей диалога (включая подключение уже
-  готового `UserRepository`), команды `/new`/`/clear` — следующие задачи
-  Sprint 2 (S2-04 и далее, §33);
+* `MessageRepository`, расширение `ProcessUserMessage` историей диалога
+  (включая подключение уже готовых `UserRepository`/
+  `ConversationRepository`), команды `/new`/`/clear` — следующие задачи
+  Sprint 2 (S2-05 и далее, §33);
 * профили, Prompt Engine, память, RAG, каталог моделей, административные
   функции — по плану, следующие спринты (§33).
 
@@ -1812,10 +1898,43 @@ Unit of Work/Generic Repository, без изменений `ProcessUserMessage`/
 подключение (см. `## Не реализовано` выше). ORM-моделей `sqlite_*.py`
 (мёртвое дерево) снова не касались.
 
+S2-04 (`ConversationRepository`) реализован строго в границах задачи:
+только диалоги, без `MessageRepository`, без Unit of Work/Generic
+Repository, без изменений `ProcessUserMessage`/`/new`/`/clear` —
+следующая задача Sprint 2 (S2-05). Порт добавлен рядом с `LLMProvider` в
+`application/conversation/ports.py` (не в отдельном подпакете, как
+`UserRepository`) — по аналогии с тем, куда S2-02 положил доменную
+сущность (`domain/conversation/entities.py`, не `domain/user/`):
+`Conversation` входит в conversation-агрегат (ADR-2.3). Гонка при
+`get_or_create_active()` разрешается исключительно уникальным
+ограничением БД `uq_conversations_active_user` (S2-02), тем же способом,
+что и у `UserRepository.get_or_create_by_telegram_user_id` (S2-03):
+вторая из двух конкурентных транзакций падает `IntegrityError` на
+`commit()`, откатывается и повторно находит запись, созданную первой —
+подтверждено интеграционным тестом с `asyncio.gather()` на двух
+независимых `AsyncSession`. `IntegrityError` не считается автоматически
+доказательством гонки — проверяется подстрока `"conversations.user_id"`
+в `exc.orig` (FK-нарушение даёт другое сообщение — `"FOREIGN KEY
+constraint failed"`, не пересекается), иначе ошибка пробрасывается как
+`InfrastructureError`, не глотается молча. `close()` обновляет
+`closed_at`/`updated_at` точечно через `session.get()`, без
+`session.merge()`, чтобы не перезаписать `user_id`/`created_at` —
+явное архитектурное требование задачи, не стилистический выбор.
+Репозиторий не проверяет существование пользователя и не вызывает
+`UserRepository` — гарантию даёт внешний ключ `conversations.user_id →
+users.id` (S2-02); получение/создание `User` осталось ответственностью
+будущего вызывающего Use Case (S2-06). Bootstrap-фабрика
+(`build_conversation_repository`, `bootstrap/repositories.py`)
+подготовлена, но сознательно не подключена ни в `ApplicationContainer`,
+ни в `ProcessUserMessage` — явная граница задачи S2-04, а не забытое
+подключение (см. `## Не реализовано` выше). ORM-моделей `sqlite_*.py`
+(мёртвое дерево) снова не касались.
+
 ## Следующее действие
 
-Начать S2-04 (§33, внешняя спецификация `backlog_2.md`, §8):
-`ConversationRepository` (интерфейс + SQLAlchemy-реализация поверх
-`ConversationORM`/mapper'ов S2-02, включая `get_or_create_active_for_user`
-и закрытие диалога) — по отдельному запросу пользователя, не
-автоматически.
+Начать S2-05 (§33, внешняя спецификация `backlog_2.md`, §8):
+`MessageRepository` (интерфейс + SQLAlchemy-реализация поверх
+`MessageORM`/mapper'ов S2-02 — сохранение сообщения, получение истории
+диалога в хронологическом порядке `created_at ASC, id ASC`, удаление всех
+сообщений диалога для будущей команды `/clear`) — по отдельному запросу
+пользователя, не автоматически.

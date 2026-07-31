@@ -1,5 +1,7 @@
 """
-LLMProvider — абстрактный контракт вызова генеративной модели.
+`LLMProvider` — абстрактный контракт вызова генеративной модели, и
+`ConversationRepository` — абстрактный контракт доступа к диалогам
+(Sprint 2, задача S2-04).
 
 `application/conversation/` не импортирует OpenRouter (или любого другого
 конкретного провайдера) — только этот протокол. Конкретные реализации
@@ -9,13 +11,25 @@ LLMProvider — абстрактный контракт вызова генер�
 Только `generate()` — `healthcheck()` не добавлен, т.к. сейчас нет
 use case'а, который бы его вызывал (см. задачу: не создавать
 неиспользуемые методы).
+
+`ConversationRepository` живёт здесь, а не в отдельном `application/
+conversation/` подпакете (которого и так уже нет — он и есть текущий
+пакет) — в отличие от `UserRepository` (`application/user/ports.py`),
+`Conversation` — часть агрегата `conversation` (ADR-2.3, backlog_2.md §6
+«Границы агрегатов»), поэтому её порт размещается рядом с `LLMProvider` в
+том же пакете, что и доменная сущность (`domain/conversation/entities.py`).
+Стиль — тот же: `Protocol` + `@runtime_checkable`, только доменные типы и
+типы стандартной библиотеки в сигнатурах (backlog_2.md §8, «Доменные и
+инфраструктурные типы»; §15, инварианты 3/4/12).
 """
 
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
+from uuid import UUID
 
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
+from dekoder.domain.conversation.entities import Conversation
 
 
 @runtime_checkable
@@ -28,3 +42,72 @@ class LLMProvider(Protocol):
     """
 
     async def generate(self, request: LLMRequest) -> LLMResponse: ...
+
+
+@runtime_checkable
+class ConversationRepository(Protocol):
+    """
+    `@runtime_checkable` — как у `LLMProvider`/`UserRepository`: позволяет
+    утверждать структурное соответствие fake-реализаций в тестах, не
+    требуя наследования от протокола.
+
+    Активность диалога определяется строго через `closed_at is None`
+    (`Conversation.is_active`, `domain/conversation/entities.py`) —
+    отдельного статуса/поля не существует (backlog_2.md §7).
+
+    Отсутствие записи — нормальное состояние, не исключение:
+    `get_by_id`/`get_active_by_user_id` возвращают `Conversation | None`
+    (backlog_2.md §8, «Обработка отсутствующих данных»); отсутствие
+    активного диалога — штатная ситуация, приводящая к созданию нового
+    через `get_or_create_active`, а не к ошибке.
+
+    `ConversationRepository` не проверяет существование пользователя и не
+    вызывает `UserRepository` — эту гарантию даёт внешний ключ
+    `conversations.user_id → users.id` на уровне БД (S2-02); получить
+    или создать `User` до вызова этого репозитория — ответственность
+    вызывающего Use Case (backlog_2.md §8, «UserRepository» /
+    «ConversationRepository», разделение ответственности).
+    """
+
+    async def get_by_id(self, conversation_id: UUID) -> Conversation | None: ...
+
+    async def get_active_by_user_id(self, user_id: UUID) -> Conversation | None:
+        """
+        Возвращает активный диалог пользователя (`closed_at is None`) или
+        `None`, если такого нет. Закрытые диалоги никогда не
+        возвращаются как активные.
+        """
+        ...
+
+    async def save(self, conversation: Conversation) -> Conversation:
+        """
+        Сохраняет НОВЫЙ диалог. Попытка сохранить второй активный диалог
+        того же пользователя должна быть отклонена базой данных
+        (частичный уникальный индекс `uq_conversations_active_user`,
+        S2-02) — реализация не должна скрывать это нарушение.
+        """
+        ...
+
+    async def close(self, conversation: Conversation) -> Conversation:
+        """
+        Закрывает диалог. Ожидает сущность, уже переведённую в закрытое
+        состояние доменным методом `Conversation.close(...)` — проверка
+        доменных инвариантов (нельзя закрыть уже закрытый диалог, нельзя
+        закрыть раньше `created_at`) выполняется в Domain Layer, не
+        здесь. Реализация обновляет только `closed_at`/`updated_at`
+        конкретной записи, не удаляет диалог и не трогает сообщения.
+        """
+        ...
+
+    async def get_or_create_active(self, user_id: UUID) -> Conversation:
+        """
+        Идемпотентная операция: находит активный диалог пользователя и
+        возвращает его; если активного диалога нет — создаёт новый
+        (`closed_at=None`) и сохраняет. Как и у `UserRepository.
+        get_or_create_by_telegram_user_id`, единственный источник истины
+        против дублей активного диалога — уникальное ограничение БД
+        (`uq_conversations_active_user`, S2-02), не проверка «сначала
+        SELECT, затем INSERT» на уровне Python (backlog_2.md §8,
+        «Конкурентный доступ»).
+        """
+        ...
