@@ -19,7 +19,19 @@ COPY src ./src
 RUN pip install --no-cache-dir .
 
 # Непривилегированный пользователь — процесс не должен работать от root.
-RUN useradd --create-home --uid 1000 dekoder
+# `/app/data` создаётся и передаётся во владение `dekoder` уже здесь, при
+# сборке образа: `bootstrap/database.py::_ensure_sqlite_directory_exists`
+# (Sprint 2, S2-01) создаёт этот каталог сама при старте, но `/app`
+# принадлежит `root` (создан предыдущими `COPY`/`WORKDIR`, ещё от имени
+# root) — без явного `chown` непривилегированный `dekoder` не может
+# создать в нём подкаталог (`mkdir: Permission denied`), и оба сервиса
+# (`api`/`telegram-bot`) падали бы при старте, не успев принять ни одного
+# запроса. Обнаружено и исправлено в задаче S2-11 (финальная интеграция) —
+# подтверждено вручную сборкой образа и попыткой `mkdir` от лица `dekoder`
+# до этого исправления.
+RUN useradd --create-home --uid 1000 dekoder \
+    && mkdir -p /app/data \
+    && chown -R dekoder:dekoder /app/data
 USER dekoder
 
 EXPOSE 8000

@@ -38,11 +38,20 @@ bootstrap-слоя, как и раньше.
 Команды `/new`/`/clear` не входят — отдельные use case (`StartNewConversation`/
 `ClearConversation`, следующая задача Sprint 2), `ProcessUserMessage` не
 анализирует текст сообщения на предмет команд управления диалогом.
+
+Задача S2-11 (финальная интеграция): `_build_message` гарантирует строго
+возрастающий `created_at` в рамках одного экземпляра (`_last_message_created_at`
+в `__init__`) — на части сред (в т.ч. эта Windows-машина, подтверждено
+вручную) две последовательные `datetime.now(UTC)` внутри одного `execute()`
+могут совпасть, а вторичный ключ сортировки `history()` — случайный UUID
+(S2-05), не связанный с порядком создания. Без этой гарантии порядок
+`user`/`assistant` в истории и, соответственно, в запросе к LLM становится
+непредсказуемым при совпадении `created_at`.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from dekoder.application.conversation.dto import (
@@ -74,6 +83,22 @@ class ProcessUserMessage:
         self._system_prompt = system_prompt
         self._temperature = temperature
         self._max_tokens = max_tokens
+        # Найдено при задаче S2-11 (финальная интеграция): системные часы
+        # некоторых сред (в т.ч. Windows) недостаточно точны, чтобы две
+        # последовательные `datetime.now(UTC)` внутри одного `execute()`
+        # (user message -> LLM -> assistant message) гарантированно
+        # различались. `MessageRepository.history()` сортирует по
+        # `created_at ASC, id ASC` (S2-05) — вторичный ключ `id` (случайный
+        # UUID) не связан с порядком создания, поэтому при совпадении
+        # `created_at` порядок user/assistant в истории становится
+        # непредсказуемым (подтверждено воспроизводимо падающим e2e-тестом,
+        # `tests/e2e/test_conversation_persistence_scenario.py`). Это же
+        # единственный компонент, обрабатывающий сообщения ВСЕХ
+        # пользователей за время жизни процесса (`ProcessUserMessage` —
+        # singleton, собирается один раз в `bootstrap/container.py`), поэтому
+        # достаточно гарантировать строго возрастающие `created_at` в рамках
+        # одного экземпляра — не требует изменений ORM/схемы/репозиториев.
+        self._last_message_created_at: datetime | None = None
 
     async def execute(self, command: ProcessUserMessageCommand) -> ProcessUserMessageResult:
         message_text = self._validate_message_text(command.message_text)
@@ -144,15 +169,26 @@ class ProcessUserMessage:
         async with self._repositories() as repositories:
             return await repositories.messages.save(assistant_message)
 
-    @staticmethod
-    def _build_message(conversation_id: UUID, role: MessageRole, content: str) -> Message:
-        """UUID и UTC created_at — тем же способом, что и репозитории S2-03/S2-04 (`uuid4()`/`datetime.now(UTC)`)."""
+    def _build_message(self, conversation_id: UUID, role: MessageRole, content: str) -> Message:
+        """
+        UUID — тем же способом, что и репозитории S2-03/S2-04 (`uuid4()`).
+
+        `created_at` — `datetime.now(UTC)`, но не ниже `created_at`
+        предыдущего сообщения, построенного этим же экземпляром (см.
+        `_last_message_created_at` в `__init__` — устраняет неустойчивый
+        порядок `history()` при недостаточном разрешении системных часов,
+        задача S2-11).
+        """
+        created_at = datetime.now(UTC)
+        if self._last_message_created_at is not None and created_at <= self._last_message_created_at:
+            created_at = self._last_message_created_at + timedelta(microseconds=1)
+        self._last_message_created_at = created_at
         return Message(
             id=uuid4(),
             conversation_id=conversation_id,
             role=role,
             content=content,
-            created_at=datetime.now(UTC),
+            created_at=created_at,
         )
 
     @staticmethod

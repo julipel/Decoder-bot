@@ -6,19 +6,30 @@ Prompt Engine, база знаний с RAG, память диалога, адм
 в [`CLAUDE.md`](claude.md) и в `docs/versions/` — это проектные
 документы, а не описание того, что уже запускается.
 
-**Что реально работает сейчас** — вертикальный срез (Sprint 1,
-Walking Skeleton):
+**Что реально работает сейчас** — Sprint 1 (Walking Skeleton) и Sprint 2
+(постоянное хранилище, диалоги, история) полностью завершены:
 
 ```text
 Telegram → ProcessUserMessage → LLMProvider → OpenRouterLLMAdapter → ответ
+                 │
+                 ├── User/Conversation/Message сохраняются в SQLite
+                 └── история активного диалога передаётся в LLM целиком
+
+Telegram /new   → StartNewConversation → закрывает текущий диалог, создаёт новый
+Telegram /clear → ClearConversation    → удаляет историю, диалог остаётся активным
 ```
 
-Пользователь пишет боту в Telegram → сообщение уходит в единственный
-пока use case `ProcessUserMessage` → тот вызывает LLM через порт
-`LLMProvider` → адаптер `OpenRouterLLMAdapter` обращается к OpenRouter →
-ответ модели возвращается пользователю в Telegram. Диалогов, истории,
-профилей, памяти, RAG и выбора модели в этом срезе ещё нет — они
-добавляются по спринтам (`claude.md`, §33).
+Пользователь пишет боту в Telegram → сообщение уходит в use case
+`ProcessUserMessage` → пользователь и его активный диалог находятся или
+создаются в SQLite, сообщение пользователя сохраняется → история диалога
+читается из базы и передаётся в LLM через порт `LLMProvider` → адаптер
+`OpenRouterLLMAdapter` обращается к OpenRouter → ответ модели сохраняется
+как сообщение ассистента и возвращается пользователю в Telegram. Команда
+`/new` закрывает текущий диалог и начинает новый (старая история не
+удаляется, просто перестаёт быть активной); `/clear` удаляет сообщения
+текущего диалога, не закрывая и не пересоздавая сам диалог. Профилей,
+Prompt Engine, памяти, RAG и выбора модели ещё нет — они добавляются по
+следующим спринтам (`claude.md`, §33).
 
 ## Архитектура
 
@@ -35,13 +46,23 @@ bootstrap → собирает presentation + application + infrastructure
 
 ```text
 src/dekoder/
-├── domain/conversation/            # MessageText, ModelId, ProviderId
-├── application/conversation/       # DTO, LLMProvider (порт), ProcessUserMessage
-├── infrastructure/llm/             # OpenRouterLLMAdapter
-├── infrastructure/persistence/     # base.py/engine.py/session.py — SQLAlchemy async (S2-01, без ORM-моделей)
-├── presentation/telegram/          # /start, обработчик текстовых сообщений
-├── bootstrap/                      # container.py, application.py, database.py — единственное место сборки
-└── shared/                         # config.py, logging.py, errors.py
+├── domain/
+│   ├── conversation/                # MessageText/ModelId/ProviderId, MessageRole, Message, Conversation (Aggregate Root)
+│   └── user/                        # User
+├── application/
+│   ├── conversation/                # DTO, LLMProvider/ConversationRepository/MessageRepository (порты),
+│   │                                 #   ProcessUserMessage, StartNewConversation, ClearConversation
+│   └── user/                        # UserRepository (порт)
+├── infrastructure/
+│   ├── llm/                         # OpenRouterLLMAdapter
+│   └── persistence/                 # base.py/engine.py/session.py (SQLAlchemy async, S2-01) +
+│                                     #   user_orm.py/conversation_orm.py/message_orm.py + mappers.py (S2-02) +
+│                                     #   user_repository.py/conversation_repository.py/message_repository.py (S2-03..S2-05)
+├── presentation/telegram/           # /start, /new, /clear, обработчик текстовых сообщений, mapper.py, bot.py
+├── bootstrap/                       # container.py, application.py, database.py, repositories.py — единственное место сборки
+└── shared/                          # config.py, logging.py, errors.py
+
+alembic/                             # первая и единственная миграция Sprint 2 (users/conversations/messages)
 ```
 
 > В репозитории также существует более крупное, отдельное от этого
@@ -60,11 +81,12 @@ src/dekoder/
 ## Технологический стек
 
 Python 3.11+, FastAPI, uvicorn, python-telegram-bot, httpx,
-pydantic / pydantic-settings, structlog. С задачи S2-01 (Sprint 2)
-подключены SQLAlchemy 2.x (async, `AsyncEngine`/`AsyncSession`),
-`aiosqlite` и Alembic — только инфраструктура постоянного хранения
-(`src/dekoder/infrastructure/persistence/`, `alembic/`), без ORM-моделей,
-репозиториев и прикладных таблиц (появятся в следующей задаче Sprint 2).
+pydantic / pydantic-settings, structlog. С Sprint 2 подключены и
+полностью используются SQLAlchemy 2.x (async, `AsyncEngine`/`AsyncSession`),
+`aiosqlite` и Alembic — постоянное хранилище `users`/`conversations`/
+`messages` (ORM-модели, репозитории, единственная миграция схемы
+`alembic/versions/`), с `PRAGMA foreign_keys=ON` для каждого SQLite-
+соединения (`infrastructure/persistence/engine.py`).
 Qdrant и остальной стек из `docs/versions/01_requirements_analysis_v2.0.md`
 по-прежнему относятся к будущим спринтам и в этом срезе не подключены.
 
@@ -100,22 +122,49 @@ uv run uvicorn dekoder.main:app --reload
 uv run python -m dekoder.telegram_main
 ```
 
+**Перед первым запуском примените миграции** (создают `./data/app.db` со
+схемой `users`/`conversations`/`messages` — см. раздел «База данных и
+миграции» ниже):
+
+```powershell
+uv run alembic upgrade head
+```
+
 После этого можно написать боту `/start`, затем любое текстовое
-сообщение — оно уйдёт в OpenRouter и ответ модели придёт обратно в чат.
+сообщение — оно уйдёт в OpenRouter, а сам диалог (пользователь, диалог,
+оба сообщения) сохранится в SQLite. Дальнейшие сообщения того же
+пользователя продолжают тот же диалог — LLM получает всю историю.
+
+Дополнительные команды:
+
+- `/new` — закрывает текущий диалог и начинает новый с чистой историей
+  (старый диалог и его сообщения никуда не пропадают, просто перестают
+  быть активными); если бот ещё не видел этого пользователя — отвечает
+  нейтральным сообщением, ничего не создавая;
+- `/clear` — удаляет всю историю текущего активного диалога, сам диалог
+  остаётся тем же самым (тот же `conversation_id`) — следующее сообщение
+  продолжает его же, с чистой историей.
 
 `.env` и `.env.local` поддерживаются оба, `.env.local` имеет приоритет
 (см. `src/dekoder/shared/config.py`); ни один из них не коммитится.
 
 ## База данных и миграции
 
-Постоянное хранилище (Sprint 2) — SQLite через SQLAlchemy 2.x (async,
-`aiosqlite`); строка подключения читается из `DATABASE_URL`
-(`.env.example`, по умолчанию `sqlite+aiosqlite:///./data/app.db`).
-Схема базы данных создаётся и изменяется **только** через Alembic —
-`Base.metadata.create_all()` не используется в рабочем коде.
+Постоянное хранилище — SQLite через SQLAlchemy 2.x (async, `aiosqlite`);
+строка подключения читается из `DATABASE_URL` (`.env.example`, по
+умолчанию `sqlite+aiosqlite:///./data/app.db`). Схема базы данных
+создаётся и изменяется **только** через Alembic — `Base.metadata.
+create_all()` нигде не вызывается в рабочем коде (только в тестовых
+фикстурах). Единственная на сегодня миграция (`alembic/versions/
+a96ab72bfa8a_create_users_conversations_messages.py`) создаёт таблицы
+`users` → `conversations` → `messages` с внешними ключами, `CHECK`-
+ограничениями (роль сообщения, непустой текст) и частичным уникальным
+индексом `uq_conversations_active_user` (не более одного активного
+диалога на пользователя).
 
 ```powershell
-# Применить все миграции (создаёт/обновляет схему БД)
+# Применить все миграции (создаёт/обновляет схему БД) — идемпотентно,
+# повторный запуск на уже актуальной схеме ничего не ломает
 uv run alembic upgrade head
 
 # Откатить последнюю миграцию / все миграции
@@ -128,17 +177,21 @@ uv run alembic current
 # Посмотреть историю миграций
 uv run alembic history
 
+# Убедиться, что ORM-модели и применённая схема не разошлись
+uv run alembic check
+
 # Создать новую миграцию по изменениям ORM-моделей (autogenerate)
 uv run alembic revision --autogenerate -m "краткое описание изменения"
 ```
 
 Каталог для файла SQLite (`./data/`) при необходимости создаётся
 автоматически при старте приложения (`bootstrap/database.py`) — сам файл
-БД и таблицы приложение не создаёт, только Alembic. На этапе S2-01 (эта
-задача) в проекте ещё нет ORM-моделей и прикладных таблиц — миграции
-появятся вместе с `User`/`Conversation`/`Message` в следующей задаче
-Sprint 2; команды выше уже работают (проверено на пустом списке
-миграций).
+БД и таблицы приложение не создаёт, только Alembic (запустите `alembic
+upgrade head` перед первым стартом приложения — см. «Быстрый старт»
+выше). Каждое новое SQLite-соединение получает `PRAGMA foreign_keys=ON`
+централизованно (`infrastructure/persistence/engine.py`) — внешние ключи
+между `users`/`conversations`/`messages` реально проверяются на уровне
+БД, а не только в приложении.
 
 ## Переменные окружения
 
@@ -185,9 +238,18 @@ pre-commit run --all-files
 ```text
 tests/
 ├── unit/            # domain, application use cases, presentation-мапперы, shared
-├── integration/     # OpenRouter adapter через respx, /health endpoint
-└── e2e/             # сквозной сценарий диалога поверх всего среза
+├── integration/     # OpenRouter adapter через respx, /health endpoint, Alembic-миграции,
+│                    #   репозитории/persistence-потоки ProcessUserMessage/StartNewConversation/
+│                    #   ClearConversation поверх временной SQLite (без сети)
+└── e2e/             # test_conversation_scenario.py — сквозной сценарий диалога поверх реального
+                     #   telegram.ext.Application (in-memory fake-репозитории);
+                     # test_conversation_persistence_scenario.py — те же сценарии (первое/второе
+                     #   сообщение, /new, /clear, изоляция пользователей, перезапуск приложения,
+                     #   ошибка LLM, ошибка БД/rollback) поверх РЕАЛЬНОЙ временной SQLite
 ```
+
+Ни один тест не обращается к реальному Telegram API или реальному
+сетевому LLM — единственная подмена всюду `FakeLLMProvider`/`respx`.
 
 ## Docker
 

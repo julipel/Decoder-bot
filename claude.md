@@ -1288,7 +1288,8 @@ Telegram
 
 ## Текущий спринт (обновление)
 
-**Спринт 2: постоянное хранилище данных, диалоги, история — начат.**
+**Спринт 2: постоянное хранилище данных, диалоги, история — завершён
+(S2-01…S2-11).**
 
 Цель и полный состав спринта — внешняя архитектурная спецификация
 `backlog_2.md` (не входит в этот репозиторий) и §33 ниже. Прогресс по
@@ -1355,7 +1356,36 @@ Telegram
   контейнер собирает `ClearConversation` поверх той же
   `repositories_factory`, что и `ProcessUserMessage`/`StartNewConversation`
   — Спринт 2 функционально завершён, следующая задача (S2-11) —
-  финальная интеграция/ревью спринта — см. §36 для подробностей.
+  финальная интеграция/ревью спринта — см. §36 для подробностей;
+* [x] S2-11 — финальная интеграция и E2E-проверка: полный аудит
+  composition root/DI/транзакций/конфигурации/миграций Sprint 2 не выявил
+  необходимости в архитектурных изменениях (все компоненты S2-01…S2-10
+  уже были корректно подключены) — найдены и точечно исправлены три
+  реальных интеграционных дефекта: (1) неустойчивый порядок сообщений в
+  `MessageRepository.history()` при совпадении `created_at` (грубое
+  разрешение системных часов + случайный UUID как вторичный ключ
+  сортировки, S2-05) — исправлено в `ProcessUserMessage._build_message`
+  (гарантия строго возрастающего `created_at` в рамках одного экземпляра,
+  без изменений ORM/схемы/репозиториев); (2) `Dockerfile` не давал
+  непривилегированному пользователю `dekoder` создать `/app/data`
+  (`mkdir: Permission denied`, оба сервиса падали бы при старте на
+  `init_database()`) — исправлено явным `mkdir`+`chown` каталога данных
+  до `USER dekoder`; (3) `docker-compose.yml` не монтировал `/app/data` ни
+  в один volume — SQLite-файл жил только в слое контейнера и терялся при
+  каждом `docker compose down`/пересборке образа — исправлено общим
+  именованным volume `dekoder_data` для `api`/`telegram-bot`. Все три
+  находки подтверждены эмпирически (флейки-тест до/после фикса; реальная
+  сборка и запуск Docker-образа; `docker compose down && up` с проверкой
+  файла на volume). Добавлен `tests/e2e/test_conversation_persistence_scenario.py`
+  (8 тестов, реальная временная SQLite поверх `bootstrap/repositories.py`,
+  тот же Telegram-хендлер-харнесс, что и в `tests/e2e/
+  test_conversation_scenario.py`) — восемь обязательных сценариев
+  backlog_2_tasks.md (первый/второй запрос, `/new`, `/clear`, изоляция
+  пользователей, перезапуск приложения на том же файле БД, ошибка LLM,
+  ошибка БД/rollback). README обновлён под фактическое состояние Sprint 2
+  (миграции, `/new`/`/clear`, тесты). Новая бизнес-функциональность не
+  добавлена — Спринт 2 (S2-01…S2-11) полностью завершён, 354 теста,
+  ruff/ruff format/mypy проходят — см. §36 для подробностей.
 
 ---
 
@@ -1476,7 +1506,9 @@ Docker, e2e-тест, README) и актуализации README/§32. Допо�
 (`MessageRepository`), S2-06 (расширение `ProcessUserMessage` историей
 диалога — впервые подключены все три репозитория), S2-07
 (`StartNewConversation` use case), S2-08 (подключение команды `/new` к
-Telegram Adapter) и S2-09 (`ClearConversation` use case) — Спринт 2.
+Telegram Adapter), S2-09 (`ClearConversation` use case), S2-10
+(подключение команды `/clear` к Telegram Adapter) и S2-11 (финальная
+интеграция и E2E-проверка) — Спринт 2 полностью завершён.
 
 ## Реализовано
 
@@ -2333,10 +2365,117 @@ Sprint 2, S2-10; `ProcessUserMessage`/`StartNewConversation`/
   тест не проверяет — уже проверено python-telegram-bot, см. докстринг
   файла); 346 тестов, ruff/ruff format/mypy проходят.
 
+**Спринт 2, S2-11 — финальная интеграция и E2E-проверка (последняя
+задача Sprint 2; аудит composition root/DI/транзакций/конфигурации/
+миграций — новая бизнес-функциональность не добавлялась):**
+
+Аудит перед изменениями показал, что composition root (`bootstrap/
+container.py`/`repositories.py`/`database.py`) и все Telegram-хендлеры
+(S2-01…S2-10) уже были корректно связаны: три use case собираются поверх
+одной `repositories_factory`, хендлеры не создают `AsyncSession`/
+репозитории напрямую, `filters.TEXT & ~filters.COMMAND` не пускает
+команды в текстовый обработчик, транзакционные границы `ProcessUserMessage`
+уже разделяли сохранение user message/чтение истории/вызов LLM/сохранение
+assistant message на три независимых коротких транзакции (см. S2-06).
+Архитектурных изменений это не потребовало. Найдено и точечно исправлено
+три реальных интеграционных дефекта, ни один не архитектурный:
+
+* `src/dekoder/application/conversation/use_cases/process_user_message.py`
+  — `_build_message` (`@staticmethod` → метод экземпляра) теперь хранит
+  `_last_message_created_at` и гарантирует строго возрастающий `created_at`
+  в рамках одного экземпляра `ProcessUserMessage` (singleton на процесс).
+  Причина: на этой машине (Windows) `datetime.now(UTC)`, вызванная дважды
+  подряд без реального I/O между вызовами, стабильно возвращает ОДНО и то
+  же значение (проверено вручную — 20 последовательных вызовов в цикле
+  дали нулевую разницу), а `MessageRepository.history()` сортирует
+  `created_at ASC, id ASC` (S2-05) — вторичный ключ `id` случаен (`uuid4`)
+  и не связан с порядком создания. При совпадении `created_at` порядок
+  `user`/`assistant` в истории и в запросе к LLM становился недетерминирован
+  — новый e2e-тест (см. ниже) воспроизводимо падал на этом (~30–40% прогонов
+  до фикса, 0 из ~15 прогонов после). Исправление — только в Application
+  Layer, без изменений ORM/схемы/репозиториев/S2-05 (эта задача уже была
+  провалидирована и протестирована отдельно, переписывать её незачем —
+  дефект был не в тай-брейке самом по себе, а в отсутствии гарантии
+  различающихся `created_at` со стороны вызывающего кода);
+* `Dockerfile` — непривилегированный `dekoder` не мог создать `/app/data`
+  (`bootstrap/database.py::_ensure_sqlite_directory_exists`, S2-01):
+  `/app` создаётся `WORKDIR`/`COPY` от имени `root` ещё до `USER dekoder`,
+  без явного `chown` `mkdir` от `dekoder` падал `Permission denied` — оба
+  сервиса (`api`/`telegram-bot`) не проходили бы `init_database()` при
+  старте. Подтверждено вручную: `docker build` + `docker run ... mkdir
+  /app/data` от лица `dekoder` падал до фикса, после — `RUN mkdir -p
+  /app/data && chown -R dekoder:dekoder /app/data` (до `USER dekoder`)
+  проходит, `docker run` реального образа успешно поднимает `uvicorn` и
+  отвечает `200` на `/health`;
+* `docker-compose.yml` — ни `api`, ни `telegram-bot` не монтировали
+  `/app/data` ни в один volume: SQLite-файл жил только в writable-слое
+  контейнера и терялся при любом `docker compose down`/пересборке образа
+  — прямое нарушение цели Sprint 2 («постоянное хранилище») в реальном
+  Docker-развёртывании (тестовые сценарии этого не ловят — используют
+  временную SQLite напрямую, не Docker). Добавлен общий именованный volume
+  `dekoder_data:/app/data` для обоих сервисов (SQLite штатно поддерживает
+  несколько процессов на одном файле через файловые блокировки; отдельный
+  volume на сервис создал бы два расходящихся файла без пользы, т.к.
+  `telegram-bot` — единственный сейчас писатель). Подтверждено вручную:
+  `docker compose up` → запись файла-пробы в `/app/data` → `docker compose
+  down` (без `-v`) → `docker compose up` → файл-проба всё ещё на месте.
+
+Добавлен `tests/e2e/test_conversation_persistence_scenario.py` (8 тестов)
+— тот же харнесс, что и `tests/e2e/test_conversation_scenario.py`
+(реальный `telegram.ext.Application`, реальные хендлеры/use cases,
+единственная подмена — `FakeLLMProvider`), но поверх РЕАЛЬНОЙ временной
+SQLite (`tmp_path`, `Base.metadata.create_all()`, то же допустимое
+исключение для тестового окружения, что и в `tests/integration/
+test_*_persistence.py`) вместо in-memory fake-репозиториев — покрывает
+восемь обязательных сценариев backlog_2_tasks.md (S2-11), которых не было
+ни в одном существующем тесте в таком сочетании (Telegram-слой + реальная
+БД + маршрутизация команд одновременно): первый и второй запрос одного
+пользователя (роли `user, assistant, user, assistant`, физическая проверка
+через прямой `SELECT` по `UserORM`/`ConversationORM`/`MessageORM`), `/new`
+(старый диалог закрыт, новый активен, старые сообщения читаемы),
+`/clear` (история физически удалена, тот же `conversation_id` остаётся
+активным), изоляция двух `telegram_user_id` (раздельные `Conversation`,
+не смешанные `Message`), перезапуск приложения (`AsyncEngine.dispose()` →
+новый `AsyncEngine`/`async_sessionmaker`/`ConversationRepositoriesFactory`
+поверх ТОГО ЖЕ файла SQLite → данные на месте, диалог продолжается тем же
+`conversation_id`), ошибка LLM (user message сохранён, assistant
+отсутствует, следующий запрос успешен), ошибка БД (искусственный сбой
+`MessageRepository.save()` — обёртка вокруг настоящего `SQLAlchemyMessageRepository`
+внутри тестового варианта `build_conversation_repositories_factory`,
+`_make_faulty_repositories_factory` — поднимает исключение до реальной
+записи; LLM не вызывается, сообщение не сохранено — настоящий
+`session_scope()` реально откатывает транзакцию, а не in-memory fake;
+следующий корректный запрос через `build_conversation_repositories_factory`
+поверх той же `session_factory` проходит штатно).
+
+`README.md` обновлён под фактическое состояние Sprint 2 (было — только
+S2-01, без таблиц): раздел «Что реально работает сейчас» описывает
+персистентность и `/new`/`/clear`, дерево каталогов — `domain/user`,
+`application/user`, полный список `infrastructure/persistence/`,
+`presentation/telegram/handlers/`; раздел «База данных и миграции»
+описывает реальную схему (`users`/`conversations`/`messages`, `alembic
+check`), добавлена инструкция применить миграции перед первым запуском;
+раздел «Тесты» упоминает оба e2e-файла.
+
+Проверено и НЕ изменено (уже корректно на момент начала S2-11, подтверждено
+тестами/вручную, изменений не потребовалось): `PRAGMA foreign_keys=ON`
+включён централизованно (`infrastructure/persistence/engine.py`,
+подтверждено `PRAGMA foreign_keys` → `1` на живом соединении);
+`alembic upgrade head` на пустой БД, повторный `upgrade head`, `downgrade
+-1` → `upgrade head`, `alembic check` — все без ошибок и без расхождений
+схемы; `DATABASE_URL` читается только через `DatabaseSettings`
+(`shared/config.py`), не хардкожен; `.env.example` содержит `DATABASE_URL`
+без секретов; SQLAlchemy не импортируется в `domain/`/`application/`
+(`grep`, только докстринги); ORM/`AsyncSession`/`infrastructure.persistence`
+не импортируются в `presentation/telegram/` (`grep`); Telegram-хендлеры
+не создают репозитории/сессии напрямую — все зависимости приходят через
+конструктор из `bootstrap/container.py`. 354 теста (346 + 8 новых
+e2e), ruff/ruff format/mypy проходят.
+
 ## В разработке
 
-Ничего — Sprint 2 функционально завершён (S2-01…S2-10). Следующий шаг —
-финальная интеграция/ревью спринта (задача S2-11, §33).
+Ничего — Sprint 2 полностью завершён (S2-01…S2-11). Следующий шаг —
+Sprint 3 (профили, §33).
 
 ## Не реализовано
 
@@ -2553,15 +2692,18 @@ composition root, продиктованное новой зависимость
 
 ## Следующее действие
 
-S2-09 завершена — `ClearConversation` реализован как отдельный
-Application-слой use case (`application/conversation/use_cases/
-clear_conversation.py`): удаляет все сообщения текущего активного диалога
-через `MessageRepository.clear()`, сам диалог остаётся активным (не
-закрывается и не удаляется — в отличие от `/new`, который закрывает
-текущий и создаёт новый), новый диалог не создаётся. `ProcessUserMessage`/
-`StartNewConversation`/`NewConversationHandler` не изменены. Следующий
-шаг — подключение команды `/clear` к Telegram Adapter через
-`ClearConversationHandler` (задача S2-10, §33, backlog_2.md §10), по тому
-же образцу, что и S2-08 для `/new`; `ProcessUserMessage` не должен
-анализировать текст на предмет этих команд, маршрутизация — на уровне
-Telegram Adapter/будущего диспетчера команд.
+S2-11 завершена — Sprint 2 (S2-01…S2-11) полностью завершён и готов к
+финальной приёмке. Аудит composition root/DI/транзакций/конфигурации/
+миграций подтвердил, что все компоненты S2-01…S2-10 уже были корректно
+собраны и подключены; найдены и точечно исправлены три реальных
+интеграционных дефекта (недетерминированный порядок `MessageRepository.
+history()` при совпадении `created_at` — фикс в `ProcessUserMessage.
+_build_message`; отсутствие прав на `/app/data` для непривилегированного
+пользователя в `Dockerfile`; отсутствие persistent volume в
+`docker-compose.yml` — оба Docker-дефекта не позволяли постоянному
+хранилищу Sprint 2 реально пережить перезапуск контейнера, хотя ни один
+существующий тест их не ловил, т.к. тесты используют временную SQLite
+напрямую, не Docker) — подробности см. выше, запись S2-11. Новая
+бизнес-функциональность не добавлялась (только исправления/тесты/
+документация). Следующий шаг — Sprint 3 (пользовательские профили,
+§33), не начат.
