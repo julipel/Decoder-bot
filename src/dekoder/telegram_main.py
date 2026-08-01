@@ -32,6 +32,11 @@ register_message_handler`) регистрируется тоже внутри `p
 после того как `container.process_user_message` готов — `/start` не
 зависит от БД и регистрируется заранее, как и раньше, через
 `build_telegram_application()`.
+
+С задачи S2-08 по той же причине обработчик команды `/new`
+(`presentation/telegram/bot.py::register_new_conversation_handler`)
+регистрируется тоже внутри `post_init`, сразу после обработчика
+текстовых сообщений, поверх уже собранного `container.start_new_conversation`.
 """
 
 from __future__ import annotations
@@ -42,7 +47,11 @@ from telegram.ext import Application
 
 from dekoder.bootstrap.container import build_container
 from dekoder.bootstrap.database import dispose_database, init_database
-from dekoder.presentation.telegram.bot import build_telegram_application, register_message_handler
+from dekoder.presentation.telegram.bot import (
+    build_telegram_application,
+    register_message_handler,
+    register_new_conversation_handler,
+)
 from dekoder.shared.config import Settings
 from dekoder.shared.logging import configure_logging, get_logger
 
@@ -77,6 +86,7 @@ def main() -> None:
 
         container = build_container(settings, http_client, db_session_factory)
         register_message_handler(app, container.process_user_message)
+        register_new_conversation_handler(app, container.start_new_conversation)
 
     async def _shutdown(_: Application) -> None:
         # Вызывается run_polling() при штатной остановке (после

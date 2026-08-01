@@ -3,6 +3,11 @@ Telegram `Update` ↔ внутренние DTO — единственное ме
 `presentation/telegram/`, которое знает форму `telegram.Update` и
 правило разбиения длинного ответа на части. Обработчики сами `Update`
 не разбирают и лимит Telegram не знают.
+
+`to_start_new_conversation_command()` (Sprint 2, задача S2-08) — тот же
+принцип, что и `to_command()`: единственное место, извлекающее
+`telegram_user_id` из `update.effective_user.id` для обработчика команды
+`/new` (`presentation/telegram/handlers/new_conversation.py`).
 """
 
 from __future__ import annotations
@@ -11,7 +16,7 @@ import uuid
 
 from telegram import Update
 
-from dekoder.application.conversation.dto import ProcessUserMessageCommand
+from dekoder.application.conversation.dto import ProcessUserMessageCommand, StartNewConversationCommand
 from dekoder.shared.domain.identifiers import CorrelationId
 
 # Реальный лимит Telegram на одно текстовое сообщение — 4096 символов;
@@ -36,6 +41,20 @@ def to_command(update: Update) -> ProcessUserMessageCommand:
         message_text=message.text,
         correlation_id=CorrelationId(str(uuid.uuid4())),
     )
+
+
+def to_start_new_conversation_command(update: Update) -> StartNewConversationCommand:
+    """
+    Строит команду для обработчика `/new` из входящего `Update`.
+    `telegram_user_id` извлекается тем же способом, что и в `to_command()`
+    — `update.effective_user.id`. Команда не содержит текста сообщения и
+    `correlation_id`, как и сам `StartNewConversationCommand`.
+    """
+    user = update.effective_user
+    if user is None:
+        raise ValueError("Update does not contain a known user")
+
+    return StartNewConversationCommand(telegram_user_id=user.id)
 
 
 def split_message(text: str, limit: int = TELEGRAM_SAFE_MESSAGE_LIMIT) -> list[str]:

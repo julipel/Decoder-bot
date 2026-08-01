@@ -21,6 +21,12 @@ loop'е, которому будут принадлежать соединени
 `telegram_main.py`). До S2-06 весь `Application` собирался одной функцией
 до `run_polling()`; теперь обработчик текстовых сообщений регистрируется
 отдельно, уже внутри `post_init`, когда `ProcessUserMessage` готов.
+
+Sprint 2 (задача S2-08): по той же причине (event loop/БД) команда `/new`
+регистрируется отдельной функцией `register_new_conversation_handler`,
+тоже вызываемой внутри `post_init`, когда `StartNewConversation` уже
+собран контейнером — не в `build_telegram_application()`, как `/start`,
+которая не требует БД.
 """
 
 from __future__ import annotations
@@ -28,12 +34,14 @@ from __future__ import annotations
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, MessageHandler, filters
 
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
+from dekoder.application.conversation.use_cases.start_new_conversation import StartNewConversation
 from dekoder.presentation.telegram.handlers.messages import TextMessageHandler
+from dekoder.presentation.telegram.handlers.new_conversation import NewConversationHandler
 from dekoder.presentation.telegram.handlers.start import handle_start
 
 
 def build_telegram_application(bot_token: str) -> Application:
-    """Собирает `telegram.ext.Application` и регистрирует `/start` — обработчик текста добавляется отдельно."""
+    """Собирает `Application` и регистрирует `/start` — обработчики текста и `/new` добавляются отдельно."""
     application = ApplicationBuilder().token(bot_token).build()
     application.add_handler(CommandHandler("start", handle_start))
     return application
@@ -42,3 +50,8 @@ def build_telegram_application(bot_token: str) -> Application:
 def register_message_handler(application: Application, process_user_message: ProcessUserMessage) -> None:
     """Регистрирует обработчик обычных текстовых сообщений поверх уже собранного `ProcessUserMessage`."""
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, TextMessageHandler(process_user_message)))
+
+
+def register_new_conversation_handler(application: Application, start_new_conversation: StartNewConversation) -> None:
+    """Регистрирует обработчик команды `/new` поверх уже собранного `StartNewConversation`."""
+    application.add_handler(CommandHandler("new", NewConversationHandler(start_new_conversation)))

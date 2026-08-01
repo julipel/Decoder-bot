@@ -1330,7 +1330,13 @@ Telegram
   автоматически (отличие от `ProcessUserMessage`); не использует
   `MessageRepository`, не вызывает LLM; `/new` к Telegram Adapter не
   подключена — см. §36 для подробностей;
-* [ ] S2-08 — подключение команды `/new` в Telegram Adapter — не начата;
+* [x] S2-08 — подключение команды `/new` в Telegram Adapter: новый
+  `NewConversationHandler` (`presentation/telegram/handlers/
+  new_conversation.py`) вызывает `StartNewConversation`, зарегистрирован
+  `CommandHandler("new", ...)` внутри `post_init` (`bot.py::
+  register_new_conversation_handler`, `telegram_main.py`); контейнер
+  собирает `StartNewConversation` поверх той же `repositories_factory`,
+  что и `ProcessUserMessage` — см. §36 для подробностей;
 * [ ] `/clear` (`ClearConversation`) — не начата.
 
 ---
@@ -1450,8 +1456,9 @@ Docker, e2e-тест, README) и актуализации README/§32. Допо�
 `User`/`Conversation`/`Message`, ORM, mapper, первая миграция), S2-03
 (`UserRepository`), S2-04 (`ConversationRepository`), S2-05
 (`MessageRepository`), S2-06 (расширение `ProcessUserMessage` историей
-диалога — впервые подключены все три репозитория) и S2-07
-(`StartNewConversation` use case) — Спринт 2.
+диалога — впервые подключены все три репозитория), S2-07
+(`StartNewConversation` use case) и S2-08 (подключение команды `/new` к
+Telegram Adapter) — Спринт 2.
 
 ## Реализовано
 
@@ -2117,18 +2124,81 @@ Telegram Adapter — следующая задача Sprint 2, S2-08):**
   `MessageRepository`/Unit of Work/Generic Service не введены; 293
   теста, ruff/ruff format/mypy проходят.
 
+**Спринт 2, S2-08 — подключение команды `/new` в Telegram Adapter
+(без изменений `StartNewConversation`/`ProcessUserMessage`/
+`TextMessageHandler` — подтверждено `git diff`, пустой на всех трёх
+файлах):**
+
+* `src/dekoder/presentation/telegram/handlers/new_conversation.py`
+  (новый файл) — класс `NewConversationHandler`, конструктор принимает
+  единственную зависимость `start_new_conversation: StartNewConversation`
+  (dependency injection, тот же стиль, что и `TextMessageHandler`).
+  `__call__`: если `update.effective_message is None` — выйти; иначе
+  построить команду через `mapper.py::to_start_new_conversation_command`,
+  вызвать `start_new_conversation.execute()`, поймать `DekoderError`
+  отдельно от прочих исключений (тот же паттерн, что и `TextMessageHandler`)
+  и отправить пользователю текстовый ответ. `result.conversation_id is
+  None` (пользователь никогда не общался с ботом — `StartNewConversation`
+  не создаёт его автоматически, S2-07) → нейтральное сообщение
+  `NO_PREVIOUS_INTERACTION_MESSAGE`, без ошибки; иначе →
+  `NEW_CONVERSATION_STARTED_MESSAGE`. Никакой бизнес-логики (закрытие/
+  создание диалога полностью внутри `StartNewConversation.execute()`), не
+  импортирует SQLAlchemy, ORM-модели или репозитории — подтверждено
+  тестом на AST-разбор импортов (см. ниже);
+* `src/dekoder/presentation/telegram/mapper.py` — добавлена
+  `to_start_new_conversation_command(update) -> StartNewConversationCommand`,
+  тот же принцип, что и `to_command()`: единственное место, извлекающее
+  `telegram_user_id` из `update.effective_user.id` для обработчика `/new`;
+* `src/dekoder/presentation/telegram/bot.py` — добавлена
+  `register_new_conversation_handler(application, start_new_conversation)`,
+  по образцу `register_message_handler` — тоже вызывается только после
+  того, как зависимость use case собрана (см. `telegram_main.py`), не
+  внутри `build_telegram_application()`, т.к. `StartNewConversation`
+  требует `ConversationRepositoriesFactory`, которая требует БД;
+* `src/dekoder/bootstrap/container.py` — `ApplicationContainer` получил
+  новое поле `start_new_conversation: StartNewConversation`;
+  `build_container()` собирает `StartNewConversation(repositories=
+  repositories_factory)` поверх ТОЙ ЖЕ `repositories_factory`, что уже
+  использует `ProcessUserMessage` — не вторая, параллельная фабрика;
+* `src/dekoder/telegram_main.py` — внутри `post_init` (`_startup`) после
+  `register_message_handler(...)` добавлен вызов
+  `register_new_conversation_handler(app, container.start_new_conversation)`,
+  в том же event loop'е, что и БД/`ProcessUserMessage`. Только Telegram
+  polling-процесс — `/new` в FastAPI-приложении (`main.py`,
+  `bootstrap/application.py`) не регистрируется: команда — Telegram-специфичная
+  сущность, `get_process_user_message()`-подобная FastAPI-зависимость для
+  `StartNewConversation` не добавлялась, т.к. никакой FastAPI route её не
+  использует (YAGNI, backlog_2.md §15, инвариант 14);
+* тесты: `tests/unit/presentation/telegram/test_new_conversation_handler.py`
+  (новый) — `StartNewConversation` собирается по-настоящему поверх
+  in-memory fake-репозиториев (`tests/support/
+  fake_conversation_repositories.py`, тот же helper, что и у
+  `TextMessageHandler`/`ProcessUserMessage`), обёрнут spy'ем
+  `RecordingStartNewConversation` для проверки переданных аргументов;
+  покрывает: неизвестный пользователь (нейтральное сообщение, без
+  исключения, диалог не создаётся), пользователь без активного диалога
+  (новый диалог создаётся, подтверждение отправлено), пользователь с
+  активным диалогом (старый закрывается, новый — единственный активный,
+  подтверждение отправлено), корректная передача `telegram_user_id` в
+  `StartNewConversationCommand`, `Update` без сообщения игнорируется,
+  `DekoderError`/неожиданное исключение → безопасное сообщение (тот же
+  паттерн, что и `test_messages_handler.py`), и архитектурная проверка
+  `TestNoDirectRepositoryOrOrmAccess` — разбирает `new_conversation.py`/
+  `bot.py` через `ast.parse` и проверяет отсутствие импортов, начинающихся
+  с `sqlalchemy`/`dekoder.infrastructure` (через AST, а не поиск подстроки
+  в тексте файла — докстрings этих модулей упоминают «SQLAlchemy»/
+  «AsyncSession» словами, поясняя их отсутствие, что дало бы ложное
+  срабатывание при простом `"sqlalchemy" in source`); 306 тестов,
+  ruff/ruff format/mypy проходят.
+
 ## В разработке
 
-Ничего — S2-07 завершена (`StartNewConversation` реализован и покрыт
-тестами, но ещё не подключён к Telegram). Следующий шаг — S2-08
-(подключение команды `/new` к Telegram Adapter) и `ClearConversation`
-(команда `/clear`), §33, backlog_2.md §10.
+Ничего — S2-08 завершена (команда `/new` подключена к `StartNewConversation`
+через `NewConversationHandler`). Следующий шаг — `ClearConversation`
+(команда `/clear`, задача S2-09), §33, backlog_2.md §10.
 
 ## Не реализовано
 
-* подключение команды `/new` к Telegram Adapter (S2-08, §33,
-  backlog_2.md §10) — `StartNewConversation` реализован, но Telegram
-  Adapter его пока не вызывает;
 * команда `/clear` как use case (`ClearConversation`) — следующая задача
   Sprint 2 (§33, backlog_2.md §10); `ProcessUserMessage` не анализирует
   текст на предмет команд управления диалогом (backlog_2.md §9,
@@ -2346,12 +2416,15 @@ composition root, продиктованное новой зависимость
 
 ## Следующее действие
 
-S2-06 завершена — `ProcessUserMessage` теперь stateful: идентифицирует
-пользователя, получает/создаёт активный диалог, сохраняет сообщения (две
-короткие транзакции вокруг вызова LLM, третья — для чтения истории) и
-формирует LLM-контекст из истории активного диалога. Следующий шаг —
-`/new`/`/clear` как отдельные use case (`StartNewConversation`/
-`ClearConversation`, §33, backlog_2.md §10) — по отдельному запросу
+S2-08 завершена — команда `/new` подключена к `StartNewConversation`
+через `NewConversationHandler` (`presentation/telegram/handlers/
+new_conversation.py`), зарегистрирована внутри `post_init`
+(`telegram_main.py`) по тому же принципу, что и обработчик текстовых
+сообщений. `ProcessUserMessage`/`TextMessageHandler`/`StartNewConversation`
+не изменены. Следующий шаг — `ClearConversation` как отдельный use case
+(задача S2-09, §33, backlog_2.md §10): очищает сообщения текущего
+активного диалога, сам диалог остаётся активным (в отличие от `/new`,
+который закрывает текущий и создаёт новый) — по отдельному запросу
 пользователя, не автоматически; `ProcessUserMessage` не должен
 анализировать текст на предмет этих команд, маршрутизация — на уровне
 Telegram Adapter/будущего диспетчера команд.
