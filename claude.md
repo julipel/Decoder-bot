@@ -1323,7 +1323,15 @@ Telegram
   сохраняет сообщения (короткие транзакции ДО и ПОСЛЕ вызова LLM) и
   формирует LLM-контекст из истории (впервые подключены все три
   репозитория) — см. §36 для подробностей;
-* [ ] `/new`, `/clear` (`StartNewConversation`/`ClearConversation`) — не начаты.
+* [x] S2-07 — `StartNewConversation` use case (`application/conversation/
+  use_cases/start_new_conversation.py`): закрывает текущий активный диалог
+  пользователя (если есть) через доменный `Conversation.close()` и
+  создаёт новый пустой активный диалог; не создаёт пользователя
+  автоматически (отличие от `ProcessUserMessage`); не использует
+  `MessageRepository`, не вызывает LLM; `/new` к Telegram Adapter не
+  подключена — см. §36 для подробностей;
+* [ ] S2-08 — подключение команды `/new` в Telegram Adapter — не начата;
+* [ ] `/clear` (`ClearConversation`) — не начата.
 
 ---
 
@@ -1441,8 +1449,9 @@ Docker, e2e-тест, README) и актуализации README/§32. Допо�
 задач S2-01 (подключение SQLAlchemy/Alembic), S2-02 (доменная модель
 `User`/`Conversation`/`Message`, ORM, mapper, первая миграция), S2-03
 (`UserRepository`), S2-04 (`ConversationRepository`), S2-05
-(`MessageRepository`) и S2-06 (расширение `ProcessUserMessage` историей
-диалога — впервые подключены все три репозитория) — Спринт 2.
+(`MessageRepository`), S2-06 (расширение `ProcessUserMessage` историей
+диалога — впервые подключены все три репозитория) и S2-07
+(`StartNewConversation` use case) — Спринт 2.
 
 ## Реализовано
 
@@ -2032,21 +2041,98 @@ bootstrap-фабрика (репозитории Sprint 2 завершены; б
   Work/Domain Events/Prompt Engine/Memory/RAG/summary/token
   counting/retry/очереди — не добавлены; `/new`/`/clear` не реализованы.
 
+**Спринт 2, S2-07 — `StartNewConversation` use case (Application Layer;
+без изменений `ProcessUserMessage`, без подключения команды `/new` к
+Telegram Adapter — следующая задача Sprint 2, S2-08):**
+
+* `src/dekoder/application/conversation/dto.py` — добавлены
+  `StartNewConversationCommand` (единственное поле — `telegram_user_id:
+  int`, без `correlation_id`/`model_id`: use case не логирует и не
+  вызывает LLM) и `StartNewConversationResult` (`conversation_id: UUID |
+  None` — `None` означает «пользователь не найден», это штатный успешный
+  исход, не ошибка), тот же стиль `dataclass(frozen=True)`, что и
+  `ProcessUserMessageCommand`/`ProcessUserMessageResult`;
+* `src/dekoder/application/conversation/use_cases/start_new_conversation.py`
+  (новый файл) — класс `StartNewConversation`, конструктор принимает
+  единственную зависимость `repositories: ConversationRepositoriesFactory`
+  (тот же порт, что и второй параметр конструктора `ProcessUserMessage`,
+  `application/conversation/ports.py`, задача S2-06) — переиспользование
+  уже утверждённой фабрики короткой транзакции вместо введения нового,
+  более узкого порта (backlog_2.md §15, инвариант 14 запрещает вводить
+  новые абстракции хранения «на будущее»). `execute()`: получить `User`
+  через `repositories.users.get_by_telegram_user_id()` (НЕ
+  `get_or_create_...` — в отличие от `ProcessUserMessage`, пользователь не
+  создаётся автоматически, backlog_2_tasks.md S2-07) → если `None` —
+  вернуть `StartNewConversationResult(conversation_id=None)`, не создавая
+  ни пользователя, ни диалог → получить активный диалог через
+  `repositories.conversations.get_active_by_user_id()` → если найден —
+  закрыть через доменный `Conversation.close(datetime.now(UTC))` (доменные
+  инварианты — «нельзя закрыть уже закрытый», «нельзя закрыть раньше
+  created_at» — проверяются в `domain/conversation/entities.py`, не
+  здесь) и сохранить через `repositories.conversations.close(...)` →
+  создать новый `Conversation(id=uuid4(), user_id=user.id, closed_at=None,
+  ...)` и сохранить через `repositories.conversations.save(...)` →
+  вернуть `StartNewConversationResult(conversation_id=...)`. Всё — внутри
+  ОДНОГО вызова `self._repositories()` (одной короткой транзакции), в
+  отличие от трёх раздельных транзакций `ProcessUserMessage`: там
+  разделение было обязательным, чтобы не держать транзакцию БД открытой
+  во время сетевого вызова `LLMProvider.generate()` (backlog_2.md §9);
+  здесь сетевых вызовов нет вовсе, поэтому закрытие старого диалога и
+  создание нового — единая атомарная операция (откатывается целиком при
+  ошибке, не оставляет пользователя без активного диалога из-за сбоя
+  между двумя шагами). `repositories.messages` (тот же объект, что и
+  `MessageRepository`, доступный через `ConversationRepositories`) ни разу
+  не вызывается ни в одном методе файла — задача прямо запрещает
+  use case'у работать с историей сообщений («не работает с
+  MessageRepository», «не удаляет сообщения предыдущего диалога»);
+  `LLMProvider` не импортируется вовсе. `process_user_message.py` не
+  изменён (подтверждено `git diff` — пустой);
+* тесты: `tests/unit/application/test_start_new_conversation.py` (новый,
+  in-memory fake-репозитории через общий helper `tests/support/
+  fake_conversation_repositories.py`, S2-06, без SQLAlchemy) — пользователь
+  отсутствует (успешный результат без `conversation_id`, пользователь не
+  создан), активного диалога нет (новый диалог создаётся напрямую, без
+  вызова `close`), активный диалог существует (закрывается через
+  `Conversation.close()`, новый диалог получает другой `id`, становится
+  единственным активным), повторный вызов создаёт очередной новый диалог
+  (разные `id` на каждом вызове), старые диалоги не удаляются (остаются
+  доступны через `get_by_id`); `tests/integration/
+  test_start_new_conversation_persistence.py` (новый, реальные
+  SQLAlchemy-репозитории поверх временной SQLite, `tmp_path`,
+  `Base.metadata.create_all()`, тот же стиль, что и `tests/integration/
+  test_process_user_message_persistence.py`) — полный цикл через
+  `build_conversation_repositories_factory()`, отсутствующий пользователь
+  не создаёт строк в БД, после `StartNewConversation` для пользователя в
+  таблице `conversations` ровно одна активная и одна закрытая запись
+  (`uq_conversations_active_user` не нарушен — секундный второй активный
+  диалог никогда не существовал одновременно со старым, т.к. `close()`
+  предшествует `save()` в одной транзакции), повторные вызовы сохраняют
+  ровно один активный диалог, история старого (закрытого) диалога
+  (сообщения, сохранённые до вызова `StartNewConversation` напрямую через
+  `repositories.messages.save()`) остаётся читаемой через
+  `MessageRepository.history()` после закрытия — диалог закрыт, но
+  сообщения не тронуты. `grep -rn "sqlalchemy\|telegram" -i src/dekoder/
+  application/conversation/use_cases/start_new_conversation.py` — совпадения
+  только в докстринге (утверждения об отсутствии зависимости), не в коде;
+  `MessageRepository`/Unit of Work/Generic Service не введены; 293
+  теста, ruff/ruff format/mypy проходят.
+
 ## В разработке
 
-Ничего — S2-06 завершена, `ProcessUserMessage` теперь stateful (история
-диалога сохраняется и передаётся в LLM). Следующий шаг — `/new`/`/clear`
-как отдельные use case (`StartNewConversation`/`ClearConversation`, §33,
-backlog_2.md §10).
+Ничего — S2-07 завершена (`StartNewConversation` реализован и покрыт
+тестами, но ещё не подключён к Telegram). Следующий шаг — S2-08
+(подключение команды `/new` к Telegram Adapter) и `ClearConversation`
+(команда `/clear`), §33, backlog_2.md §10.
 
 ## Не реализовано
 
-* команды `/new`/`/clear` как use case (`StartNewConversation`/
-  `ClearConversation`) — следующие задачи Sprint 2 (§33, backlog_2.md
-  §10); `ProcessUserMessage` не анализирует текст на предмет команд
-  управления диалогом (backlog_2.md §9, «Отдельные сценарии управления
-  диалогом») — маршрутизация между `ProcessUserMessage` и будущими
-  `StartNewConversation`/`ClearConversation` тоже не реализована;
+* подключение команды `/new` к Telegram Adapter (S2-08, §33,
+  backlog_2.md §10) — `StartNewConversation` реализован, но Telegram
+  Adapter его пока не вызывает;
+* команда `/clear` как use case (`ClearConversation`) — следующая задача
+  Sprint 2 (§33, backlog_2.md §10); `ProcessUserMessage` не анализирует
+  текст на предмет команд управления диалогом (backlog_2.md §9,
+  «Отдельные сценарии управления диалогом»);
 * профили, Prompt Engine, память, RAG, каталог моделей, административные
   функции — по плану, следующие спринты (§33).
 

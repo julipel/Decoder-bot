@@ -42,6 +42,20 @@ get_or_create_by_telegram_user_id(telegram_user_id: int)`
 entities.py`; преобразование `MessageRole.USER/ASSISTANT -> "user"/
 "assistant"` выполняет вызывающий Use Case (значения enum и так
 совпадают со строками ролей, см. `domain/conversation/entities.py`).
+
+`StartNewConversationCommand`/`StartNewConversationResult` (Sprint 2,
+задача S2-07) — вход/выход use case `StartNewConversation`
+(`application/conversation/use_cases/start_new_conversation.py`), тот же
+стиль, что и `ProcessUserMessageCommand`/`ProcessUserMessageResult`.
+`StartNewConversationCommand` содержит только `telegram_user_id` — в
+отличие от `ProcessUserMessageCommand`, тут нет ни текста сообщения, ни
+`correlation_id`/`model_id`: use case не логирует и не вызывает LLM
+(команда /new к Telegram Adapter в этой задаче ещё не подключается —
+S2-08). `StartNewConversationResult.conversation_id: UUID | None` — `None`
+означает «пользователь не найден» (в отличие от `ProcessUserMessage`,
+`StartNewConversation` не создаёт пользователя автоматически,
+backlog_2_tasks.md S2-07) и не является ошибкой: результат в этом случае
+всё равно считается успешным.
 """
 
 from __future__ import annotations
@@ -105,3 +119,13 @@ class LLMResponse:
     input_tokens: int
     output_tokens: int
     duration_ms: float
+
+
+@dataclass(frozen=True)
+class StartNewConversationCommand:
+    telegram_user_id: int
+
+
+@dataclass(frozen=True)
+class StartNewConversationResult:
+    conversation_id: UUID | None
