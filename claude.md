@@ -1337,7 +1337,15 @@ Telegram
   register_new_conversation_handler`, `telegram_main.py`); контейнер
   собирает `StartNewConversation` поверх той же `repositories_factory`,
   что и `ProcessUserMessage` — см. §36 для подробностей;
-* [ ] `/clear` (`ClearConversation`) — не начата.
+* [x] S2-09 — `ClearConversation` use case (`application/conversation/
+  use_cases/clear_conversation.py`): удаляет все сообщения ТЕКУЩЕГО
+  активного диалога пользователя через `MessageRepository.clear()`, не
+  закрывая и не удаляя сам `Conversation`; не создаёт пользователя и не
+  создаёт диалог автоматически (как и `StartNewConversation`); результат
+  (`ClearConversationResult.status: ClearConversationStatus`) различает
+  три исхода — `CLEARED`/`ALREADY_EMPTY`/`NO_ACTIVE_CONVERSATION`; не
+  принимает `LLMProvider`; `/clear` к Telegram Adapter не подключена —
+  следующая задача S2-10 — см. §36 для подробностей.
 
 ---
 
@@ -1457,8 +1465,8 @@ Docker, e2e-тест, README) и актуализации README/§32. Допо�
 (`UserRepository`), S2-04 (`ConversationRepository`), S2-05
 (`MessageRepository`), S2-06 (расширение `ProcessUserMessage` историей
 диалога — впервые подключены все три репозитория), S2-07
-(`StartNewConversation` use case) и S2-08 (подключение команды `/new` к
-Telegram Adapter) — Спринт 2.
+(`StartNewConversation` use case), S2-08 (подключение команды `/new` к
+Telegram Adapter) и S2-09 (`ClearConversation` use case) — Спринт 2.
 
 ## Реализовано
 
@@ -2191,18 +2199,85 @@ Telegram Adapter — следующая задача Sprint 2, S2-08):**
   срабатывание при простом `"sqlalchemy" in source`); 306 тестов,
   ruff/ruff format/mypy проходят.
 
+**Спринт 2, S2-09 — `ClearConversation` use case (Application Layer;
+подключение команды `/clear` к Telegram Adapter — следующая задача
+Sprint 2, S2-10; `ProcessUserMessage`/`StartNewConversation`/
+`NewConversationHandler` не изменены — подтверждено `git diff`, пустой на
+всех трёх файлах):**
+
+* `src/dekoder/application/conversation/dto.py` — добавлены
+  `ClearConversationCommand` (`telegram_user_id: int`, тот же минимальный
+  состав, что и `StartNewConversationCommand`), `ClearConversationStatus`
+  (`Enum`: `CLEARED`/`ALREADY_EMPTY`/`NO_ACTIVE_CONVERSATION` — тот же
+  стиль, что и доменный `MessageRole`) и `ClearConversationResult`
+  (`status: ClearConversationStatus`, `conversation_id: UUID | None`,
+  `deleted_count: int`) — три поля вместе однозначно различают все три
+  исхода задачи, а не только `conversation_id is None`, как у
+  `StartNewConversationResult`: диалог активен, но пуст
+  (`ALREADY_EMPTY`), должен отличаться от диалога, который был очищен
+  (`CLEARED`), хотя оба сохраняют один и тот же `conversation_id` и
+  `deleted_count`/`0` по отдельности это не различает. Изменение в
+  `dto.py` строго аддитивно — существующие `StartNewConversation*`/
+  `ProcessUserMessage*` типы не тронуты (подтверждено `git diff`);
+* `src/dekoder/application/conversation/use_cases/clear_conversation.py`
+  (новый файл) — класс `ClearConversation`, конструктор принимает
+  единственную зависимость `repositories: ConversationRepositoriesFactory`
+  (тот же порт, что и `StartNewConversation`/`ProcessUserMessage`) — не
+  принимает `LLMProvider` вовсе (архитектурный факт, не просто «не
+  вызывается»: параметра в сигнатуре `__init__` нет, проверено unit-тестом
+  через `inspect.signature`). `execute()` — один короткий `async with
+  self._repositories()` блок (LLM не вызывается, разделять транзакцию не
+  требуется, как и у `StartNewConversation`): находит пользователя через
+  `users.get_by_telegram_user_id()` (не `get_or_create...` — пользователь
+  не создаётся автоматически), затем активный диалог через
+  `conversations.get_active_by_user_id()` (не `get_or_create_active` —
+  диалог не создаётся автоматически); при отсутствии пользователя ИЛИ
+  диалога возвращает `NO_ACTIVE_CONVERSATION` без побочных эффектов; иначе
+  вызывает ровно один метод — `messages.clear(active_conversation.id)` — и
+  по возвращённому числу удалённых строк выбирает `CLEARED` (>0) или
+  `ALREADY_EMPTY` (0). `repositories.conversations.save()`/`.close()` не
+  вызываются НИ РАЗУ в этом файле — `Conversation`, найденный через
+  `get_active_by_user_id`, дальше никак не передаётся ни в один из этих
+  методов (в контракте `ConversationRepository` метода удаления диалога не
+  существует вовсе — удалить диалог этим use case физически нечем);
+* тесты: `tests/unit/application/test_clear_conversation.py` (новый,
+  11 тестов) — in-memory fake-репозитории
+  (`tests/support/fake_conversation_repositories.py`, тот же helper, что и
+  у `StartNewConversation`/`ProcessUserMessage`), обёрнутые
+  `SpyConversationRepository`/`SpyMessageRepository` для подтверждения
+  фактического ОТСУТСТВИЯ вызова `.save()`/`.close()` (не только
+  результирующего состояния) и точного аргумента `.clear()`; покрывает:
+  отсутствующего пользователя, пользователя без активного диалога,
+  активный диалог с сообщениями (`CLEARED`, верный `conversation_id`
+  передан в `.clear()`), уже пустую историю (`ALREADY_EMPTY`, отличим от
+  `NO_ACTIVE_CONVERSATION`), повторную очистку пустой истории без
+  исключения, диалог не удаляется/не закрывается/не создаётся заново,
+  отсутствие `LLMProvider` в сигнатуре конструктора;
+  `tests/integration/test_clear_conversation_persistence.py` (новый,
+  9 тестов) — реальные SQLAlchemy-репозитории поверх временной SQLite
+  (`tmp_path`, тот же стиль, что и `test_start_new_conversation_persistence.py`);
+  покрывает: история пуста после очистки и диалог остаётся существующим и
+  активным (`closed_at is None`), следующее сообщение после очистки
+  сохраняется в том же `conversation_id`, сообщения другого пользователя и
+  сообщения другого (закрытого) диалога того же пользователя не
+  затрагиваются, отсутствующий пользователь/диалог не создают и не меняют
+  ничего в БД; 326 тестов, ruff/ruff format/mypy проходят.
+
 ## В разработке
 
-Ничего — S2-08 завершена (команда `/new` подключена к `StartNewConversation`
-через `NewConversationHandler`). Следующий шаг — `ClearConversation`
-(команда `/clear`, задача S2-09), §33, backlog_2.md §10.
+Ничего — S2-09 завершена (`ClearConversation` реализован как отдельный
+Application-слой use case). Следующий шаг — подключение команды `/clear`
+к Telegram Adapter через `ClearConversationHandler` (задача S2-10), §33,
+backlog_2.md §10.
 
 ## Не реализовано
 
-* команда `/clear` как use case (`ClearConversation`) — следующая задача
-  Sprint 2 (§33, backlog_2.md §10); `ProcessUserMessage` не анализирует
-  текст на предмет команд управления диалогом (backlog_2.md §9,
-  «Отдельные сценарии управления диалогом»);
+* подключение команды `/clear` к Telegram Adapter (`ClearConversationHandler`)
+  — следующая задача Sprint 2 (§33, backlog_2.md §10); `ClearConversation`
+  как use case уже реализован (S2-09), но ни один Telegram-обработчик его
+  ещё не вызывает; `ProcessUserMessage` по-прежнему не анализирует текст
+  на предмет команд управления диалогом (backlog_2.md §9, «Отдельные
+  сценарии управления диалогом»);
 * профили, Prompt Engine, память, RAG, каталог моделей, административные
   функции — по плану, следующие спринты (§33).
 
@@ -2416,15 +2491,15 @@ composition root, продиктованное новой зависимость
 
 ## Следующее действие
 
-S2-08 завершена — команда `/new` подключена к `StartNewConversation`
-через `NewConversationHandler` (`presentation/telegram/handlers/
-new_conversation.py`), зарегистрирована внутри `post_init`
-(`telegram_main.py`) по тому же принципу, что и обработчик текстовых
-сообщений. `ProcessUserMessage`/`TextMessageHandler`/`StartNewConversation`
-не изменены. Следующий шаг — `ClearConversation` как отдельный use case
-(задача S2-09, §33, backlog_2.md §10): очищает сообщения текущего
-активного диалога, сам диалог остаётся активным (в отличие от `/new`,
-который закрывает текущий и создаёт новый) — по отдельному запросу
-пользователя, не автоматически; `ProcessUserMessage` не должен
+S2-09 завершена — `ClearConversation` реализован как отдельный
+Application-слой use case (`application/conversation/use_cases/
+clear_conversation.py`): удаляет все сообщения текущего активного диалога
+через `MessageRepository.clear()`, сам диалог остаётся активным (не
+закрывается и не удаляется — в отличие от `/new`, который закрывает
+текущий и создаёт новый), новый диалог не создаётся. `ProcessUserMessage`/
+`StartNewConversation`/`NewConversationHandler` не изменены. Следующий
+шаг — подключение команды `/clear` к Telegram Adapter через
+`ClearConversationHandler` (задача S2-10, §33, backlog_2.md §10), по тому
+же образцу, что и S2-08 для `/new`; `ProcessUserMessage` не должен
 анализировать текст на предмет этих команд, маршрутизация — на уровне
 Telegram Adapter/будущего диспетчера команд.

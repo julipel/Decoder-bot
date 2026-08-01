@@ -56,12 +56,48 @@ S2-08). `StartNewConversationResult.conversation_id: UUID | None` — `None`
 `StartNewConversation` не создаёт пользователя автоматически,
 backlog_2_tasks.md S2-07) и не является ошибкой: результат в этом случае
 всё равно считается успешным.
+
+`ClearConversationCommand`/`ClearConversationResult`/`ClearConversationStatus`
+(Sprint 2, задача S2-09) — вход/выход use case `ClearConversation`
+(`application/conversation/use_cases/clear_conversation.py`).
+`ClearConversationCommand` содержит только `telegram_user_id` — тот же
+минимальный состав, что и `StartNewConversationCommand`, по той же
+причине (use case не логирует и не вызывает LLM; команда /clear к
+Telegram Adapter в этой задаче ещё не подключается — S2-10).
+`ClearConversationResult` должен различать три исхода (backlog_2_tasks.md
+S2-09), поэтому вместо одного `bool`/`UUID | None`, как у
+`StartNewConversationResult`, здесь явное поле `status:
+ClearConversationStatus` — enum по тому же образцу, что и доменный
+`MessageRole` (`domain/conversation/entities.py`), а не «магическая»
+строка:
+- `CLEARED` — активный диалог найден, в нём была хотя бы одна запись,
+  `MessageRepository.clear()` удалил `deleted_count > 0` сообщений;
+- `ALREADY_EMPTY` — активный диалог найден, но сообщений уже не было
+  (`deleted_count == 0`) — отличается от `CLEARED` только числом
+  удалённых строк, но обязано оставаться отдельным исходом (задача прямо
+  требует различать «диалог есть, но нечего удалять» от «удалили»);
+- `NO_ACTIVE_CONVERSATION` — пользователь не найден ИЛИ у найденного
+  пользователя нет активного диалога; оба случая перед вызывающим кодом
+  неотличимы (и не обязаны различаться — задача требует лишь отличать
+  «пользователь или активный диалог отсутствует» как один исход) и не
+  являются ошибкой: результат всё равно считается успешным.
+
+`conversation_id: UUID | None` — `None` только при
+`NO_ACTIVE_CONVERSATION` (соответствующий диалог просто не существует),
+иначе — id найденного активного диалога (тот же диалог, что и до, и
+после очистки — `ClearConversation` никогда не создаёт и не закрывает
+`Conversation`). `deleted_count: int` — точное число удалённых строк,
+возвращённое `MessageRepository.clear()`; `0` при `NO_ACTIVE_CONVERSATION`
+(ничего не удалялось, `.clear()` не вызывался) и при `ALREADY_EMPTY`
+(вызывался, вернул `0`) — различить эти два случая позволяет только
+`status`, не `deleted_count` сам по себе.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import Enum
 from uuid import UUID
 
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
@@ -129,3 +165,23 @@ class StartNewConversationCommand:
 @dataclass(frozen=True)
 class StartNewConversationResult:
     conversation_id: UUID | None
+
+
+class ClearConversationStatus(Enum):
+    """Три исхода `ClearConversation` — см. докстринг модуля."""
+
+    CLEARED = "cleared"
+    ALREADY_EMPTY = "already_empty"
+    NO_ACTIVE_CONVERSATION = "no_active_conversation"
+
+
+@dataclass(frozen=True)
+class ClearConversationCommand:
+    telegram_user_id: int
+
+
+@dataclass(frozen=True)
+class ClearConversationResult:
+    status: ClearConversationStatus
+    conversation_id: UUID | None
+    deleted_count: int
