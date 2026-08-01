@@ -36,7 +36,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler
-from tests.support.fake_conversation_repositories import make_in_memory_repositories_factory
+from tests.support.fake_conversation_repositories import (
+    FakeConversationRepository,
+    FakeMessageRepository,
+    FakeUserRepository,
+    make_in_memory_repositories_factory,
+)
 
 from dekoder.application.conversation.dto import (
     LLMRequest,
@@ -44,9 +49,14 @@ from dekoder.application.conversation.dto import (
     ProcessUserMessageCommand,
     ProcessUserMessageResult,
 )
+from dekoder.application.conversation.use_cases.clear_conversation import ClearConversation
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
-from dekoder.presentation.telegram.bot import build_telegram_application, register_message_handler
+from dekoder.presentation.telegram.bot import (
+    build_telegram_application,
+    register_clear_conversation_handler,
+    register_message_handler,
+)
 from dekoder.presentation.telegram.handlers.messages import UNEXPECTED_ERROR_MESSAGE
 from dekoder.presentation.telegram.handlers.start import START_MESSAGE
 from dekoder.presentation.telegram.mapper import TELEGRAM_SAFE_MESSAGE_LIMIT
@@ -233,3 +243,95 @@ class TestFullConversationScenario:
 
         update.effective_message.reply_text.assert_not_awaited()
         assert provider.call_count == 0
+
+
+class TestClearCommandRouting:
+    """
+    Sprint 2, задача S2-10: `/clear` — маршрутизация через реальный
+    `telegram.ext.Application` (тот же подход, что и остальной этот файл —
+    без сети, без реального Telegram API). `ProcessUserMessage` и
+    `ClearConversation` собираются поверх ОДНИХ И ТЕХ ЖЕ in-memory
+    fake-репозиториев, чтобы проверить, что `/clear` работает над тем же
+    диалогом, что и обычные сообщения.
+    """
+
+    def _build(
+        self, provider: FakeLLMProvider
+    ) -> tuple[object, object, object, FakeUserRepository, FakeConversationRepository, FakeMessageRepository]:
+        users = FakeUserRepository()
+        conversations = FakeConversationRepository()
+        messages = FakeMessageRepository()
+        factory = make_in_memory_repositories_factory(users=users, conversations=conversations, messages=messages)
+        process_user_message = ProcessUserMessage(
+            llm_provider=provider,
+            repositories=factory,
+            default_model=ModelId("openai/gpt-4o-mini"),
+            system_prompt="Ты — ассистент.",
+            temperature=0.7,
+            max_tokens=512,
+        )
+        clear_conversation = ClearConversation(repositories=factory)
+
+        application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
+        register_message_handler(application, process_user_message)
+        register_clear_conversation_handler(application, clear_conversation)
+
+        registered = application.handlers[0]
+        message_handler = next(h for h in registered if isinstance(h, MessageHandler))
+        clear_handler = next(h for h in registered if isinstance(h, CommandHandler) and "clear" in h.commands)
+        return message_handler.callback, clear_handler.callback, application, users, conversations, messages
+
+    async def test_clear_is_registered_as_its_own_command_handler_not_the_message_handler(self) -> None:
+        provider = FakeLLMProvider(response=_response())
+        message_callback, clear_callback, _, _, _, _ = self._build(provider)
+
+        assert clear_callback is not message_callback
+
+    async def test_calling_the_clear_handler_does_not_invoke_the_llm_provider(self) -> None:
+        # `/clear` доходит только до `ClearConversation` — маршрутизация
+        # `CommandHandler("clear", ...)` vs `MessageHandler(filters.TEXT &
+        # ~filters.COMMAND, ...)` — код python-telegram-bot, уже проверенный
+        # библиотекой (см. докстринг модуля); здесь под проверкой то, что
+        # НАШ обработчик `/clear` не касается `ProcessUserMessage`/`LLMProvider`.
+        provider = FakeLLMProvider(response=_response())
+        _, clear_callback, _, _, _, _ = self._build(provider)
+
+        await clear_callback(_make_update(text="/clear", user_id=42), MagicMock())
+
+        assert provider.call_count == 0
+
+    async def test_clear_deletes_history_but_keeps_the_same_conversation_active(self) -> None:
+        provider = FakeLLMProvider(response=_response("Здравствуйте!"))
+        message_callback, clear_callback, _, users, conversations, messages = self._build(provider)
+
+        await message_callback(_make_update(text="Привет!", user_id=42), MagicMock())
+
+        user = await users.get_by_telegram_user_id(42)
+        assert user is not None
+        conversation_before = await conversations.get_active_by_user_id(user.id)
+        assert conversation_before is not None
+        assert len(await messages.history(conversation_before.id)) == 2  # user + assistant
+
+        await clear_callback(_make_update(text="/clear", user_id=42), MagicMock())
+
+        assert await messages.history(conversation_before.id) == []
+        conversation_after_clear = await conversations.get_active_by_user_id(user.id)
+        assert conversation_after_clear is not None
+        assert conversation_after_clear.id == conversation_before.id
+
+    async def test_a_normal_message_after_clear_continues_in_the_same_conversation(self) -> None:
+        provider = FakeLLMProvider(response=_response("Здравствуйте!"))
+        message_callback, clear_callback, _, users, conversations, _ = self._build(provider)
+
+        await message_callback(_make_update(text="Привет!", user_id=42), MagicMock())
+        user = await users.get_by_telegram_user_id(42)
+        assert user is not None
+        conversation_before = await conversations.get_active_by_user_id(user.id)
+        assert conversation_before is not None
+
+        await clear_callback(_make_update(text="/clear", user_id=42), MagicMock())
+        await message_callback(_make_update(text="Как дела?", user_id=42), MagicMock())
+
+        conversation_after = await conversations.get_active_by_user_id(user.id)
+        assert conversation_after is not None
+        assert conversation_after.id == conversation_before.id

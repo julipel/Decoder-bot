@@ -37,6 +37,11 @@ register_message_handler`) регистрируется тоже внутри `p
 (`presentation/telegram/bot.py::register_new_conversation_handler`)
 регистрируется тоже внутри `post_init`, сразу после обработчика
 текстовых сообщений, поверх уже собранного `container.start_new_conversation`.
+
+С задачи S2-10 по той же причине обработчик команды `/clear`
+(`presentation/telegram/bot.py::register_clear_conversation_handler`)
+регистрируется тоже внутри `post_init`, сразу после обработчика команды
+`/new`, поверх уже собранного `container.clear_conversation`.
 """
 
 from __future__ import annotations
@@ -49,6 +54,7 @@ from dekoder.bootstrap.container import build_container
 from dekoder.bootstrap.database import dispose_database, init_database
 from dekoder.presentation.telegram.bot import (
     build_telegram_application,
+    register_clear_conversation_handler,
     register_message_handler,
     register_new_conversation_handler,
 )
@@ -87,6 +93,7 @@ def main() -> None:
         container = build_container(settings, http_client, db_session_factory)
         register_message_handler(app, container.process_user_message)
         register_new_conversation_handler(app, container.start_new_conversation)
+        register_clear_conversation_handler(app, container.clear_conversation)
 
     async def _shutdown(_: Application) -> None:
         # Вызывается run_polling() при штатной остановке (после

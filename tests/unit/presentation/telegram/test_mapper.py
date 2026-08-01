@@ -10,6 +10,7 @@ from telegram import Update
 from dekoder.presentation.telegram.mapper import (
     TELEGRAM_SAFE_MESSAGE_LIMIT,
     split_message,
+    to_clear_conversation_command,
     to_command,
 )
 
@@ -61,6 +62,20 @@ class TestToCommand:
 
         with pytest.raises(ValueError):
             to_command(update)
+
+
+class TestToClearConversationCommand:
+    def test_maps_telegram_user_id(self) -> None:
+        command = to_clear_conversation_command(_make_update(user_id=999))
+
+        assert command.telegram_user_id == 999
+
+    def test_raises_when_user_is_missing(self) -> None:
+        update = _make_update()
+        update.effective_user = None
+
+        with pytest.raises(ValueError):
+            to_clear_conversation_command(update)
 
 
 class TestSplitMessage:

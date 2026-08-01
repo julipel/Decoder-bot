@@ -1345,7 +1345,17 @@ Telegram
   (`ClearConversationResult.status: ClearConversationStatus`) различает
   три исхода — `CLEARED`/`ALREADY_EMPTY`/`NO_ACTIVE_CONVERSATION`; не
   принимает `LLMProvider`; `/clear` к Telegram Adapter не подключена —
-  следующая задача S2-10 — см. §36 для подробностей.
+  следующая задача S2-10 — см. §36 для подробностей;
+* [x] S2-10 — подключение команды `/clear` в Telegram Adapter: новый
+  `ClearConversationHandler` (`presentation/telegram/handlers/
+  clear_conversation.py`) вызывает `ClearConversation`, каждый из трёх
+  статусов результата переводится в отдельное сообщение пользователю;
+  зарегистрирован `CommandHandler("clear", ...)` внутри `post_init`
+  (`bot.py::register_clear_conversation_handler`, `telegram_main.py`);
+  контейнер собирает `ClearConversation` поверх той же
+  `repositories_factory`, что и `ProcessUserMessage`/`StartNewConversation`
+  — Спринт 2 функционально завершён, следующая задача (S2-11) —
+  финальная интеграция/ревью спринта — см. §36 для подробностей.
 
 ---
 
@@ -2263,21 +2273,73 @@ Sprint 2, S2-10; `ProcessUserMessage`/`StartNewConversation`/
   затрагиваются, отсутствующий пользователь/диалог не создают и не меняют
   ничего в БД; 326 тестов, ruff/ruff format/mypy проходят.
 
+**Спринт 2, S2-10 — подключение команды `/clear` в Telegram Adapter
+(последняя функциональная задача Sprint 2; `ClearConversation`/
+`ProcessUserMessage`/`StartNewConversation`/`TextMessageHandler`/
+`NewConversationHandler` не изменены по существу — подтверждено `git diff`,
+пустой на всех пяти файлах):**
+
+* `src/dekoder/presentation/telegram/handlers/clear_conversation.py`
+  (новый файл) — `ClearConversationHandler`, тот же стиль, что и
+  `NewConversationHandler`: конструктор принимает единственную зависимость
+  `ClearConversation` (dependency injection), `__call__` извлекает команду
+  через `mapper.py::to_clear_conversation_command`, вызывает
+  `execute()`, оборачивает вызов в `try/except DekoderError`/`except
+  Exception` (тот же паттерн, что и `NewConversationHandler`/
+  `TextMessageHandler`). Все три значения `ClearConversationResult.status`
+  переводятся в три РАЗНЫХ константы-сообщения модуля
+  (`CONVERSATION_CLEARED_MESSAGE`/`CONVERSATION_ALREADY_EMPTY_MESSAGE`/
+  `NO_ACTIVE_CONVERSATION_MESSAGE`) через словарь `_STATUS_MESSAGES` —
+  тексты не хранятся в use case;
+* `src/dekoder/presentation/telegram/mapper.py` — добавлена
+  `to_clear_conversation_command(update) -> ClearConversationCommand`,
+  дословно тот же принцип, что и `to_start_new_conversation_command()`
+  (извлекает `telegram_user_id` из `update.effective_user.id`,
+  `ValueError` при отсутствующем пользователе);
+* `src/dekoder/presentation/telegram/bot.py` — добавлена
+  `register_clear_conversation_handler(application, clear_conversation)`,
+  регистрирует `CommandHandler("clear", ClearConversationHandler(...))`,
+  тем же стилем, что и `register_new_conversation_handler`;
+* `src/dekoder/bootstrap/container.py` — `ApplicationContainer` получил
+  поле `clear_conversation: ClearConversation`; `build_container()`
+  собирает `ClearConversation(repositories=repositories_factory)` поверх
+  ТОЙ ЖЕ `repositories_factory`, что уже используют `ProcessUserMessage`/
+  `StartNewConversation` — вторая фабрика не создаётся;
+* `src/dekoder/telegram_main.py` — `_startup`/`post_init` вызывает
+  `register_clear_conversation_handler(app, container.clear_conversation)`
+  сразу после `register_new_conversation_handler` (тот же порядок
+  рассуждений про event loop/`aiosqlite`, что и у `/new`, S2-08);
+* тесты: `tests/unit/presentation/telegram/test_clear_conversation_handler.py`
+  (новый) — `ClearConversation` собирается по-настоящему поверх in-memory
+  fake-репозиториев (`tests/support/fake_conversation_repositories.py`);
+  покрывает все три статуса своим отдельным сообщением, точную передачу
+  `telegram_user_id`, однократный вызов use case, `Update` без сообщения
+  игнорируется, `DekoderError`/неожиданное исключение → безопасное
+  сообщение (тот же паттерн, что и `test_new_conversation_handler.py`), и
+  архитектурную проверку `TestNoDirectRepositoryOrOrmAccess` (AST-разбор
+  `clear_conversation.py` — отсутствие импортов `sqlalchemy`/
+  `dekoder.infrastructure`); `tests/unit/presentation/telegram/
+  test_mapper.py` — расширен тестами `to_clear_conversation_command`;
+  `tests/e2e/test_conversation_scenario.py` — расширен классом
+  `TestClearCommandRouting`: реальный `telegram.ext.Application` с
+  зарегистрированными `/clear` (`CommandHandler`) и обычным текстовым
+  обработчиком (`MessageHandler`) поверх ОДНИХ И ТЕХ ЖЕ in-memory
+  fake-репозиториев — подтверждает, что callback `/clear` отличается от
+  callback обычных сообщений, что вызов `/clear` не обращается к
+  `LLMProvider`, что `/clear` реально удаляет историю, сохраняя тот же
+  `conversation_id` активным, и что следующее обычное сообщение после
+  `/clear` продолжается в том же диалоге (маршрутизацию `CommandHandler`
+  vs `MessageHandler` внутри `telegram.ext.Application` самой библиотеки
+  тест не проверяет — уже проверено python-telegram-bot, см. докстринг
+  файла); 346 тестов, ruff/ruff format/mypy проходят.
+
 ## В разработке
 
-Ничего — S2-09 завершена (`ClearConversation` реализован как отдельный
-Application-слой use case). Следующий шаг — подключение команды `/clear`
-к Telegram Adapter через `ClearConversationHandler` (задача S2-10), §33,
-backlog_2.md §10.
+Ничего — Sprint 2 функционально завершён (S2-01…S2-10). Следующий шаг —
+финальная интеграция/ревью спринта (задача S2-11, §33).
 
 ## Не реализовано
 
-* подключение команды `/clear` к Telegram Adapter (`ClearConversationHandler`)
-  — следующая задача Sprint 2 (§33, backlog_2.md §10); `ClearConversation`
-  как use case уже реализован (S2-09), но ни один Telegram-обработчик его
-  ещё не вызывает; `ProcessUserMessage` по-прежнему не анализирует текст
-  на предмет команд управления диалогом (backlog_2.md §9, «Отдельные
-  сценарии управления диалогом»);
 * профили, Prompt Engine, память, RAG, каталог моделей, административные
   функции — по плану, следующие спринты (§33).
 

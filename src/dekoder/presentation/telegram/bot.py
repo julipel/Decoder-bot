@@ -27,14 +27,21 @@ Sprint 2 (задача S2-08): по той же причине (event loop/БД)
 тоже вызываемой внутри `post_init`, когда `StartNewConversation` уже
 собран контейнером — не в `build_telegram_application()`, как `/start`,
 которая не требует БД.
+
+Sprint 2 (задача S2-10): по той же причине команда `/clear`
+регистрируется отдельной функцией `register_clear_conversation_handler`,
+тоже вызываемой внутри `post_init`, поверх уже собранного
+`ClearConversation`.
 """
 
 from __future__ import annotations
 
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, MessageHandler, filters
 
+from dekoder.application.conversation.use_cases.clear_conversation import ClearConversation
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.application.conversation.use_cases.start_new_conversation import StartNewConversation
+from dekoder.presentation.telegram.handlers.clear_conversation import ClearConversationHandler
 from dekoder.presentation.telegram.handlers.messages import TextMessageHandler
 from dekoder.presentation.telegram.handlers.new_conversation import NewConversationHandler
 from dekoder.presentation.telegram.handlers.start import handle_start
@@ -55,3 +62,8 @@ def register_message_handler(application: Application, process_user_message: Pro
 def register_new_conversation_handler(application: Application, start_new_conversation: StartNewConversation) -> None:
     """Регистрирует обработчик команды `/new` поверх уже собранного `StartNewConversation`."""
     application.add_handler(CommandHandler("new", NewConversationHandler(start_new_conversation)))
+
+
+def register_clear_conversation_handler(application: Application, clear_conversation: ClearConversation) -> None:
+    """Регистрирует обработчик команды `/clear` поверх уже собранного `ClearConversation`."""
+    application.add_handler(CommandHandler("clear", ClearConversationHandler(clear_conversation)))

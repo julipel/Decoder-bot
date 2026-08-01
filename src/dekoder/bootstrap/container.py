@@ -23,6 +23,11 @@ build_conversation_repositories_factory`). Ни Telegram-слой, ни любо
 `ProcessUserMessage` — не отдельная, вторая фабрика (`StartNewConversation`
 не требует `LLMProvider`, поэтому опирается только на репозитории).
 
+С задачи S2-10 контейнер также собирает `ClearConversation`
+(`application/conversation/use_cases/clear_conversation.py`) поверх той же
+`repositories_factory` — по тем же причинам, что и `StartNewConversation`
+(`ClearConversation` тоже не требует `LLMProvider`).
+
 `http_client` контейнер получает уже созданным и не отвечает за его
 жизненный цикл — открывает и закрывает клиент `bootstrap/application.py`
 через FastAPI lifespan. Аналогично с задачи S2-06 — `db_session_factory`
@@ -37,6 +42,7 @@ from dataclasses import dataclass
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from dekoder.application.conversation.use_cases.clear_conversation import ClearConversation
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.application.conversation.use_cases.start_new_conversation import StartNewConversation
 from dekoder.bootstrap.repositories import build_conversation_repositories_factory
@@ -54,6 +60,7 @@ class ApplicationContainer:
     settings: Settings
     process_user_message: ProcessUserMessage
     start_new_conversation: StartNewConversation
+    clear_conversation: ClearConversation
 
 
 def build_container(
@@ -66,8 +73,9 @@ def build_container(
     готового `http_client` и конкретную `ConversationRepositoriesFactory`
     (задача S2-06) поверх уже готовой `db_session_factory`
     (`bootstrap/database.py::init_database`). `StartNewConversation`
-    (задача S2-08) переиспользует ту же `repositories_factory`, что и
-    `ProcessUserMessage` — не отдельную фабрику.
+    (задача S2-08) и `ClearConversation` (задача S2-10) переиспользуют ту
+    же `repositories_factory`, что и `ProcessUserMessage` — не отдельную
+    фабрику.
     """
     llm_provider = OpenRouterLLMAdapter(
         client=http_client,
@@ -84,8 +92,10 @@ def build_container(
         max_tokens=settings.llm.max_tokens,
     )
     start_new_conversation = StartNewConversation(repositories=repositories_factory)
+    clear_conversation = ClearConversation(repositories=repositories_factory)
     return ApplicationContainer(
         settings=settings,
         process_user_message=process_user_message,
         start_new_conversation=start_new_conversation,
+        clear_conversation=clear_conversation,
     )
