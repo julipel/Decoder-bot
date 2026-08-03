@@ -1419,6 +1419,22 @@ Telegram
   `knowledge_base`, `skills`, `infrastructure/model_gateway`,
   `infrastructure/vector_storage`, `interfaces/` за пределами
   перечисленных пяти файлов) не тронут — см. §36 для подробностей.
+* [x] S3-02 — доменные сущности `UserProfile`/`ProfileStatus`
+  (`domain/profile/{entities.py,value_objects.py}`): один
+  `frozen=True, slots=True` датакласс `UserProfile` со всеми
+  описательными полями ADR-3.5 как примитивами (`forbidden_phrasing:
+  tuple[str, ...]`, `preferred_model: ModelId | None` — переиспользует
+  `domain/conversation/value_objects.ModelId`, не дублируется),
+  `id: UUID` без обёртки-VO; `ProfileStatus(Enum)` — только
+  `ACTIVE`/`ARCHIVED` (не `CREATED`, которое было в удалённом S3-01
+  скелете). Инварианты (`__post_init__`): непустое `name`, непустое
+  `system_instruction`, `updated_at >= created_at` — обычный
+  `ValueError`, без нового класса доменной ошибки. Ноль зависимостей от
+  SQLAlchemy/Telegram/FastAPI (подтверждено grep). `ProfileId`/
+  `TonePreset`/`ProfilePrompt`/`ProfilePreferences` как отдельные типы
+  не созданы (ADR-3.5). ORM-модели, миграция, репозиторий и use case'ы
+  ещё не существуют — следующая задача S3-03 — см. §36 для
+  подробностей.
 
 ---
 
