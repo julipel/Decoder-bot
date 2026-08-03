@@ -44,9 +44,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
@@ -72,6 +73,7 @@ from dekoder.infrastructure.persistence.base import Base
 from dekoder.infrastructure.persistence.conversation_orm import ConversationORM
 from dekoder.infrastructure.persistence.engine import create_database_engine
 from dekoder.infrastructure.persistence.message_orm import MessageORM
+from dekoder.infrastructure.persistence.profile_orm import ProfileORM
 from dekoder.infrastructure.persistence.session import create_session_factory, session_scope
 from dekoder.infrastructure.persistence.user_orm import UserORM
 from dekoder.presentation.telegram.bot import (
@@ -133,7 +135,7 @@ def _make_process_user_message(
         llm_provider=provider,
         repositories=repositories_factory,
         default_model=ModelId("openai/gpt-4o-mini"),
-        system_prompt="Ты — ассистент.",
+        default_system_prompt="Ты — ассистент.",
         temperature=0.7,
         max_tokens=512,
     )
@@ -196,6 +198,46 @@ def repositories_factory(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> ConversationRepositoriesFactory:
     return build_conversation_repositories_factory(session_factory)
+
+
+@pytest.fixture(autouse=True)
+async def _default_profile(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    """
+    `Base.metadata.create_all()` (используется во всём этом файле) создаёт
+    только схему, без сид-данных (сид-профили вносятся исключительно
+    Alembic-миграцией S3-04, ADR-3.4). С задачи S3-07 `ProcessUserMessage`
+    требует хотя бы один активный профиль с `is_default=True`, иначе
+    `get_active_profile` поднимает `InfrastructureError` — тестовое
+    окружение вставляет один профиль напрямую через `ProfileORM`.
+    """
+    await _seed_default_profile(session_factory)
+
+
+async def _seed_default_profile(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    now = datetime(2026, 1, 1, tzinfo=UTC).replace(tzinfo=None)
+    async with session_factory() as session:
+        session.add(
+            ProfileORM(
+                id=uuid4(),
+                name="Тестовый",
+                description="Тестовый профиль по умолчанию.",
+                system_instruction="Ты — ассистент.",
+                response_style="нейтральный",
+                target_audience="тесты",
+                formality_level="нейтральный",
+                preferred_structure="без требований",
+                forbidden_phrasing=[],
+                preferred_model=None,
+                response_length_hint=None,
+                additional_constraints="",
+                status="active",
+                is_system=True,
+                is_default=True,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.commit()
 
 
 async def _all_users(session_factory: async_sessionmaker[AsyncSession]) -> list[UserORM]:
@@ -414,6 +456,7 @@ class TestApplicationRestart:
         async with first_engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
         first_session_factory = create_session_factory(first_engine)
+        await _seed_default_profile(first_session_factory)
         first_repositories_factory = build_conversation_repositories_factory(first_session_factory)
 
         provider_before_restart = FakeLLMProvider(response=_response("Ответ до перезапуска"))

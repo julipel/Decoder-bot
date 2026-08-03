@@ -4,15 +4,32 @@ ProcessUserMessage — центральный use case обработки одн
 OpenRouter → ответ), эволюционировавший в Sprint 2 (задача S2-06) —
 теперь идентифицирует пользователя, получает/создаёт активный диалог,
 сохраняет сообщения и формирует LLM-контекст из истории, а не работает
-stateless одним сообщением, как в Sprint 1.
+stateless одним сообщением, как в Sprint 1; и в Sprint 3 (задача S3-07,
+ADR-3.3) — системная инструкция берётся из активного профиля вызывающего
+пользователя вместо статической глобальной константы.
 
 Зависит только от портов (`LLMProvider`, `ConversationRepositoriesFactory`),
 DTO собственного модуля и доменных типов (`Message`, `MessageRole`,
 `MessageText`, `ModelId`) — ни httpx, ни SQLAlchemy, ни ORM-моделей, ни
 Telegram, ни FastAPI, ни URL конкретного провайдера, ни переменных
-окружения. Настройки (`default_model`/`system_prompt`/`temperature`/
-`max_tokens`) приходят через конструктор — это ответственность
-bootstrap-слоя, как и раньше.
+окружения. Настройки (`default_model`/`default_system_prompt`/
+`temperature`/`max_tokens`) приходят через конструктор — это
+ответственность bootstrap-слоя, как и раньше.
+
+Персонализация системной инструкции (Sprint 3, задача S3-07, ADR-3.3):
+`_save_user_message` (транзакция 1) сразу после получения/создания
+`User`/`Conversation` читает `repositories.profiles.get_active_profile
+(user.id)` — тем же вызовом `self._repositories()`, без отдельной
+транзакции — и возвращает `system_instruction` вместе с
+`conversation_id`; `execute()` подставляет её в `LLMRequest.
+system_prompt` как есть, без шаблонизации, без секций, без token-
+бюджета (Prompt Engine — вне объёма, Этап 6). Параметр конструктора
+`system_prompt` переименован в `default_system_prompt` — он остаётся
+защитным fallback'ом на случай пустой (после `strip()`) инструкции
+активного профиля, не основным путём (в норме `UserProfile.
+system_instruction` не может быть пустой — домен это гарантирует,
+`domain/profile/entities.py::__post_init__`, — но use case не должен
+зависеть от этой гарантии молча).
 
 Транзакционные границы (backlog_2.md §9, «Транзакционные границы»):
 
@@ -73,14 +90,14 @@ class ProcessUserMessage:
         llm_provider: LLMProvider,
         repositories: ConversationRepositoriesFactory,
         default_model: ModelId,
-        system_prompt: str,
+        default_system_prompt: str,
         temperature: float,
         max_tokens: int,
     ) -> None:
         self._llm_provider = llm_provider
         self._repositories = repositories
         self._default_model = default_model
-        self._system_prompt = system_prompt
+        self._default_system_prompt = default_system_prompt
         self._temperature = temperature
         self._max_tokens = max_tokens
         # Найдено при задаче S2-11 (финальная интеграция): системные часы
@@ -104,11 +121,11 @@ class ProcessUserMessage:
         message_text = self._validate_message_text(command.message_text)
         model_id = command.model_id if command.model_id is not None else self._default_model
 
-        conversation_id = await self._save_user_message(command.telegram_user_id, message_text)
+        conversation_id, system_instruction = await self._save_user_message(command.telegram_user_id, message_text)
         history = await self._load_history(conversation_id)
 
         request = LLMRequest(
-            system_prompt=self._system_prompt,
+            system_prompt=system_instruction,
             messages=[LLMMessage(role=message.role.value, content=message.content) for message in history],
             model_id=model_id,
             temperature=self._temperature,
@@ -129,21 +146,33 @@ class ProcessUserMessage:
             usage=TokenUsage(input_tokens=response.input_tokens, output_tokens=response.output_tokens),
         )
 
-    async def _save_user_message(self, telegram_user_id: int, message_text: MessageText) -> UUID:
+    async def _save_user_message(self, telegram_user_id: int, message_text: MessageText) -> tuple[UUID, str]:
         """
         Транзакция 1 (backlog_2.md §9): получить/создать пользователя,
-        получить/создать его активный диалог, сохранить сообщение
-        пользователя — всё поверх ОДНОЙ короткоживущей транзакции,
-        завершаемой commit'ом при выходе из `async with` (или rollback'ом
-        при любой ошибке, включая ошибку сохранения сообщения — LLM в
-        этом случае не вызывается, см. докстринг модуля).
+        получить/создать его активный диалог, прочитать его активный
+        профиль (Sprint 3, задача S3-07, ADR-3.3 — тем же вызовом
+        `self._repositories()`, не отдельной транзакцией), сохранить
+        сообщение пользователя — всё поверх ОДНОЙ короткоживущей
+        транзакции, завершаемой commit'ом при выходе из `async with`
+        (или rollback'ом при любой ошибке, включая ошибку сохранения
+        сообщения — LLM в этом случае не вызывается, см. докстринг
+        модуля).
+
+        Возвращает `(conversation_id, system_instruction)` —
+        `system_instruction` берётся из `profile.system_instruction`
+        активного профиля пользователя; если она пустая после `strip()`
+        (не должно происходить в норме — домен требует непустую строку,
+        ADR-3.2/3.5 — но use case не полагается на эту гарантию молча),
+        используется `self._default_system_prompt` как fallback.
         """
         async with self._repositories() as repositories:
             user = await repositories.users.get_or_create_by_telegram_user_id(telegram_user_id)
             conversation = await repositories.conversations.get_or_create_active(user.id)
+            profile = await repositories.profiles.get_active_profile(user.id)
             user_message = self._build_message(conversation.id, MessageRole.USER, message_text.value)
             await repositories.messages.save(user_message)
-            return conversation.id
+            system_instruction = profile.system_instruction.strip() or self._default_system_prompt
+            return conversation.id, system_instruction
 
     async def _load_history(self, conversation_id: UUID) -> list[Message]:
         """

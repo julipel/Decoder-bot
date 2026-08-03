@@ -1531,6 +1531,40 @@ Telegram
   дефолт без выбора против сохранённого выбора, `UNKNOWN_USER`/
   `UNKNOWN_PROFILE`/`SELECTED` с проверкой, что выбор не меняется при
   отказе — см. §36 для подробностей.
+* [x] S3-07 — интеграция активного профиля в `ProcessUserMessage`
+  (ADR-3.3): `_save_user_message` (транзакция 1) сразу после
+  получения/создания `User`/`Conversation` дополнительно читает
+  `repositories.profiles.get_active_profile(user.id)` тем же вызовом
+  `self._repositories()` — без отдельной транзакции — и возвращает
+  `(conversation_id, system_instruction)`; `execute()` подставляет
+  `system_instruction` в `LLMRequest.system_prompt`. Конструктор
+  переименовал параметр `system_prompt` → `default_system_prompt`
+  (используется только как fallback при пустой после `strip()`
+  инструкции профиля — не должно происходить в норме, ADR-3.2/3.5
+  гарантируют непустую строку, но use case не полагается на это молча);
+  переименование выполнено последовательно везде, включая
+  `bootstrap/container.py` (именованный аргумент и комментарий к
+  `_DEFAULT_SYSTEM_PROMPT` — теперь fallback, не основной путь), кроме
+  самого поля `LLMRequest.system_prompt` (DTO, не переименовывается,
+  подтверждено grep). Никакого Prompt Engine/шаблонизации не введено —
+  прямая подстановка `profile.system_instruction`. Транзакционные
+  границы (три короткие транзакции, LLM вне транзакции) не изменились
+  по структуре. Существующие тесты Sprint 2 адаптированы под
+  обязательное поле `profiles`; там, где реальная SQLite создаётся
+  через `Base.metadata.create_all()` (без Alembic сид-миграции —
+  S3-04), тестовое окружение вставляет один активный профиль-дефолт
+  напрямую через `ProfileORM` (`tests/integration/
+  test_process_user_message_persistence.py`, `tests/e2e/
+  test_conversation_persistence_scenario.py`) — иначе `get_active_
+  profile` падал бы `InfrastructureError` на пустом каталоге. Новые
+  тесты: персонализация `system_prompt` из активного профиля, разные
+  пользователи с разными выбранными профилями получают разный
+  `system_prompt` в рамках одного экземпляра use case, fallback на
+  `default_system_prompt` при пустой инструкции — юнит; переключение
+  профиля через реальный `ProfileRepository` меняет `system_prompt`
+  следующего вызова LLM, не переписывая содержимое уже сохранённых
+  сообщений — интеграционный (реальная SQLite) — см. §36 для
+  подробностей.
 
 ---
 

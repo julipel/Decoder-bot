@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
-from tests.support.fake_conversation_repositories import FakeProfileRepository
+from tests.support.fake_conversation_repositories import FakeProfileRepository, make_default_profile
 
 from dekoder.application.conversation.dto import (
     LLMRequest,
@@ -193,36 +193,44 @@ def _make_command(
 
 
 class _Repos:
-    __slots__ = ("users", "conversations", "messages")
+    __slots__ = ("users", "conversations", "messages", "profiles")
 
     def __init__(
-        self, users: FakeUserRepository, conversations: FakeConversationRepository, messages: FakeMessageRepository
+        self,
+        users: FakeUserRepository,
+        conversations: FakeConversationRepository,
+        messages: FakeMessageRepository,
+        profiles: FakeProfileRepository,
     ) -> None:
         self.users = users
         self.conversations = conversations
         self.messages = messages
+        self.profiles = profiles
 
 
 def _make_use_case(
     provider: FakeLLMProvider,
     default_model: str = "openai/gpt-4o-mini",
+    default_system_prompt: str = "Ты — ассистент.",
     users: FakeUserRepository | None = None,
     conversations: FakeConversationRepository | None = None,
     messages: FakeMessageRepository | None = None,
+    profiles: FakeProfileRepository | None = None,
 ) -> tuple[ProcessUserMessage, _Repos]:
     users = users if users is not None else FakeUserRepository()
     conversations = conversations if conversations is not None else FakeConversationRepository()
     messages = messages if messages is not None else FakeMessageRepository()
-    factory = _make_repositories_factory(users, conversations, messages)
+    profiles = profiles if profiles is not None else FakeProfileRepository()
+    factory = _make_repositories_factory(users, conversations, messages, profiles)
     use_case = ProcessUserMessage(
         llm_provider=provider,
         repositories=factory,
         default_model=ModelId(default_model),
-        system_prompt="Ты — ассистент.",
+        default_system_prompt=default_system_prompt,
         temperature=0.7,
         max_tokens=512,
     )
-    return use_case, _Repos(users, conversations, messages)
+    return use_case, _Repos(users, conversations, messages, profiles)
 
 
 class TestNewUser:
@@ -546,3 +554,57 @@ class TestResultType:
         assert isinstance(result.response_text, str)
         assert isinstance(result.conversation_id, UUID)
         assert isinstance(result.message_id, UUID)
+
+
+class TestPersonalization:
+    """
+    Sprint 3, задача S3-07 (ADR-3.3): системная инструкция LLMRequest
+    берётся из активного профиля пользователя, а не из статической
+    default_system_prompt.
+    """
+
+    async def test_system_prompt_equals_active_profile_instruction(self) -> None:
+        profile = make_default_profile(name="Экспертный")
+        object.__setattr__(profile, "system_instruction", "Отвечай точно и по делу, как эксперт.")
+        profiles = FakeProfileRepository([profile])
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(
+            provider, default_system_prompt="Фолбэк, не должен использоваться", profiles=profiles
+        )
+
+        await use_case.execute(_make_command())
+
+        request = provider.received_requests[0]
+        assert request.system_prompt == "Отвечай точно и по делу, как эксперт."
+
+    async def test_different_users_with_different_selected_profiles_get_different_system_prompt(self) -> None:
+        default_profile = make_default_profile(name="Деловой")
+        object.__setattr__(default_profile, "system_instruction", "Кратко и по делу.")
+        creative_profile = make_default_profile(is_default=False, name="Креативный")
+        object.__setattr__(creative_profile, "system_instruction", "Отвечай образно, с метафорами.")
+        profiles = FakeProfileRepository([default_profile, creative_profile])
+        users = FakeUserRepository()
+        await users.get_or_create_by_telegram_user_id(111)
+        user_b = await users.get_or_create_by_telegram_user_id(222)
+        await profiles.select_profile(user_b.id, creative_profile.id)
+
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, users=users, profiles=profiles)
+
+        await use_case.execute(_make_command(telegram_user_id=111))
+        await use_case.execute(_make_command(telegram_user_id=222))
+
+        assert provider.received_requests[0].system_prompt == "Кратко и по делу."
+        assert provider.received_requests[1].system_prompt == "Отвечай образно, с метафорами."
+
+    async def test_falls_back_to_default_system_prompt_when_profile_instruction_is_blank(self) -> None:
+        profile = make_default_profile(name="Пустой")
+        object.__setattr__(profile, "system_instruction", "   ")
+        profiles = FakeProfileRepository([profile])
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, default_system_prompt="Фолбэк-инструкция.", profiles=profiles)
+
+        await use_case.execute(_make_command())
+
+        request = provider.received_requests[0]
+        assert request.system_prompt == "Фолбэк-инструкция."

@@ -88,7 +88,7 @@ def _make_process_user_message(provider: FakeLLMProvider) -> ProcessUserMessage:
         llm_provider=provider,
         repositories=make_in_memory_repositories_factory(),
         default_model=ModelId("openai/gpt-4o-mini"),
-        system_prompt="Ты — ассистент.",
+        default_system_prompt="Ты — ассистент.",
         temperature=0.7,
         max_tokens=512,
     )
@@ -266,7 +266,7 @@ class TestClearCommandRouting:
             llm_provider=provider,
             repositories=factory,
             default_model=ModelId("openai/gpt-4o-mini"),
-            system_prompt="Ты — ассистент.",
+            default_system_prompt="Ты — ассистент.",
             temperature=0.7,
             max_tokens=512,
         )

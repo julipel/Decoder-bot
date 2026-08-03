@@ -19,7 +19,9 @@ backlog_2.md §3), fake `LLMProvider` (без сетевого вызова, б�
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
@@ -32,6 +34,7 @@ from dekoder.domain.conversation.value_objects import ModelId, ProviderId
 from dekoder.infrastructure.persistence.base import Base
 from dekoder.infrastructure.persistence.engine import create_database_engine
 from dekoder.infrastructure.persistence.message_orm import MessageORM
+from dekoder.infrastructure.persistence.profile_orm import ProfileORM
 from dekoder.infrastructure.persistence.session import create_session_factory
 from dekoder.shared.domain.identifiers import CorrelationId
 
@@ -71,6 +74,43 @@ def session_factory(engine: AsyncEngine) -> async_sessionmaker:  # type: ignore[
     return create_session_factory(engine)
 
 
+@pytest.fixture(autouse=True)
+async def _default_profile(session_factory: async_sessionmaker) -> None:  # type: ignore[type-arg]
+    """
+    `Base.metadata.create_all()` создаёт только схему, без сид-данных
+    (сид-профили вносятся исключительно Alembic-миграцией S3-04, ADR-3.4)
+    — с задачи S3-07 `ProcessUserMessage` требует хотя бы один активный
+    профиль с `is_default=True` (иначе `get_active_profile` поднимает
+    `InfrastructureError`), поэтому тестовое окружение вставляет один
+    профиль напрямую через `ProfileORM`, как и остальные интеграционные
+    тесты этого файла делают со схемой.
+    """
+    now = datetime(2026, 1, 1, tzinfo=UTC).replace(tzinfo=None)
+    async with session_factory() as session:
+        session.add(
+            ProfileORM(
+                id=uuid4(),
+                name="Тестовый",
+                description="Тестовый профиль по умолчанию.",
+                system_instruction="Ты — ассистент.",
+                response_style="нейтральный",
+                target_audience="тесты",
+                formality_level="нейтральный",
+                preferred_structure="без требований",
+                forbidden_phrasing=[],
+                preferred_model=None,
+                response_length_hint=None,
+                additional_constraints="",
+                status="active",
+                is_system=True,
+                is_default=True,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.commit()
+
+
 def _make_use_case(
     session_factory: async_sessionmaker,  # type: ignore[type-arg]
     provider: FakeLLMProvider,
@@ -79,7 +119,7 @@ def _make_use_case(
         llm_provider=provider,
         repositories=build_conversation_repositories_factory(session_factory),
         default_model=ModelId("openai/gpt-4o-mini"),
-        system_prompt="Ты — ассистент.",
+        default_system_prompt="Ты — ассистент.",
         temperature=0.7,
         max_tokens=512,
     )
@@ -181,3 +221,106 @@ class TestFullPersistenceFlow:
 
         second_request_contents = [m.content for m in provider.received_requests[1].messages]
         assert second_request_contents == ["Сообщение 1", "Ответ 1", "Сообщение 2"]
+
+
+class TestProfileSwitchAffectsOnlyFutureMessages:
+    """
+    Sprint 3, задача S3-07, AC-2: переключение активного профиля влияет
+    на `system_prompt` следующих вызовов LLM, но не переписывает уже
+    сохранённые сообщения — на реальной SQLite (`build_profile_repository`,
+    не fake).
+    """
+
+    async def test_switching_profile_changes_system_prompt_without_rewriting_history(
+        self,
+        session_factory: async_sessionmaker,  # type: ignore[type-arg]
+    ) -> None:
+        now = datetime(2026, 1, 1, tzinfo=UTC).replace(tzinfo=None)
+        other_profile_id = uuid4()
+        async with session_factory() as session:
+            session.add(
+                ProfileORM(
+                    id=other_profile_id,
+                    name="Креативный",
+                    description="Образный, нестандартный стиль.",
+                    system_instruction="Отвечай образно, с метафорами.",
+                    response_style="образный",
+                    target_audience="тесты",
+                    formality_level="неформальный",
+                    preferred_structure="свободная форма",
+                    forbidden_phrasing=[],
+                    preferred_model=None,
+                    response_length_hint=None,
+                    additional_constraints="",
+                    status="active",
+                    is_system=True,
+                    is_default=False,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+        provider = FakeLLMProvider()
+        use_case = _make_use_case(session_factory, provider)
+
+        first_result = await use_case.execute(
+            ProcessUserMessageCommand(
+                telegram_user_id=1001,
+                message_text="Первое сообщение",
+                correlation_id=CorrelationId("corr-1"),
+            )
+        )
+
+        async with session_factory() as session:
+            rows_before_switch = (
+                (
+                    await session.execute(
+                        select(MessageORM)
+                        .where(MessageORM.conversation_id == first_result.conversation_id)
+                        .order_by(MessageORM.created_at, MessageORM.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        contents_before_switch = [row.content for row in rows_before_switch]
+
+        # Переключаем профиль пользователя — через тот же ProfileRepository,
+        # что и SelectProfile use case (S3-06), напрямую на реальной SQLite.
+        conversation_repositories_factory = build_conversation_repositories_factory(session_factory)
+        async with conversation_repositories_factory() as repositories:
+            stored_user = await repositories.users.get_by_telegram_user_id(1001)
+            assert stored_user is not None
+            selected = await repositories.profiles.select_profile(stored_user.id, other_profile_id)
+            assert selected is not None
+            assert selected.id == other_profile_id
+
+        second_result = await use_case.execute(
+            ProcessUserMessageCommand(
+                telegram_user_id=1001,
+                message_text="Второе сообщение",
+                correlation_id=CorrelationId("corr-2"),
+            )
+        )
+
+        assert second_result.conversation_id == first_result.conversation_id
+        assert len(provider.received_requests) == 2
+        assert provider.received_requests[1].system_prompt == "Отвечай образно, с метафорами."
+        assert provider.received_requests[1].system_prompt != provider.received_requests[0].system_prompt
+
+        async with session_factory() as session:
+            rows_after_switch = (
+                (
+                    await session.execute(
+                        select(MessageORM)
+                        .where(MessageORM.conversation_id == first_result.conversation_id)
+                        .order_by(MessageORM.created_at, MessageORM.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        # Переключение профиля не изменило содержимое уже сохранённых сообщений.
+        assert [row.content for row in rows_after_switch[: len(contents_before_switch)]] == contents_before_switch

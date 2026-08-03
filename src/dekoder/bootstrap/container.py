@@ -59,8 +59,11 @@ from dekoder.domain.conversation.value_objects import ModelId
 from dekoder.infrastructure.llm.openrouter_adapter import OpenRouterLLMAdapter
 from dekoder.shared.config import Settings
 
-# Временный минимальный системный промпт — до отдельного этапа Prompt
-# Engine (вне объёма текущей задачи, как и в задаче ProcessUserMessage).
+# Fallback-системный промпт (Sprint 3, задача S3-07, ADR-3.3) — используется
+# ProcessUserMessage только если у активного профиля пользователя пустая
+# (после strip()) system_instruction; основной путь — профиль пользователя
+# (ProfileRepository.get_active_profile), не эта константа. До Sprint 3 это
+# было единственным источником системной инструкции для всех пользователей.
 _DEFAULT_SYSTEM_PROMPT = "Ты — персональный ассистент «Декодер». Отвечай кратко и по делу."
 
 
@@ -99,7 +102,7 @@ def build_container(
         llm_provider=llm_provider,
         repositories=repositories_factory,
         default_model=ModelId(settings.openrouter.default_model),
-        system_prompt=_DEFAULT_SYSTEM_PROMPT,
+        default_system_prompt=_DEFAULT_SYSTEM_PROMPT,
         temperature=settings.llm.temperature,
         max_tokens=settings.llm.max_tokens,
     )
