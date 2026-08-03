@@ -1565,6 +1565,33 @@ Telegram
   следующего вызова LLM, не переписывая содержимое уже сохранённых
   сообщений — интеграционный (реальная SQLite) — см. §36 для
   подробностей.
+* [x] S3-08 — Telegram-команда `/profile`:
+  `presentation/telegram/handlers/profile.py` — `ProfileCommandHandler`
+  (`/profile`: вызывает `GetActiveProfile`, при `profile=None`
+  — нейтральное сообщение без вызова `ListProfiles`; иначе `ListProfiles`
+  и inline-клавиатура с одной кнопкой на профиль, активный отмечен
+  суффиксом «(текущий)» в тексте кнопки, не эмодзи) и
+  `ProfileSelectionCallbackHandler` (первый `CallbackQueryHandler` в
+  проекте, `pattern=r"^profile:"`; `callback_data` кодирует только
+  `profile_id` — `_build_profile_keyboard`/`_parse_profile_callback_data`;
+  вызывает `SelectProfile`, редактирует исходное сообщение подтверждением
+  или явной обработкой `UNKNOWN_USER`/`UNKNOWN_PROFILE`, невалидный/чужой
+  `callback_data` тоже приводит к понятному сообщению, не к исключению).
+  `mapper.py` расширен `to_get_active_profile_command`/
+  `to_select_profile_command` — последний впервые в проекте берёт
+  `telegram_user_id` из `update.callback_query.from_user`, не
+  `update.effective_user`. `DekoderError` → `error.user_message`, прочие
+  исключения → нейтральное сообщение + `_logger.exception` — тот же
+  принцип, что и `NewConversationHandler`/`ClearConversationHandler`.
+  `register_profile_handlers` (`bot.py`) вызывается из `post_init`
+  (`telegram_main.py`), поверх `container.list_profiles`/
+  `get_active_profile`/`select_profile`. Presentation-слой по-прежнему
+  не импортирует SQLAlchemy/`AsyncSession` (подтверждено grep). Тесты —
+  список с отметкой активного, `callback_data` кодирует только
+  `profile_id`, выбор через callback переключает профиль без изменения
+  при отказе, `UNKNOWN_USER`/`UNKNOWN_PROFILE`/невалидный `callback_data`
+  обрабатываются явно, `DekoderError`/неожиданное исключение не
+  протекают деталями к пользователю — см. §36 для подробностей.
 
 ---
 

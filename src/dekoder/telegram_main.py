@@ -42,6 +42,12 @@ register_message_handler`) регистрируется тоже внутри `p
 (`presentation/telegram/bot.py::register_clear_conversation_handler`)
 регистрируется тоже внутри `post_init`, сразу после обработчика команды
 `/new`, поверх уже собранного `container.clear_conversation`.
+
+С задачи S3-08 (Sprint 3) по той же причине обработчики команды
+`/profile` (`presentation/telegram/bot.py::register_profile_handlers`)
+регистрируются тоже внутри `post_init`, сразу после обработчика команды
+`/clear`, поверх уже собранных `container.list_profiles`/
+`container.get_active_profile`/`container.select_profile`.
 """
 
 from __future__ import annotations
@@ -57,6 +63,7 @@ from dekoder.presentation.telegram.bot import (
     register_clear_conversation_handler,
     register_message_handler,
     register_new_conversation_handler,
+    register_profile_handlers,
 )
 from dekoder.shared.config import Settings
 from dekoder.shared.logging import configure_logging, get_logger
@@ -94,6 +101,7 @@ def main() -> None:
         register_message_handler(app, container.process_user_message)
         register_new_conversation_handler(app, container.start_new_conversation)
         register_clear_conversation_handler(app, container.clear_conversation)
+        register_profile_handlers(app, container.list_profiles, container.get_active_profile, container.select_profile)
 
     async def _shutdown(_: Application) -> None:
         # Вызывается run_polling() при штатной остановке (после

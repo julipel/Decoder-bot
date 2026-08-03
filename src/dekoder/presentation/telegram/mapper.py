@@ -12,11 +12,23 @@ Telegram `Update` ↔ внутренние DTO — единственное ме
 `to_clear_conversation_command()` (Sprint 2, задача S2-10) — тот же
 принцип, для обработчика команды `/clear`
 (`presentation/telegram/handlers/clear_conversation.py`).
+
+`to_get_active_profile_command()` (Sprint 3, задача S3-08) — тот же
+принцип, для обработчика команды `/profile`
+(`presentation/telegram/handlers/profile.py`).
+
+`to_select_profile_command()` (Sprint 3, задача S3-08) — первое место в
+проекте, извлекающее `telegram_user_id` не из `update.effective_user`
+(обычное сообщение/команда), а из `update.callback_query.from_user` —
+источник идентификатора пользователя для inline-кнопок (`CallbackQuery`),
+нажавшего которую пользователь мог не совпадать с автором исходного
+сообщения (групповые чаты) — используем именно того, кто нажал кнопку.
 """
 
 from __future__ import annotations
 
 import uuid
+from uuid import UUID
 
 from telegram import Update
 
@@ -25,6 +37,7 @@ from dekoder.application.conversation.dto import (
     ProcessUserMessageCommand,
     StartNewConversationCommand,
 )
+from dekoder.application.profile.dto import GetActiveProfileCommand, SelectProfileCommand
 from dekoder.shared.domain.identifiers import CorrelationId
 
 # Реальный лимит Telegram на одно текстовое сообщение — 4096 символов;
@@ -76,6 +89,34 @@ def to_clear_conversation_command(update: Update) -> ClearConversationCommand:
         raise ValueError("Update does not contain a known user")
 
     return ClearConversationCommand(telegram_user_id=user.id)
+
+
+def to_get_active_profile_command(update: Update) -> GetActiveProfileCommand:
+    """
+    Строит команду для обработчика `/profile` из входящего `Update`.
+    `telegram_user_id` извлекается тем же способом, что и в `to_command()`/
+    `to_start_new_conversation_command()`/`to_clear_conversation_command()`
+    — `update.effective_user.id`.
+    """
+    user = update.effective_user
+    if user is None:
+        raise ValueError("Update does not contain a known user")
+
+    return GetActiveProfileCommand(telegram_user_id=user.id)
+
+
+def to_select_profile_command(update: Update, profile_id: UUID) -> SelectProfileCommand:
+    """
+    Строит команду для callback'а выбора профиля из входящего `Update`.
+    `telegram_user_id` извлекается из `update.callback_query.from_user`
+    (не `update.effective_user`) — пользователь, нажавший inline-кнопку,
+    а не автор исходного сообщения со списком профилей.
+    """
+    query = update.callback_query
+    if query is None or query.from_user is None:
+        raise ValueError("Update does not contain a callback query from a known user")
+
+    return SelectProfileCommand(telegram_user_id=query.from_user.id, profile_id=profile_id)
 
 
 def split_message(text: str, limit: int = TELEGRAM_SAFE_MESSAGE_LIMIT) -> list[str]:
