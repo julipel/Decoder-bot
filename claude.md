@@ -1508,6 +1508,29 @@ Telegram
   дефолт без выбора, сохранение выбора, замена выбора без дублирования
   строки, отказ на неизвестный/архивный `profile_id`, изоляция между
   пользователями — см. §36 для подробностей.
+* [x] S3-06 — use cases `ListProfiles`/`GetActiveProfile`/
+  `SelectProfile` (`application/profile/{dto.py,use_cases/
+  {list_profiles,get_active_profile,select_profile}.py}`) — тот же
+  стиль, что и `StartNewConversation`/`ClearConversation` (S2-07/S2-09):
+  каждый принимает только `ConversationRepositoriesFactory`, использует
+  `repositories.profiles` (и `repositories.users` для двух последних),
+  одна короткая транзакция на вызов. `GetActiveProfile`/`SelectProfile`
+  используют `get_by_telegram_user_id` (не `get_or_create_...`) — не
+  создают пользователя побочным эффектом просмотра/выбора профиля,
+  подтверждено grep. `SelectProfile` возвращает явный статус
+  (`SELECTED`/`UNKNOWN_USER`/`UNKNOWN_PROFILE`), не исключение, на
+  ожидаемые отрицательные исходы — по образцу `ClearConversationStatus`.
+  Подключены в `ApplicationContainer`/`build_container`
+  (`bootstrap/container.py`) поверх той же `repositories_factory`, что и
+  остальные use case'ы — второй фабрики не появилось. `FakeProfileRepository`
+  и расширение `make_in_memory_repositories_factory` уже существовали с
+  S3-05 (пришлось перенести туда раньше срока) — эта задача их только
+  использует, не создаёт заново. Тесты — все на `FakeProfileRepository`/
+  `FakeUserRepository`, без SQLAlchemy: список всех активных профилей и
+  исключение архивных, `profile=None` для неизвестного пользователя,
+  дефолт без выбора против сохранённого выбора, `UNKNOWN_USER`/
+  `UNKNOWN_PROFILE`/`SELECTED` с проверкой, что выбор не меняется при
+  отказе — см. §36 для подробностей.
 
 ---
 

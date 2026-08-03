@@ -28,6 +28,12 @@ build_conversation_repositories_factory`). Ни Telegram-слой, ни любо
 `repositories_factory` — по тем же причинам, что и `StartNewConversation`
 (`ClearConversation` тоже не требует `LLMProvider`).
 
+С задачи S3-06 (Sprint 3) контейнер также собирает `ListProfiles`/
+`GetActiveProfile`/`SelectProfile` (`application/profile/use_cases/*`)
+поверх той же `repositories_factory` — по тем же причинам, что и
+`StartNewConversation`/`ClearConversation` (ни один из трёх не требует
+`LLMProvider`); никакой второй фабрики репозиториев не вводится (ADR-3.3).
+
 `http_client` контейнер получает уже созданным и не отвечает за его
 жизненный цикл — открывает и закрывает клиент `bootstrap/application.py`
 через FastAPI lifespan. Аналогично с задачи S2-06 — `db_session_factory`
@@ -45,6 +51,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from dekoder.application.conversation.use_cases.clear_conversation import ClearConversation
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.application.conversation.use_cases.start_new_conversation import StartNewConversation
+from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
+from dekoder.application.profile.use_cases.list_profiles import ListProfiles
+from dekoder.application.profile.use_cases.select_profile import SelectProfile
 from dekoder.bootstrap.repositories import build_conversation_repositories_factory
 from dekoder.domain.conversation.value_objects import ModelId
 from dekoder.infrastructure.llm.openrouter_adapter import OpenRouterLLMAdapter
@@ -61,6 +70,9 @@ class ApplicationContainer:
     process_user_message: ProcessUserMessage
     start_new_conversation: StartNewConversation
     clear_conversation: ClearConversation
+    list_profiles: ListProfiles
+    get_active_profile: GetActiveProfile
+    select_profile: SelectProfile
 
 
 def build_container(
@@ -93,9 +105,15 @@ def build_container(
     )
     start_new_conversation = StartNewConversation(repositories=repositories_factory)
     clear_conversation = ClearConversation(repositories=repositories_factory)
+    list_profiles = ListProfiles(repositories=repositories_factory)
+    get_active_profile = GetActiveProfile(repositories=repositories_factory)
+    select_profile = SelectProfile(repositories=repositories_factory)
     return ApplicationContainer(
         settings=settings,
         process_user_message=process_user_message,
         start_new_conversation=start_new_conversation,
         clear_conversation=clear_conversation,
+        list_profiles=list_profiles,
+        get_active_profile=get_active_profile,
+        select_profile=select_profile,
     )
