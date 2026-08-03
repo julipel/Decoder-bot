@@ -1,8 +1,10 @@
 """
 Интеграционные тесты ORM-моделей `UserORM`/`ConversationORM`/`MessageORM`
-(задача S2-02) на временной SQLite-базе (`tmp_path` — НЕ рабочая БД):
-уникальность `telegram_user_id`, внешние ключи, CHECK-ограничения и
-частичный уникальный индекс на активный диалог пользователя.
+(задача S2-02) и `ProfileORM`/`UserActiveProfileORM` (задача S3-03) на
+временной SQLite-базе (`tmp_path` — НЕ рабочая БД): уникальность
+`telegram_user_id`, внешние ключи, CHECK-ограничения и частичные
+уникальные индексы (активный диалог пользователя, профиль-дефолт
+каталога).
 
 Схема создаётся через `Base.metadata.create_all()` — единственное
 допустимое исключение для тестового окружения (backlog_2.md §3, «Прямое
@@ -27,7 +29,9 @@ from dekoder.infrastructure.persistence.base import Base
 from dekoder.infrastructure.persistence.conversation_orm import ConversationORM
 from dekoder.infrastructure.persistence.engine import create_database_engine
 from dekoder.infrastructure.persistence.message_orm import MessageORM
+from dekoder.infrastructure.persistence.profile_orm import ProfileORM
 from dekoder.infrastructure.persistence.session import create_session_factory
+from dekoder.infrastructure.persistence.user_active_profile_orm import UserActiveProfileORM
 from dekoder.infrastructure.persistence.user_orm import UserORM
 
 
@@ -49,6 +53,38 @@ def _make_conversation(user_id: UUID, *, closed_at: datetime | None = None) -> C
 
 def _make_message(conversation_id: UUID, *, role: str = "user", content: str = "текст") -> MessageORM:
     return MessageORM(id=uuid4(), conversation_id=conversation_id, role=role, content=content, created_at=_now())
+
+
+def _make_profile(
+    *,
+    status: str = "active",
+    is_default: bool = False,
+    name: str = "Профиль",
+) -> ProfileORM:
+    now = _now()
+    return ProfileORM(
+        id=uuid4(),
+        name=name,
+        description="Описание профиля.",
+        system_instruction="Отвечай по делу.",
+        response_style="нейтральный",
+        target_audience="широкая аудитория",
+        formality_level="нейтральный",
+        preferred_structure="без особых требований",
+        forbidden_phrasing=[],
+        preferred_model=None,
+        response_length_hint=None,
+        additional_constraints="",
+        status=status,
+        is_system=True,
+        is_default=is_default,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _make_user_active_profile(user_id: UUID, profile_id: UUID) -> UserActiveProfileORM:
+    return UserActiveProfileORM(user_id=user_id, profile_id=profile_id, updated_at=_now())
 
 
 @pytest.fixture
@@ -205,3 +241,94 @@ class TestActiveConversationUniqueness:
                 .all()
             )
             assert [c.id for c in active_conversations] == [third_active_id]
+
+
+class TestProfileCheckConstraint:
+    async def test_unknown_status_is_rejected(self, session_factory: async_sessionmaker) -> None:  # type: ignore[type-arg]
+        async with session_factory() as session:
+            session.add(_make_profile(status="draft"))
+            with pytest.raises(IntegrityError):
+                await session.commit()
+
+    async def test_valid_active_and_archived_status_are_accepted(
+        self,
+        session_factory: async_sessionmaker,  # type: ignore[type-arg]
+    ) -> None:
+        async with session_factory() as session:
+            session.add(_make_profile(status="active", name="Активный"))
+            session.add(_make_profile(status="archived", name="Архивный"))
+            await session.commit()
+
+
+class TestProfileDefaultUniqueness:
+    """
+    Ключевой тест задачи S3-03: инвариант «не более одного профиля-дефолта
+    в каталоге» должен защищаться частичным уникальным индексом
+    `uq_profiles_is_default` на уровне БД (backlog_3.md §5, ADR-3.4).
+    """
+
+    async def test_second_default_profile_violates_database_constraint(
+        self,
+        session_factory: async_sessionmaker,  # type: ignore[type-arg]
+    ) -> None:
+        async with session_factory() as session:
+            session.add(_make_profile(is_default=True, name="Первый дефолт"))
+            await session.commit()
+
+        async with session_factory() as session:
+            session.add(_make_profile(is_default=True, name="Второй дефолт"))
+            with pytest.raises(IntegrityError):
+                await session.commit()
+
+    async def test_multiple_non_default_profiles_are_accepted(
+        self,
+        session_factory: async_sessionmaker,  # type: ignore[type-arg]
+    ) -> None:
+        async with session_factory() as session:
+            session.add(_make_profile(is_default=False, name="Первый"))
+            session.add(_make_profile(is_default=False, name="Второй"))
+            await session.commit()
+
+
+class TestUserActiveProfileForeignKeyEnforcement:
+    async def test_unknown_user_id_is_rejected(self, session_factory: async_sessionmaker) -> None:  # type: ignore[type-arg]
+        async with session_factory() as session:
+            profile = _make_profile()
+            session.add(profile)
+            await session.commit()
+            profile_id = profile.id
+
+        async with session_factory() as session:
+            session.add(_make_user_active_profile(uuid4(), profile_id))
+            with pytest.raises(IntegrityError):
+                await session.commit()
+
+    async def test_unknown_profile_id_is_rejected(self, session_factory: async_sessionmaker) -> None:  # type: ignore[type-arg]
+        async with session_factory() as session:
+            user = _make_user(555)
+            session.add(user)
+            await session.commit()
+            user_id = user.id
+
+        async with session_factory() as session:
+            session.add(_make_user_active_profile(user_id, uuid4()))
+            with pytest.raises(IntegrityError):
+                await session.commit()
+
+    async def test_valid_selection_is_accepted(self, session_factory: async_sessionmaker) -> None:  # type: ignore[type-arg]
+        async with session_factory() as session:
+            user = _make_user(666)
+            profile = _make_profile()
+            session.add(user)
+            session.add(profile)
+            await session.commit()
+            user_id, profile_id = user.id, profile.id
+
+        async with session_factory() as session:
+            session.add(_make_user_active_profile(user_id, profile_id))
+            await session.commit()
+
+        async with session_factory() as session:
+            stored = await session.get(UserActiveProfileORM, user_id)
+            assert stored is not None
+            assert stored.profile_id == profile_id

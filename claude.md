@@ -1435,6 +1435,28 @@ Telegram
   не созданы (ADR-3.5). ORM-модели, миграция, репозиторий и use case'ы
   ещё не существуют — следующая задача S3-03 — см. §36 для
   подробностей.
+* [x] S3-03 — ORM-модели и схемная миграция профилей: `ProfileORM`
+  (`infrastructure/persistence/profile_orm.py`) и
+  `UserActiveProfileORM` (`infrastructure/persistence/
+  user_active_profile_orm.py`) точно по модели данных `backlog_3.md §5`
+  (`forbidden_phrasing` — `sa.JSON`, `status` — `String`+`CheckConstraint`
+  `ck_profiles_status`, частичный уникальный индекс
+  `uq_profiles_is_default` с `sqlite_where="is_default = 1"` по образцу
+  `uq_conversations_active_user`); `profile_to_orm`/`profile_to_domain`
+  добавлены в `mappers.py` с той же дисциплиной таймстемпов
+  (`_to_naive_utc`/`_to_aware_utc`), что и у существующих мапперов;
+  `UserActiveProfileORM` сознательно не получил мапперы — не доменная
+  сущность (ADR-3.1), инкапсулирована целиком за `ProfileRepository`
+  (следующая задача S3-05). Новая Alembic-ревизия `14bf7e3ae815`
+  (`down_revision = "a96ab72bfa8a"`, существующая миграция S2-02 не
+  изменена) создаёт `profiles` → `user_active_profiles` → частичный
+  индекс, `downgrade()` — строго в обратном порядке; сгенерирована
+  `alembic revision --autogenerate` (против временной базы, поднятой до
+  ревизии S2-02) и вручную выверена. Сид-данные ещё не вносятся —
+  следующая задача S3-04. Эмпирически проверено: `upgrade head` →
+  `downgrade -1` → `upgrade head` на временной SQLite проходит без
+  ошибок, `downgrade -1` удаляет только `profiles`/`user_active_profiles`,
+  не трогая `users`/`conversations`/`messages` — см. §36 для подробностей.
 
 ---
 

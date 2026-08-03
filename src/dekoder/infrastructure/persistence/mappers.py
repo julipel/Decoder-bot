@@ -1,6 +1,7 @@
 """
 Явные функции преобразования Domain ↔ ORM (Infrastructure Layer, задача
-S2-02) для `User`, `Conversation`, `Message`.
+S2-02) для `User`, `Conversation`, `Message`, и (задача S3-03) для
+`UserProfile`.
 
 Не делают запросов, не коммитят, не грузят граф объектов — чистые
 функции `ORM -> Domain` и `Domain -> ORM` (backlog_2.md §8: «ORM Model →
@@ -16,6 +17,12 @@ SQLite не сохраняет offset: `DateTime(timezone=True)` на диале
 (`_to_naive_utc`, значение остаётся UTC по соглашению) и восстанавливает
 `tzinfo=UTC` при чтении (`_to_aware_utc`), вместо того чтобы полагаться
 на неявное поведение колонки.
+
+`user_active_profiles` (`UserActiveProfileORM`, задача S3-03) намеренно
+не получает `*_to_domain`/`*_to_orm` здесь — это не доменная сущность
+(ADR-3.1), только внутренняя связь «пользователь → активный профиль»,
+которую `SQLAlchemyProfileRepository` (задача S3-05) читает/пишет
+напрямую.
 """
 
 from __future__ import annotations
@@ -23,9 +30,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from dekoder.domain.conversation.entities import Conversation, Message, MessageRole
+from dekoder.domain.conversation.value_objects import ModelId
+from dekoder.domain.profile.entities import UserProfile
+from dekoder.domain.profile.value_objects import ProfileStatus
 from dekoder.domain.user.entities import User
 from dekoder.infrastructure.persistence.conversation_orm import ConversationORM
 from dekoder.infrastructure.persistence.message_orm import MessageORM
+from dekoder.infrastructure.persistence.profile_orm import ProfileORM
 from dekoder.infrastructure.persistence.user_orm import UserORM
 
 
@@ -104,4 +115,50 @@ def message_to_domain(orm_message: MessageORM) -> Message:
         role=MessageRole(orm_message.role),
         content=orm_message.content,
         created_at=_to_aware_utc(orm_message.created_at),
+    )
+
+
+def profile_to_orm(profile: UserProfile) -> ProfileORM:
+    """Domain `UserProfile` -> `ProfileORM`."""
+    return ProfileORM(
+        id=profile.id,
+        name=profile.name,
+        description=profile.description,
+        system_instruction=profile.system_instruction,
+        response_style=profile.response_style,
+        target_audience=profile.target_audience,
+        formality_level=profile.formality_level,
+        preferred_structure=profile.preferred_structure,
+        forbidden_phrasing=list(profile.forbidden_phrasing),
+        preferred_model=profile.preferred_model.value if profile.preferred_model is not None else None,
+        response_length_hint=profile.response_length_hint,
+        additional_constraints=profile.additional_constraints,
+        status=profile.status.value,
+        is_system=profile.is_system,
+        is_default=profile.is_default,
+        created_at=_to_naive_utc(profile.created_at),
+        updated_at=_to_naive_utc(profile.updated_at),
+    )
+
+
+def profile_to_domain(orm_profile: ProfileORM) -> UserProfile:
+    """`ProfileORM` -> Domain `UserProfile`."""
+    return UserProfile(
+        id=orm_profile.id,
+        name=orm_profile.name,
+        description=orm_profile.description,
+        system_instruction=orm_profile.system_instruction,
+        response_style=orm_profile.response_style,
+        target_audience=orm_profile.target_audience,
+        formality_level=orm_profile.formality_level,
+        preferred_structure=orm_profile.preferred_structure,
+        forbidden_phrasing=tuple(orm_profile.forbidden_phrasing),
+        preferred_model=ModelId(orm_profile.preferred_model) if orm_profile.preferred_model is not None else None,
+        response_length_hint=orm_profile.response_length_hint,
+        additional_constraints=orm_profile.additional_constraints,
+        status=ProfileStatus(orm_profile.status),
+        is_system=orm_profile.is_system,
+        is_default=orm_profile.is_default,
+        created_at=_to_aware_utc(orm_profile.created_at),
+        updated_at=_to_aware_utc(orm_profile.updated_at),
     )

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from dekoder.infrastructure.persistence.conversation_orm import ConversationORM
 from dekoder.infrastructure.persistence.message_orm import MessageORM
+from dekoder.infrastructure.persistence.profile_orm import ProfileORM
+from dekoder.infrastructure.persistence.user_active_profile_orm import UserActiveProfileORM
 from dekoder.infrastructure.persistence.user_orm import UserORM
 
-__all__ = ["ConversationORM", "MessageORM", "UserORM"]
+__all__ = ["ConversationORM", "MessageORM", "ProfileORM", "UserActiveProfileORM", "UserORM"]

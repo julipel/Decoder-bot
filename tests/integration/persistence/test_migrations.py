@@ -1,6 +1,8 @@
 """
 Тест первой Alembic-миграции (задача S2-02, `alembic/versions/
-a96ab72bfa8a_create_users_conversations_messages.py`): `upgrade head`
+a96ab72bfa8a_create_users_conversations_messages.py`) и схемной миграции
+Sprint 3 (задача S3-03, `alembic/versions/
+14bf7e3ae815_create_profiles_user_active_profiles.py`): `upgrade head`
 создаёт все таблицы/индексы/ограничения, `downgrade base` удаляет их
 полностью, повторный `upgrade head` снова проходит без ошибок — на
 временной SQLite-базе (`tmp_path`, НЕ рабочая БД из `./data/app.db`).
@@ -55,11 +57,12 @@ class TestInitialMigrationCycle:
         table_names = {name for type_, name, _ in objects if type_ == "table"}
         index_names = {name for type_, name, _ in objects if type_ == "index"}
 
-        assert {"users", "conversations", "messages"} <= table_names
+        assert {"users", "conversations", "messages", "profiles", "user_active_profiles"} <= table_names
         assert {
             "ix_conversations_user_id",
             "uq_conversations_active_user",
             "ix_messages_conversation_created",
+            "uq_profiles_is_default",
         } <= index_names
 
         users_sql = next(sql for type_, name, sql in objects if type_ == "table" and name == "users")
@@ -73,6 +76,20 @@ class TestInitialMigrationCycle:
             sql for type_, name, sql in objects if type_ == "index" and name == "uq_conversations_active_user"
         )
         assert "WHERE closed_at IS NULL" in partial_index_sql
+
+        profiles_sql = next(sql for type_, name, sql in objects if type_ == "table" and name == "profiles")
+        assert "ck_profiles_status" in profiles_sql
+
+        user_active_profiles_sql = next(
+            sql for type_, name, sql in objects if type_ == "table" and name == "user_active_profiles"
+        )
+        assert "fk_user_active_profiles_user_id_users" in user_active_profiles_sql
+        assert "fk_user_active_profiles_profile_id_profiles" in user_active_profiles_sql
+
+        profiles_partial_index_sql = next(
+            sql for type_, name, sql in objects if type_ == "index" and name == "uq_profiles_is_default"
+        )
+        assert "WHERE is_default = 1" in profiles_partial_index_sql
 
     def test_downgrade_removes_everything_and_upgrade_again_succeeds(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -89,4 +106,22 @@ class TestInitialMigrationCycle:
         # Повторный upgrade head после полного downgrade не должен падать.
         command.upgrade(config, "head")
         table_names = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
-        assert {"users", "conversations", "messages"} <= table_names
+        assert {"users", "conversations", "messages", "profiles", "user_active_profiles"} <= table_names
+
+    def test_downgrade_minus_one_removes_only_profile_tables(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`downgrade -1` откатывает только схемную ревизию S3-03, не трогая Sprint 2 (users/conversations/messages)."""
+        db_path = tmp_path / "migration-partial-downgrade.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+        table_names_before = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
+        assert {"profiles", "user_active_profiles"} <= table_names_before
+
+        command.downgrade(config, "-1")
+
+        table_names_after = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
+        assert "profiles" not in table_names_after
+        assert "user_active_profiles" not in table_names_after
+        assert {"users", "conversations", "messages"} <= table_names_after
