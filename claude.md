@@ -1387,6 +1387,39 @@ Telegram
   добавлена — Спринт 2 (S2-01…S2-11) полностью завершён, 354 теста,
   ruff/ruff format/mypy проходят — см. §36 для подробностей.
 
+## Текущий спринт (обновление 2)
+
+**Спринт 3: пользовательские профили — персонализация системной
+инструкции (S3-01…S3-09), в разработке.**
+
+Цель и полный состав спринта — внешняя архитектурная спецификация
+`backlog_3.md` (не входит в этот репозиторий) и §33 ниже. Прогресс по
+задачам:
+
+* [x] S3-01 — удаление мёртвого скелета профилей v2.0-архитектуры:
+  удалены `domain/profile/profile.py` (`AuthorProfile`/`ProfileSettings`/
+  старый `ProfileStatus`), весь `application/profile/{ports,commands,
+  queries}.py` и `application/profile/use_cases/*` (семь use case'ов,
+  все `raise NotImplementedError`), `infrastructure/persistence/
+  sqlite_profile_repository.py`; точечно зачищены dangling-импорты на
+  удалённые типы из пяти файлов недостижимого v2.0-скелета
+  (`application/ai_core/use_cases/route_command.py` —
+  `AuthorProfileView` и пять use case'ов профиля плюс метод
+  `list_profiles`; `generate_content.py` — `GetAuthorProfileUseCase` и
+  параметр конструктора; `execution_context_builder.py`/`shared/
+  application/execution_context.py` — параметр/поле `profile:
+  AuthorProfile`; `composition/container.py` — поле `Container.
+  profile_repository`), без изменения остального поведения этих файлов;
+  `domain/profile/`/`application/profile/` оставлены как пустые пакеты
+  (только `__init__.py`), готовые к S3-02. Реальный код Sprint 1–2
+  (`presentation/`, `bootstrap/`, `domain/{user,conversation}`,
+  `application/{user,conversation}`, `infrastructure/{llm,persistence}`
+  за пределами удалённого файла) не тронут; остальной v2.0-скелет
+  (`admin`, `memory`, `rag`, `model_catalog`, `session`,
+  `knowledge_base`, `skills`, `infrastructure/model_gateway`,
+  `infrastructure/vector_storage`, `interfaces/` за пределами
+  перечисленных пяти файлов) не тронут — см. §36 для подробностей.
+
 ---
 
 # 33. План следующих спринтов

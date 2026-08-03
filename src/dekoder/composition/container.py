@@ -43,7 +43,6 @@ from dekoder.application.logging.ports import Logger
 from dekoder.application.memory.ports import MemoryRepository
 from dekoder.application.model_catalog.ports import ModelCatalogRepository
 from dekoder.application.model_gateway.ports import ModelGateway
-from dekoder.application.profile.ports import ProfileRepository
 from dekoder.application.prompt_engine.ports import PromptBuilder
 from dekoder.application.rag.ports import VectorRepository
 from dekoder.application.session.ports import SessionRepository
@@ -62,7 +61,6 @@ class Container:
     """
 
     # Репозитории и внешние порты
-    profile_repository: ProfileRepository
     content_skill_repository: ContentSkillRepository
     model_catalog_repository: ModelCatalogRepository
     session_repository: SessionRepository

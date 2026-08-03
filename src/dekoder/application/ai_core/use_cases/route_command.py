@@ -17,18 +17,6 @@ from dekoder.application.model_catalog.queries import ModelOptionView
 from dekoder.application.model_catalog.use_cases.get_available_models import (
     GetAvailableModelsUseCase,
 )
-from dekoder.application.profile.queries import AuthorProfileView
-from dekoder.application.profile.use_cases.archive_author_profile import (
-    ArchiveAuthorProfileUseCase,
-)
-from dekoder.application.profile.use_cases.create_author_profile import (
-    CreateAuthorProfileUseCase,
-)
-from dekoder.application.profile.use_cases.get_author_profiles import GetAuthorProfilesUseCase
-from dekoder.application.profile.use_cases.set_default_profile import SetDefaultProfileUseCase
-from dekoder.application.profile.use_cases.update_author_profile import (
-    UpdateAuthorProfileUseCase,
-)
 from dekoder.application.session.queries import GenerationSessionView
 from dekoder.application.session.use_cases.cancel_session import CancelSessionUseCase
 from dekoder.application.session.use_cases.reset_session import ResetSessionUseCase
@@ -50,11 +38,6 @@ from dekoder.shared.domain.value_objects import ContentType, GenerationType
 class RouteCommandUseCase:
     def __init__(
         self,
-        create_author_profile: CreateAuthorProfileUseCase,
-        update_author_profile: UpdateAuthorProfileUseCase,
-        archive_author_profile: ArchiveAuthorProfileUseCase,
-        set_default_profile: SetDefaultProfileUseCase,
-        get_author_profiles: GetAuthorProfilesUseCase,
         get_available_skills: GetAvailableSkillsUseCase,
         start_generation_session: StartGenerationSessionUseCase,
         select_content_type: SelectContentTypeUseCase,
@@ -70,11 +53,6 @@ class RouteCommandUseCase:
         get_memory_facts: GetMemoryFactsUseCase,
         get_dialogue_history: GetDialogueHistoryUseCase,
     ) -> None:
-        self._create_author_profile = create_author_profile
-        self._update_author_profile = update_author_profile
-        self._archive_author_profile = archive_author_profile
-        self._set_default_profile = set_default_profile
-        self._get_author_profiles = get_author_profiles
         self._get_available_skills = get_available_skills
         self._start_generation_session = start_generation_session
         self._select_content_type = select_content_type
@@ -89,9 +67,6 @@ class RouteCommandUseCase:
         self._forget_memory_fact = forget_memory_fact
         self._get_memory_facts = get_memory_facts
         self._get_dialogue_history = get_dialogue_history
-
-    def list_profiles(self, user_id: UserId) -> list[AuthorProfileView]:
-        raise NotImplementedError
 
     def start_session(self, user_id: UserId) -> GenerationSessionView:
         raise NotImplementedError

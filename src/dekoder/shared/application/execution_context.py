@@ -16,7 +16,6 @@ from dataclasses import dataclass, field
 
 from dekoder.domain.memory.dialogue_entry import DialogueEntry
 from dekoder.domain.memory.fact import MemoryFact
-from dekoder.domain.profile.profile import AuthorProfile
 from dekoder.domain.rag.fragment import KnowledgeFragment
 from dekoder.domain.session.session import GenerationSession
 from dekoder.domain.skills.skill import ContentSkill
@@ -27,7 +26,6 @@ from dekoder.shared.domain.value_objects import ContentType, GenerationType
 @dataclass(frozen=True)
 class ExecutionContext:
     correlation_id: CorrelationId
-    profile: AuthorProfile
     skill: ContentSkill
     generation_type: GenerationType
     content_type: ContentType | None

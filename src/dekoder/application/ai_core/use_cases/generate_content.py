@@ -23,7 +23,6 @@ from dekoder.application.memory.use_cases.record_dialogue_message import (
     RecordDialogueMessageUseCase,
 )
 from dekoder.application.model_gateway.ports import ModelGateway
-from dekoder.application.profile.use_cases.get_author_profile import GetAuthorProfileUseCase
 from dekoder.shared.utils.correlation import CorrelationIdGenerator
 
 
@@ -39,7 +38,6 @@ class GenerateContentUseCase:
         prompt_assembler: PromptAssembler,
         model_gateway: ModelGateway,
         response_formatter: ResponseFormatter,
-        get_author_profile: GetAuthorProfileUseCase,
         record_dialogue_message: RecordDialogueMessageUseCase,
         logger: Logger,
         correlation_id_generator: CorrelationIdGenerator,
@@ -53,7 +51,6 @@ class GenerateContentUseCase:
         self._prompt_assembler = prompt_assembler
         self._model_gateway = model_gateway
         self._response_formatter = response_formatter
-        self._get_author_profile = get_author_profile
         self._record_dialogue_message = record_dialogue_message
         self._logger = logger
         self._correlation_id_generator = correlation_id_generator
