@@ -18,6 +18,18 @@ COPY pyproject.toml ./
 COPY src ./src
 RUN pip install --no-cache-dir .
 
+# `alembic.ini`/`alembic/` (env.py + versions/) — без них `alembic upgrade
+# head` внутри контейнера падает `FAILED: No 'script_location' key found
+# in configuration` (обнаружено в задаче S3-09, «Финальная интеграция»:
+# ни один процесс/тест до этого реально не запускал alembic ИЗ
+# собранного образа — интеграционные/e2e-тесты запускают его с хоста,
+# из корня репозитория, где оба файла и так присутствуют). README
+# инструктирует применять миграции перед первым запуском (см. «Быстрый
+# старт», «База данных и миграции») — этот шаг был невыполним внутри
+# Docker-развёртывания без этой правки.
+COPY alembic.ini ./
+COPY alembic ./alembic
+
 # Непривилегированный пользователь — процесс не должен работать от root.
 # `/app/data` создаётся и передаётся во владение `dekoder` уже здесь, при
 # сборке образа: `bootstrap/database.py::_ensure_sqlite_directory_exists`

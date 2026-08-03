@@ -6,30 +6,41 @@ Prompt Engine, база знаний с RAG, память диалога, адм
 в [`CLAUDE.md`](claude.md) и в `docs/versions/` — это проектные
 документы, а не описание того, что уже запускается.
 
-**Что реально работает сейчас** — Sprint 1 (Walking Skeleton) и Sprint 2
-(постоянное хранилище, диалоги, история) полностью завершены:
+**Что реально работает сейчас** — Sprint 1 (Walking Skeleton), Sprint 2
+(постоянное хранилище, диалоги, история) и Sprint 3 (пользовательские
+профили) полностью завершены:
 
 ```text
-Telegram → ProcessUserMessage → LLMProvider → OpenRouterLLMAdapter → ответ
+Telegram → ProcessUserMessage → ProfileRepository (активный профиль) → LLMProvider → OpenRouterLLMAdapter → ответ
                  │
                  ├── User/Conversation/Message сохраняются в SQLite
-                 └── история активного диалога передаётся в LLM целиком
+                 └── история активного диалога передаётся в LLM целиком,
+                     системная инструкция берётся из активного профиля пользователя
 
-Telegram /new   → StartNewConversation → закрывает текущий диалог, создаёт новый
-Telegram /clear → ClearConversation    → удаляет историю, диалог остаётся активным
+Telegram /new     → StartNewConversation → закрывает текущий диалог, создаёт новый
+Telegram /clear   → ClearConversation    → удаляет историю, диалог остаётся активным
+Telegram /profile → ListProfiles/GetActiveProfile/SelectProfile → выбор профиля через inline-клавиатуру
 ```
 
 Пользователь пишет боту в Telegram → сообщение уходит в use case
 `ProcessUserMessage` → пользователь и его активный диалог находятся или
-создаются в SQLite, сообщение пользователя сохраняется → история диалога
-читается из базы и передаётся в LLM через порт `LLMProvider` → адаптер
-`OpenRouterLLMAdapter` обращается к OpenRouter → ответ модели сохраняется
-как сообщение ассистента и возвращается пользователю в Telegram. Команда
-`/new` закрывает текущий диалог и начинает новый (старая история не
-удаляется, просто перестаёт быть активной); `/clear` удаляет сообщения
-текущего диалога, не закрывая и не пересоздавая сам диалог. Профилей,
-Prompt Engine, памяти, RAG и выбора модели ещё нет — они добавляются по
-следующим спринтам (`claude.md`, §33).
+создаются в SQLite, читается его активный профиль (`ProfileRepository`),
+сообщение пользователя сохраняется → история диалога читается из базы и
+передаётся в LLM через порт `LLMProvider`, системная инструкция —
+`system_instruction` активного профиля пользователя (не общая константа
+для всех) → адаптер `OpenRouterLLMAdapter` обращается к OpenRouter →
+ответ модели сохраняется как сообщение ассистента и возвращается
+пользователю в Telegram. Команда `/new` закрывает текущий диалог и
+начинает новый (старая история не удаляется, просто перестаёт быть
+активной); `/clear` удаляет сообщения текущего диалога, не закрывая и не
+пересоздавая сам диалог; `/profile` показывает каталог из 4
+предустановленных профилей с отметкой текущего активного и позволяет
+переключиться через inline-кнопку — переключение влияет только на
+будущие сообщения, не переписывает уже сохранённую историю, и не влияет
+на других пользователей. Персональных (не каталожных) профилей,
+`CreateProfile`/`UpdateProfile`/`DeactivateProfile`, Prompt Engine,
+памяти, RAG и выбора модели ещё нет — они добавляются по следующим
+спринтам/этапам (`claude.md`, §33).
 
 ## Архитектура
 
@@ -48,35 +59,41 @@ bootstrap → собирает presentation + application + infrastructure
 src/dekoder/
 ├── domain/
 │   ├── conversation/                # MessageText/ModelId/ProviderId, MessageRole, Message, Conversation (Aggregate Root)
-│   └── user/                        # User
+│   ├── user/                        # User
+│   └── profile/                     # UserProfile, ProfileStatus (Sprint 3, S3-02)
 ├── application/
-│   ├── conversation/                # DTO, LLMProvider/ConversationRepository/MessageRepository (порты),
+│   ├── conversation/                # DTO, LLMProvider/ConversationRepository/MessageRepository/ConversationRepositories (порты),
 │   │                                 #   ProcessUserMessage, StartNewConversation, ClearConversation
-│   └── user/                        # UserRepository (порт)
+│   ├── user/                        # UserRepository (порт)
+│   └── profile/                     # ProfileRepository (порт), DTO, ListProfiles/GetActiveProfile/SelectProfile (S3-05/S3-06)
 ├── infrastructure/
 │   ├── llm/                         # OpenRouterLLMAdapter
 │   └── persistence/                 # base.py/engine.py/session.py (SQLAlchemy async, S2-01) +
 │                                     #   user_orm.py/conversation_orm.py/message_orm.py + mappers.py (S2-02) +
-│                                     #   user_repository.py/conversation_repository.py/message_repository.py (S2-03..S2-05)
-├── presentation/telegram/           # /start, /new, /clear, обработчик текстовых сообщений, mapper.py, bot.py
+│                                     #   user_repository.py/conversation_repository.py/message_repository.py (S2-03..S2-05) +
+│                                     #   profile_orm.py/user_active_profile_orm.py/profile_repository.py (Sprint 3, S3-03/S3-05)
+├── presentation/telegram/           # /start, /new, /clear, /profile, обработчик текстовых сообщений, mapper.py, bot.py
 ├── bootstrap/                       # container.py, application.py, database.py, repositories.py — единственное место сборки
 └── shared/                          # config.py, logging.py, errors.py
 
-alembic/                             # первая и единственная миграция Sprint 2 (users/conversations/messages)
+alembic/                             # users/conversations/messages (S2-02) + profiles/user_active_profiles (S3-03) +
+                                      #   сид-каталог из 4 профилей (S3-04)
 ```
 
 > В репозитории также существует более крупное, отдельное от этого
 > среза дерево-заглушка — `composition/`, `interfaces/`, а также модули
-> `ai_core`, `admin`, `profile`, `memory`, `knowledge_base`, `rag`,
-> `model_catalog` под `domain/`/`application/`, и
-> `infrastructure/model_gateway/`. Это результат более ранней миграции
-> по документам `docs/versions/*_v2.0.md`, построенной по другой
-> архитектуре (`interfaces/`+`composition/` вместо
-> `presentation/`+`bootstrap/`). Реально запускаемое приложение
-> (`main.py`, `telegram_main.py`) его не использует — почти весь код
-> там оканчивается `raise NotImplementedError`. Реконсиляция двух
-> деревьев — сознательно отложенное решение, подробности в
-> `claude.md`, §36.
+> `ai_core`, `admin`, `memory`, `knowledge_base`, `rag`, `model_catalog`
+> под `domain/`/`application/`, и `infrastructure/model_gateway/`. Это
+> результат более ранней миграции по документам
+> `docs/versions/*_v2.0.md`, построенной по другой архитектуре
+> (`interfaces/`+`composition/` вместо `presentation/`+`bootstrap/`).
+> Реально запускаемое приложение (`main.py`, `telegram_main.py`) его не
+> использует — почти весь код там оканчивается `raise
+> NotImplementedError`. Реконсиляция оставшихся модулей — сознательно
+> отложенное решение, подробности в `claude.md`, §36. Мёртвый скелет
+> `domain/profile/`/`application/profile/*` из этого дерева был удалён в
+> Sprint 3 (задача S3-01) — он конфликтовал по имени/форме с реальным
+> `UserProfile`, который этот срез теперь использует.
 
 ## Технологический стек
 
@@ -143,7 +160,13 @@ uv run alembic upgrade head
   нейтральным сообщением, ничего не создавая;
 - `/clear` — удаляет всю историю текущего активного диалога, сам диалог
   остаётся тем же самым (тот же `conversation_id`) — следующее сообщение
-  продолжает его же, с чистой историей.
+  продолжает его же, с чистой историей;
+- `/profile` — показывает каталог из 4 предустановленных профилей
+  («Экспертный», «Дружелюбный», «Деловой» — профиль по умолчанию,
+  «Креативный») с inline-клавиатурой, текущий активный отмечен в тексте
+  кнопки; выбор профиля меняет системную инструкцию, которую видит LLM
+  при каждом следующем ответе — переключение не затрагивает уже
+  отправленные сообщения и не влияет на других пользователей.
 
 `.env` и `.env.local` поддерживаются оба, `.env.local` имеет приоритет
 (см. `src/dekoder/shared/config.py`); ни один из них не коммитится.
@@ -155,12 +178,21 @@ uv run alembic upgrade head
 умолчанию `sqlite+aiosqlite:///./data/app.db`). Схема базы данных
 создаётся и изменяется **только** через Alembic — `Base.metadata.
 create_all()` нигде не вызывается в рабочем коде (только в тестовых
-фикстурах). Единственная на сегодня миграция (`alembic/versions/
-a96ab72bfa8a_create_users_conversations_messages.py`) создаёт таблицы
-`users` → `conversations` → `messages` с внешними ключами, `CHECK`-
-ограничениями (роль сообщения, непустой текст) и частичным уникальным
-индексом `uq_conversations_active_user` (не более одного активного
-диалога на пользователя).
+фикстурах). Три ревизии:
+
+- `alembic/versions/a96ab72bfa8a_create_users_conversations_messages.py`
+  (Sprint 2) — создаёт таблицы `users` → `conversations` → `messages` с
+  внешними ключами, `CHECK`-ограничениями (роль сообщения, непустой
+  текст) и частичным уникальным индексом `uq_conversations_active_user`
+  (не более одного активного диалога на пользователя);
+- `alembic/versions/14bf7e3ae815_create_profiles_user_active_profiles.py`
+  (Sprint 3, S3-03) — создаёт таблицы `profiles` → `user_active_profiles`
+  с частичным уникальным индексом `uq_profiles_is_default` (не более
+  одного профиля-дефолта в каталоге);
+- `alembic/versions/27c4e9f2a103_seed_profile_catalog.py` (Sprint 3,
+  S3-04) — data migration, вносит 4 предустановленных профиля через
+  `op.bulk_insert` с детерминированными UUID; `downgrade()` удаляет ровно
+  эти 4 строки по `id`.
 
 ```powershell
 # Применить все миграции (создаёт/обновляет схему БД) — идемпотентно,
@@ -240,12 +272,16 @@ tests/
 ├── unit/            # domain, application use cases, presentation-мапперы, shared
 ├── integration/     # OpenRouter adapter через respx, /health endpoint, Alembic-миграции,
 │                    #   репозитории/persistence-потоки ProcessUserMessage/StartNewConversation/
-│                    #   ClearConversation поверх временной SQLite (без сети)
+│                    #   ClearConversation/ProfileRepository поверх временной SQLite (без сети)
 └── e2e/             # test_conversation_scenario.py — сквозной сценарий диалога поверх реального
                      #   telegram.ext.Application (in-memory fake-репозитории);
                      # test_conversation_persistence_scenario.py — те же сценарии (первое/второе
                      #   сообщение, /new, /clear, изоляция пользователей, перезапуск приложения,
-                     #   ошибка LLM, ошибка БД/rollback) поверх РЕАЛЬНОЙ временной SQLite
+                     #   ошибка LLM, ошибка БД/rollback) поверх РЕАЛЬНОЙ временной SQLite;
+                     # test_profile_scenario.py (Sprint 3, S3-09) — дефолтный профиль без выбора,
+                     #   переключение влияет только на будущие сообщения, изоляция пользователей,
+                     #   отказ на неизвестный profile_id, полный цикл /profile через реальный
+                     #   CallbackQueryHandler — поверх РЕАЛЬНОЙ временной SQLite
 ```
 
 Ни один тест не обращается к реальному Telegram API или реальному
