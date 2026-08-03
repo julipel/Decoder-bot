@@ -4,8 +4,10 @@
 (Sprint 2, задача S2-04), `MessageRepository` — абстрактный контракт
 доступа к сообщениям диалога (Sprint 2, задача S2-05), и
 `ConversationRepositories`/`ConversationRepositoriesFactory` — контракт
-получения короткоживущей группы из всех трёх репозиториев для одной
-транзакции (Sprint 2, задача S2-06, см. ниже).
+получения короткоживущей группы репозиториев для одной транзакции
+(Sprint 2, задача S2-06, см. ниже; расширена полем `profiles` в Sprint 3,
+задача S3-05, ADR-3.3 — `ProfileRepository` встраивается в существующую
+группу, не в отдельную параллельную фабрику).
 
 `application/conversation/` не импортирует OpenRouter (или любого другого
 конкретного провайдера) — только этот протокол. Конкретные реализации
@@ -37,6 +39,7 @@ from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
+from dekoder.application.profile.ports import ProfileRepository
 from dekoder.application.user.ports import UserRepository
 from dekoder.domain.conversation.entities import Conversation, Message
 
@@ -178,26 +181,34 @@ class MessageRepository(Protocol):
 @dataclass(frozen=True)
 class ConversationRepositories:
     """
-    Группа из трёх репозиториев, нужных `ProcessUserMessage` внутри ОДНОЙ
-    короткоживущей транзакции (Sprint 2, задача S2-06).
+    Группа репозиториев, нужных `ProcessUserMessage` внутри ОДНОЙ
+    короткоживущей транзакции (Sprint 2, задача S2-06; поле `profiles`
+    добавлено в Sprint 3, задача S3-05, ADR-3.3).
 
     Это не Generic Repository и не самостоятельный Unit of Work —
     абстрактный Unit of Work из backlog_2.md §15 (инвариант 14) явно
     запрещён; `ConversationRepositories` не предоставляет
     `begin()`/`commit()`/`rollback()` и вообще не знает про транзакции —
     просто именованный набор из уже готовых `UserRepository`/
-    `ConversationRepository`/`MessageRepository`, каждый из которых
-    остаётся тем же протоколом, что и раньше. Транзакционные границы
-    (когда открыть/закрыть сессию, когда закоммитить) остаются
-    инфраструктурной ответственностью `session_scope()`
-    (`infrastructure/persistence/session.py`, задача S2-01) — `bootstrap/
-    repositories.py` оборачивает его в `ConversationRepositoriesFactory`
-    ниже.
+    `ConversationRepository`/`MessageRepository`/`ProfileRepository`,
+    каждый из которых остаётся тем же протоколом, что и раньше.
+    Транзакционные границы (когда открыть/закрыть сессию, когда
+    закоммитить) остаются инфраструктурной ответственностью
+    `session_scope()` (`infrastructure/persistence/session.py`, задача
+    S2-01) — `bootstrap/repositories.py` оборачивает его в
+    `ConversationRepositoriesFactory` ниже.
+
+    `profiles` встроен в эту же группу, а не в отдельную параллельную
+    фабрику репозиториев (ADR-3.3, backlog_3.md §3 «Ограничения
+    архитектуры») — use case'ы, которым `profiles` не нужен
+    (`StartNewConversation`/`ClearConversation`), просто игнорируют это
+    поле, как и раньше игнорировали лишние для них поля этой группы.
     """
 
     users: UserRepository
     conversations: ConversationRepository
     messages: MessageRepository
+    profiles: ProfileRepository
 
 
 ConversationRepositoriesFactory = Callable[[], AbstractAsyncContextManager[ConversationRepositories]]

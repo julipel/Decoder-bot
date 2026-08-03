@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
+from tests.support.fake_conversation_repositories import FakeProfileRepository
 
 from dekoder.application.conversation.dto import (
     LLMRequest,
@@ -158,10 +159,13 @@ def _make_repositories_factory(
     users: FakeUserRepository,
     conversations: FakeConversationRepository,
     messages: FakeMessageRepository,
+    profiles: FakeProfileRepository | None = None,
 ) -> ConversationRepositoriesFactory:
+    profiles = profiles if profiles is not None else FakeProfileRepository()
+
     @asynccontextmanager
     async def _factory() -> AsyncIterator[ConversationRepositories]:
-        yield ConversationRepositories(users=users, conversations=conversations, messages=messages)
+        yield ConversationRepositories(users=users, conversations=conversations, messages=messages, profiles=profiles)
 
     return _factory
 

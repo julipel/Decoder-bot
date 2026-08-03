@@ -1476,6 +1476,38 @@ Telegram
   `upgrade head` восстанавливает те же 4 строки с теми же `id`. Use
   case'ы, читающие каталог, ещё не существуют — следующая задача S3-05
   (`ProfileRepository`) — см. §36 для подробностей.
+* [x] S3-05 — `ProfileRepository`: порт (`application/profile/
+  ports.py`, `Protocol`+`@runtime_checkable`, только доменные/stdlib
+  типы в сигнатурах) + `SQLAlchemyProfileRepository`
+  (`infrastructure/persistence/profile_repository.py`). `get_active_
+  profile` — один SQL-запрос (`LEFT JOIN` от однострочной
+  «области видимости» пользователя на `user_active_profiles`, затем
+  `JOIN` на `profiles` по `COALESCE(profile_id, id профиля-дефолта)`),
+  не два последовательных запроса с проверкой на уровне Python;
+  прототип запроса проверен вручную перед встраиванием в репозиторий.
+  `select_profile` — атомарный upsert (`sqlite.insert(...).
+  on_conflict_do_update(...)` по `user_id`) после проверки
+  `status='active'` целевого `profile_id`; неизвестный/неактивный
+  `profile_id` → `None`, ничего не записывая. `ConversationRepositories`
+  (`application/conversation/ports.py`, ADR-3.3) получила обязательное
+  поле `profiles: ProfileRepository` — никакой второй фабрики
+  репозиториев не введено (подтверждено grep). Поскольку поле
+  обязательное, часть объёма, нормально закреплённого за S3-06
+  (`FakeProfileRepository` в `tests/support/
+  fake_conversation_repositories.py`, расширение
+  `make_in_memory_repositories_factory` параметром `profiles`),
+  пришлось перенести в эту же задачу — иначе существующие тесты Sprint 2
+  перестали бы собираться сразу после добавления поля; S3-06 не будет
+  переделывать эту инфраструктуру, только добавит три use case'а поверх
+  неё. `bootstrap/repositories.py::build_profile_repository` подключён в
+  `build_conversation_repositories_factory` рядом с тремя существующими
+  билдерами. Тесты: Protocol-соответствие
+  (`tests/unit/application/test_profile_repository_port.py`) и
+  интеграционные на реальной SQLite
+  (`tests/integration/persistence/test_profile_repository.py`) —
+  дефолт без выбора, сохранение выбора, замена выбора без дублирования
+  строки, отказ на неизвестный/архивный `profile_id`, изоляция между
+  пользователями — см. §36 для подробностей.
 
 ---
 
