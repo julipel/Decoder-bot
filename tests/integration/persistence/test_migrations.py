@@ -1,11 +1,14 @@
 """
 Тест первой Alembic-миграции (задача S2-02, `alembic/versions/
-a96ab72bfa8a_create_users_conversations_messages.py`) и схемной миграции
+a96ab72bfa8a_create_users_conversations_messages.py`), схемной миграции
 Sprint 3 (задача S3-03, `alembic/versions/
-14bf7e3ae815_create_profiles_user_active_profiles.py`): `upgrade head`
-создаёт все таблицы/индексы/ограничения, `downgrade base` удаляет их
-полностью, повторный `upgrade head` снова проходит без ошибок — на
-временной SQLite-базе (`tmp_path`, НЕ рабочая БД из `./data/app.db`).
+14bf7e3ae815_create_profiles_user_active_profiles.py`) и сид-миграции
+каталога профилей (задача S3-04, `alembic/versions/
+27c4e9f2a103_seed_profile_catalog.py`): `upgrade head` создаёт все
+таблицы/индексы/ограничения и вносит сид-данные, `downgrade base`
+удаляет всё полностью, повторный `upgrade head` снова проходит без
+ошибок — на временной SQLite-базе (`tmp_path`, НЕ рабочая БД из
+`./data/app.db`).
 
 Тесты синхронные (обычные функции, не `async def`): `alembic/env.py`
 запускает миграции через `asyncio.run(...)` (задача S2-01) — вызов из уже
@@ -41,6 +44,15 @@ def _schema_objects(db_path: Path) -> list[tuple[str, str, str]]:
         # и её неявный автоиндекс первичного ключа (`sqlite_autoindex_
         # alembic_version_1`) — фильтр по `name` пропускал бы автоиндекс.
         cursor = connection.execute("SELECT type, name, sql FROM sqlite_master WHERE tbl_name != 'alembic_version'")
+        return cursor.fetchall()
+    finally:
+        connection.close()
+
+
+def _profile_rows(db_path: Path) -> list[tuple[str, str, int, int, int]]:
+    connection = sqlite3.connect(db_path)
+    try:
+        cursor = connection.execute("SELECT id, name, is_default, status = 'active', is_system FROM profiles")
         return cursor.fetchall()
     finally:
         connection.close()
@@ -108,10 +120,10 @@ class TestInitialMigrationCycle:
         table_names = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
         assert {"users", "conversations", "messages", "profiles", "user_active_profiles"} <= table_names
 
-    def test_downgrade_minus_one_removes_only_profile_tables(
+    def test_downgrade_to_pre_profile_schema_removes_only_profile_tables(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """`downgrade -1` откатывает только схемную ревизию S3-03, не трогая Sprint 2 (users/conversations/messages)."""
+        """Откат до ревизии S2-02 (seed S3-04 + schema S3-03) не трогает Sprint 2 (users/conversations/messages)."""
         db_path = tmp_path / "migration-partial-downgrade.db"
         config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
 
@@ -119,9 +131,72 @@ class TestInitialMigrationCycle:
         table_names_before = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
         assert {"profiles", "user_active_profiles"} <= table_names_before
 
-        command.downgrade(config, "-1")
+        # Ревизия a96ab72bfa8a (S2-02) — сразу перед схемной миграцией профилей.
+        command.downgrade(config, "a96ab72bfa8a")
 
         table_names_after = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
         assert "profiles" not in table_names_after
         assert "user_active_profiles" not in table_names_after
         assert {"users", "conversations", "messages"} <= table_names_after
+
+
+class TestProfileCatalogSeedMigration:
+    """Тесты сид-миграции каталога профилей (задача S3-04, ADR-3.4)."""
+
+    def test_upgrade_head_creates_exactly_four_active_system_profiles(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = tmp_path / "seed-upgrade.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+
+        rows = _profile_rows(db_path)
+        assert len(rows) == 4
+        assert all(is_active for _, _, _, is_active, _ in rows)
+        assert all(is_system for _, _, _, _, is_system in rows)
+
+    def test_upgrade_head_creates_exactly_one_default_profile(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = tmp_path / "seed-default.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+
+        rows = _profile_rows(db_path)
+        default_rows = [row for row in rows if row[2] == 1]
+        assert len(default_rows) == 1
+        assert default_rows[0][1] == "Деловой"
+
+    def test_downgrade_minus_one_removes_only_seed_rows_not_schema(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = tmp_path / "seed-downgrade.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+        assert len(_profile_rows(db_path)) == 4
+
+        command.downgrade(config, "-1")
+
+        # Схема (таблица profiles) остаётся — откатились только вставленные строки.
+        table_names = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
+        assert "profiles" in table_names
+        assert _profile_rows(db_path) == []
+
+    def test_upgrade_head_after_seed_downgrade_restores_same_ids(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = tmp_path / "seed-cycle.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+        ids_before = {row[0] for row in _profile_rows(db_path)}
+
+        command.downgrade(config, "-1")
+        command.upgrade(config, "head")
+        ids_after = {row[0] for row in _profile_rows(db_path)}
+
+        assert ids_before == ids_after
+        assert len(ids_after) == 4

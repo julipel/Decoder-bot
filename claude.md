@@ -1457,6 +1457,25 @@ Telegram
   `downgrade -1` → `upgrade head` на временной SQLite проходит без
   ошибок, `downgrade -1` удаляет только `profiles`/`user_active_profiles`,
   не трогая `users`/`conversations`/`messages` — см. §36 для подробностей.
+* [x] S3-04 — сид-миграция каталога профилей: новая Alembic-ревизия
+  `27c4e9f2a103` (`down_revision = "14bf7e3ae815"`) вносит 4
+  предустановленных профиля через `op.bulk_insert` с детерминированными
+  UUID-константами (`PROFILE_EXPERT_ID`/`PROFILE_FRIENDLY_ID`/
+  `PROFILE_BUSINESS_ID`/`PROFILE_CREATIVE_ID`, не `uuid4()`) — «Экспертный»,
+  «Дружелюбный», «Деловой» (`is_default=True`), «Креативный»; текст —
+  черновой состав из backlog_3_tasks.md S3-04, принят как рабочий вариант
+  (финальный копирайтинг может потребовать отдельной миграции после
+  Sprint 3, см. ADR-3.4 «Недостатки» — явно помечено в docstring
+  миграции). «Деловой» выбран дефолтом как ближайший по духу к прежнему
+  `_DEFAULT_SYSTEM_PROMPT` («Отвечай кратко и по делу»). `downgrade()`
+  удаляет ровно эти 4 строки по `id` (`DELETE ... WHERE id IN (...)`),
+  никогда `DELETE FROM profiles` без `WHERE`. Эмпирически проверено:
+  `upgrade head` создаёт ровно 4 строки, все `status='active'`,
+  `is_system=true`, ровно одна `is_default=true`; `downgrade -1` оставляет
+  таблицу `profiles` пустой, но не удаляет её (схема остаётся); повторный
+  `upgrade head` восстанавливает те же 4 строки с теми же `id`. Use
+  case'ы, читающие каталог, ещё не существуют — следующая задача S3-05
+  (`ProfileRepository`) — см. §36 для подробностей.
 
 ---
 
