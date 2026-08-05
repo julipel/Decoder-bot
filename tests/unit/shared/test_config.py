@@ -18,6 +18,7 @@ from dekoder.shared.config import (
     DatabaseSettings,
     LLMSettings,
     OpenRouterSettings,
+    PromptSettings,
     Settings,
     TelegramSettings,
 )
@@ -138,6 +139,31 @@ class TestDatabaseSettingsDefaults:
         assert settings.url == "sqlite+aiosqlite:///:memory:"
 
 
+class TestPromptSettingsDefaults:
+    """Sprint 4, задача S4-06, ADR-4.4: бюджет `TokenBudgetPolicy` — из `Settings`, не хардкод."""
+
+    def test_default_value(self) -> None:
+        settings = PromptSettings(_env_file=None)
+
+        assert settings.token_budget == 12000
+
+    def test_loaded_from_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PROMPT_TOKEN_BUDGET", "500")
+
+        settings = PromptSettings(_env_file=None)
+
+        assert settings.token_budget == 500
+
+    @pytest.mark.parametrize("invalid_budget", [0, -1, -1000])
+    def test_non_positive_budget_raises_validation_error(
+        self, monkeypatch: pytest.MonkeyPatch, invalid_budget: int
+    ) -> None:
+        monkeypatch.setenv("PROMPT_TOKEN_BUDGET", str(invalid_budget))
+
+        with pytest.raises(ValidationError):
+            PromptSettings(_env_file=None)
+
+
 class TestSecretsHaveNoDefaults:
     def test_telegram_settings_require_bot_token(self) -> None:
         with pytest.raises(ValidationError):
@@ -187,8 +213,10 @@ class TestSettingsAggregation:
         assert isinstance(settings.llm, LLMSettings)
         assert isinstance(settings.openrouter, OpenRouterSettings)
         assert isinstance(settings.database, DatabaseSettings)
+        assert isinstance(settings.prompt, PromptSettings)
         assert settings.application.port == 8080
         assert settings.llm.temperature == 0.3
         assert settings.telegram.bot_token.get_secret_value() == "token"
         assert settings.openrouter.api_key.get_secret_value() == "api-key"
         assert settings.database.url == "sqlite+aiosqlite:///./data/app.db"
+        assert settings.prompt.token_budget == 12000

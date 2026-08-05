@@ -86,6 +86,28 @@ class OpenRouterSettings(BaseSettings):
     default_model: str = "openai/gpt-4o-mini"
 
 
+class PromptSettings(BaseSettings):
+    """
+    Настройки Prompt Engine (Sprint 4, задача S4-06, ADR-4.4).
+
+    `token_budget` — бюджет `TokenBudgetPolicy.enforce()`
+    (`domain/prompt/policies.py`), в единицах эвристики оценки размера
+    (`application/prompt/services/token_budget.py::estimate_size` —
+    количество символов, не реальные токены модели, ADR-4.4). Значение
+    по умолчанию (12000 символов) — намеренно консервативно относительно
+    типичного контекстного окна моделей OpenRouter по умолчанию
+    (десятки тысяч токенов) именно потому, что символы и токены не
+    совпадают 1:1 (обычно 1 токен ≈ 3-4 символа для смешанного
+    ru/en-текста) — это не точный расчёт, а осторожный запас.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="PROMPT_", env_file=_ENV_FILES, env_file_encoding="utf-8", extra="ignore"
+    )
+
+    token_budget: int = Field(default=12000, gt=0)
+
+
 class Settings(BaseSettings):
     """
     Корневой объект конфигурации — группирует настройки по областям.
@@ -103,3 +125,4 @@ class Settings(BaseSettings):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     openrouter: OpenRouterSettings = Field(default_factory=OpenRouterSettings)  # type: ignore[arg-type]
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
+    prompt: PromptSettings = Field(default_factory=PromptSettings)
