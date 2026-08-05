@@ -64,6 +64,16 @@ estimate_size`, ADR-4.4) и бюджетом из `Settings.prompt.token_budget`
 ничего дополнительно не собирается, `repositories_factory` переиспользуется
 как есть). Ни `PromptBuilder`, ни `TokenBudgetPolicy` этой задачей не
 меняются.
+
+С задачи S5-07 контейнер также собирает `CreateMemoryRecordUseCase`/
+`ListMemoryRecordsUseCase`/`DeleteMemoryRecordUseCase`
+(`application/memory/use_cases/*`) поверх той же `repositories_factory` —
+по тем же причинам, что и `ListProfiles`/`GetActiveProfile`/
+`SelectProfile` (ни один не требует `LLMProvider`, никакой второй
+фабрики репозиториев не вводится, ADR-5.5). `ConfirmMemoryRecordUseCase`/
+`RejectMemoryRecordUseCase` НЕ собираются здесь — нет вызывающего
+Telegram-сценария в Sprint 5 (ADR-5.9), контейнер не создаёт объекты,
+которые некому передать.
 """
 
 from __future__ import annotations
@@ -76,6 +86,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from dekoder.application.conversation.use_cases.clear_conversation import ClearConversation
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.application.conversation.use_cases.start_new_conversation import StartNewConversation
+from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
+from dekoder.application.memory.use_cases.delete_memory_record import DeleteMemoryRecordUseCase
+from dekoder.application.memory.use_cases.list_memory_records import ListMemoryRecordsUseCase
 from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
 from dekoder.application.profile.use_cases.list_profiles import ListProfiles
 from dekoder.application.profile.use_cases.select_profile import SelectProfile
@@ -98,6 +111,9 @@ class ApplicationContainer:
     list_profiles: ListProfiles
     get_active_profile: GetActiveProfile
     select_profile: SelectProfile
+    create_memory_record: CreateMemoryRecordUseCase
+    list_memory_records: ListMemoryRecordsUseCase
+    delete_memory_record: DeleteMemoryRecordUseCase
 
 
 def build_container(
@@ -141,6 +157,9 @@ def build_container(
     list_profiles = ListProfiles(repositories=repositories_factory)
     get_active_profile = GetActiveProfile(repositories=repositories_factory)
     select_profile = SelectProfile(repositories=repositories_factory)
+    create_memory_record = CreateMemoryRecordUseCase(repositories=repositories_factory)
+    list_memory_records = ListMemoryRecordsUseCase(repositories=repositories_factory)
+    delete_memory_record = DeleteMemoryRecordUseCase(repositories=repositories_factory)
     return ApplicationContainer(
         settings=settings,
         process_user_message=process_user_message,
@@ -149,4 +168,7 @@ def build_container(
         list_profiles=list_profiles,
         get_active_profile=get_active_profile,
         select_profile=select_profile,
+        create_memory_record=create_memory_record,
+        list_memory_records=list_memory_records,
+        delete_memory_record=delete_memory_record,
     )

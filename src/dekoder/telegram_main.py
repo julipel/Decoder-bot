@@ -48,6 +48,13 @@ register_message_handler`) регистрируется тоже внутри `p
 регистрируются тоже внутри `post_init`, сразу после обработчика команды
 `/clear`, поверх уже собранных `container.list_profiles`/
 `container.get_active_profile`/`container.select_profile`.
+
+С задачи S5-07 (Sprint 5) по той же причине обработчики команд
+`/remember`/`/memory` (`presentation/telegram/bot.py::
+register_memory_handlers`) регистрируются тоже внутри `post_init`, сразу
+после обработчиков `/profile`, поверх уже собранных
+`container.create_memory_record`/`container.list_memory_records`/
+`container.delete_memory_record`.
 """
 
 from __future__ import annotations
@@ -61,6 +68,7 @@ from dekoder.bootstrap.database import dispose_database, init_database
 from dekoder.presentation.telegram.bot import (
     build_telegram_application,
     register_clear_conversation_handler,
+    register_memory_handlers,
     register_message_handler,
     register_new_conversation_handler,
     register_profile_handlers,
@@ -102,6 +110,12 @@ def main() -> None:
         register_new_conversation_handler(app, container.start_new_conversation)
         register_clear_conversation_handler(app, container.clear_conversation)
         register_profile_handlers(app, container.list_profiles, container.get_active_profile, container.select_profile)
+        register_memory_handlers(
+            app,
+            container.create_memory_record,
+            container.list_memory_records,
+            container.delete_memory_record,
+        )
 
     async def _shutdown(_: Application) -> None:
         # Вызывается run_polling() при штатной остановке (после

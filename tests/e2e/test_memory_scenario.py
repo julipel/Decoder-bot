@@ -1,0 +1,278 @@
+"""
+Сквозные сценарии Sprint 5 (задача S5-07, ADR-5.9/5.10) — тот же харнесс,
+что и `tests/e2e/test_profile_scenario.py`: реальный `telegram.ext.
+Application`, реальные обработчики `presentation/telegram/handlers/
+memory.py`, реальные SQLAlchemy-репозитории (`bootstrap/repositories.py`)
+поверх временной SQLite (`tmp_path`, схема — `Base.metadata.create_all()`).
+Никакого LLM в этих сценариях — `/remember`/`/memory`/callback-удаление
+не вызывают `ProcessUserMessage`/`LLMProvider`.
+
+Сценарии:
+
+    1. TestRememberAndList        — /remember сохраняет факт, /memory его показывает с кнопкой 🗑;
+    2. TestEmptyRememberText      — /remember без текста — понятная ошибка, не падение;
+    3. TestEmptyMemoryList        — /memory без сохранённых фактов — дружелюбное сообщение;
+    4. TestDeleteViaCallback      — нажатие 🗑 удаляет запись, список обновляется;
+    5. TestCrossUserDeleteIsRejected — пользователь A не может удалить запись пользователя B
+       даже подделав callback_data с чужим id (ADR-5.10);
+    6. TestNoForgetCommand        — `/forget` не зарегистрирован (ADR-5.10).
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from telegram import Update
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler
+
+from dekoder.application.conversation.ports import ConversationRepositoriesFactory
+from dekoder.application.memory.dto import ListMemoryRecordsCommand
+from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
+from dekoder.application.memory.use_cases.delete_memory_record import DeleteMemoryRecordUseCase
+from dekoder.application.memory.use_cases.list_memory_records import ListMemoryRecordsUseCase
+from dekoder.bootstrap.repositories import build_conversation_repositories_factory
+from dekoder.infrastructure.persistence.base import Base
+from dekoder.infrastructure.persistence.engine import create_database_engine
+from dekoder.infrastructure.persistence.session import create_session_factory
+from dekoder.presentation.telegram.bot import build_telegram_application, register_memory_handlers
+from dekoder.presentation.telegram.handlers.memory import (
+    MEMORY_EMPTY_MESSAGE,
+    REMEMBER_EMPTY_TEXT_MESSAGE,
+    REMEMBER_SAVED_MESSAGE,
+)
+
+_TEST_BOT_TOKEN = "123456:test-token"  # noqa: S105 - фиктивный токен для теста, не секрет
+
+
+def _make_text_update(text: str, user_id: int) -> MagicMock:
+    update = MagicMock(spec=Update)
+    update.effective_user = MagicMock(id=user_id)
+    update.effective_message = MagicMock()
+    update.effective_message.text = text
+    update.effective_message.reply_text = AsyncMock()
+    update.callback_query = None
+    return update
+
+
+def _make_callback_update(record_id: UUID, user_id: int) -> MagicMock:
+    update = MagicMock(spec=Update)
+    update.effective_message = None
+    update.effective_user = MagicMock(id=user_id)
+    query = MagicMock()
+    query.data = f"memory_delete:{record_id}"
+    query.from_user = MagicMock(id=user_id)
+    query.answer = AsyncMock()
+    query.edit_message_text = AsyncMock()
+    update.callback_query = query
+    return update
+
+
+def _build_application(
+    create_memory_record: CreateMemoryRecordUseCase,
+    list_memory_records: ListMemoryRecordsUseCase,
+    delete_memory_record: DeleteMemoryRecordUseCase,
+) -> Application:
+    """Собирает реальный `telegram.ext.Application`, тот же принцип, что и `telegram_main.py::_startup`."""
+    application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
+    register_memory_handlers(application, create_memory_record, list_memory_records, delete_memory_record)
+    return application
+
+
+def _handler_callbacks(application: Application) -> dict[str, object]:
+    registered = application.handlers[0]
+    callbacks: dict[str, object] = {}
+    for handler in registered:
+        if isinstance(handler, CommandHandler):
+            callbacks[next(iter(handler.commands))] = handler.callback
+        elif isinstance(handler, CallbackQueryHandler):
+            callbacks["memory_delete_callback"] = handler.callback
+    return callbacks
+
+
+@pytest.fixture
+async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'e2e-memory.db'}"
+    test_engine = create_database_engine(database_url)
+    async with test_engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    yield test_engine
+    await test_engine.dispose()
+
+
+@pytest.fixture
+def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    return create_session_factory(engine)
+
+
+@pytest.fixture
+def repositories_factory(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> ConversationRepositoriesFactory:
+    return build_conversation_repositories_factory(session_factory)
+
+
+@pytest.fixture
+def use_cases(
+    repositories_factory: ConversationRepositoriesFactory,
+) -> tuple[CreateMemoryRecordUseCase, ListMemoryRecordsUseCase, DeleteMemoryRecordUseCase]:
+    return (
+        CreateMemoryRecordUseCase(repositories=repositories_factory),
+        ListMemoryRecordsUseCase(repositories=repositories_factory),
+        DeleteMemoryRecordUseCase(repositories=repositories_factory),
+    )
+
+
+class TestRememberAndList:
+    """Сценарий 1 (AC-1): /remember сохраняет факт, /memory показывает его с кнопкой удаления."""
+
+    async def test_remember_then_memory_shows_the_fact_with_delete_button(
+        self,
+        use_cases: tuple[CreateMemoryRecordUseCase, ListMemoryRecordsUseCase, DeleteMemoryRecordUseCase],
+    ) -> None:
+        application = _build_application(*use_cases)
+        callbacks = _handler_callbacks(application)
+
+        remember_update = _make_text_update("/remember Люблю кофе", user_id=6001)
+        await callbacks["remember"](remember_update, MagicMock())  # type: ignore[operator]
+        remember_update.effective_message.reply_text.assert_awaited_once_with(REMEMBER_SAVED_MESSAGE)
+
+        memory_update = _make_text_update("/memory", user_id=6001)
+        await callbacks["memory"](memory_update, MagicMock())  # type: ignore[operator]
+
+        memory_update.effective_message.reply_text.assert_awaited_once()
+        call = memory_update.effective_message.reply_text.call_args
+        assert "Люблю кофе" in call.args[0]
+        keyboard = call.kwargs["reply_markup"]
+        assert len(keyboard.inline_keyboard) == 1
+        assert keyboard.inline_keyboard[0][0].callback_data.startswith("memory_delete:")
+
+
+class TestEmptyRememberText:
+    """Сценарий 2: /remember без текста — понятная ошибка, не падение."""
+
+    async def test_remember_without_text_shows_a_friendly_error(
+        self,
+        use_cases: tuple[CreateMemoryRecordUseCase, ListMemoryRecordsUseCase, DeleteMemoryRecordUseCase],
+    ) -> None:
+        application = _build_application(*use_cases)
+        callbacks = _handler_callbacks(application)
+
+        update = _make_text_update("/remember", user_id=6002)
+        await callbacks["remember"](update, MagicMock())  # type: ignore[operator]
+
+        update.effective_message.reply_text.assert_awaited_once_with(REMEMBER_EMPTY_TEXT_MESSAGE)
+
+        _, list_memory_records, _ = use_cases
+
+        result = await list_memory_records.execute(ListMemoryRecordsCommand(telegram_user_id=6002))
+        assert result.records == ()
+
+    async def test_remember_with_only_whitespace_shows_a_friendly_error(
+        self,
+        use_cases: tuple[CreateMemoryRecordUseCase, ListMemoryRecordsUseCase, DeleteMemoryRecordUseCase],
+    ) -> None:
+        application = _build_application(*use_cases)
+        callbacks = _handler_callbacks(application)
+
+        update = _make_text_update("/remember    ", user_id=6003)
+        await callbacks["remember"](update, MagicMock())  # type: ignore[operator]
+
+        update.effective_message.reply_text.assert_awaited_once_with(REMEMBER_EMPTY_TEXT_MESSAGE)
+
+
+class TestEmptyMemoryList:
+    """Сценарий 3: /memory без сохранённых фактов — дружелюбное сообщение, не пустая клавиатура."""
+
+    async def test_memory_with_no_saved_facts_shows_friendly_message(
+        self,
+        use_cases: tuple[CreateMemoryRecordUseCase, ListMemoryRecordsUseCase, DeleteMemoryRecordUseCase],
+    ) -> None:
+        application = _build_application(*use_cases)
+        callbacks = _handler_callbacks(application)
+
+        update = _make_text_update("/memory", user_id=6004)
+        await callbacks["memory"](update, MagicMock())  # type: ignore[operator]
+
+        update.effective_message.reply_text.assert_awaited_once_with(MEMORY_EMPTY_MESSAGE)
+
+
+class TestDeleteViaCallback:
+    """Сценарий 4: нажатие 🗑 удаляет запись памяти, обновлённый список её больше не содержит."""
+
+    async def test_deleting_via_callback_removes_the_fact_from_the_list(
+        self,
+        use_cases: tuple[CreateMemoryRecordUseCase, ListMemoryRecordsUseCase, DeleteMemoryRecordUseCase],
+    ) -> None:
+        application = _build_application(*use_cases)
+        callbacks = _handler_callbacks(application)
+
+        await callbacks["remember"](_make_text_update("/remember Живу в Берлине", user_id=6005), MagicMock())  # type: ignore[operator]
+        memory_update = _make_text_update("/memory", user_id=6005)
+        await callbacks["memory"](memory_update, MagicMock())  # type: ignore[operator]
+        keyboard = memory_update.effective_message.reply_text.call_args.kwargs["reply_markup"]
+        record_id = UUID(keyboard.inline_keyboard[0][0].callback_data.removeprefix("memory_delete:"))
+
+        callback_update = _make_callback_update(record_id, user_id=6005)
+        await callbacks["memory_delete_callback"](callback_update, MagicMock())  # type: ignore[operator]
+
+        callback_update.callback_query.answer.assert_awaited_once()
+        callback_update.callback_query.edit_message_text.assert_awaited_once_with(MEMORY_EMPTY_MESSAGE)
+
+        _, list_memory_records, _ = use_cases
+
+        result = await list_memory_records.execute(ListMemoryRecordsCommand(telegram_user_id=6005))
+        assert result.records == ()
+
+
+class TestCrossUserDeleteIsRejected:
+    """
+    Сценарий 5 (ADR-5.10, AC-2 backlog_5_tasks.md S5-07): пользователь A
+    не может удалить запись пользователя B, даже подделав `callback_data`
+    с id чужой записи.
+    """
+
+    async def test_user_b_cannot_delete_user_as_record_via_crafted_callback(
+        self,
+        use_cases: tuple[CreateMemoryRecordUseCase, ListMemoryRecordsUseCase, DeleteMemoryRecordUseCase],
+    ) -> None:
+        create_memory_record, list_memory_records, _ = use_cases
+        application = _build_application(*use_cases)
+        callbacks = _handler_callbacks(application)
+
+        await callbacks["remember"](_make_text_update("/remember Секрет пользователя A", user_id=7001), MagicMock())  # type: ignore[operator]
+
+        listing_a = await list_memory_records.execute(ListMemoryRecordsCommand(telegram_user_id=7001))
+        assert len(listing_a.records) == 1
+        record_a_id = listing_a.records[0].id
+
+        # Пользователь B (никогда не видевший запись A) шлёт callback с чужим record_id.
+        crafted_callback = _make_callback_update(record_a_id, user_id=7002)
+        await callbacks["memory_delete_callback"](crafted_callback, MagicMock())  # type: ignore[operator]
+
+        crafted_callback.callback_query.answer.assert_awaited_once()
+        # Отказ, не тихая отписка: B получает свой (пустой) список, не подтверждение чужого удаления.
+        crafted_callback.callback_query.edit_message_text.assert_awaited_once_with(MEMORY_EMPTY_MESSAGE)
+
+        listing_a_after = await list_memory_records.execute(ListMemoryRecordsCommand(telegram_user_id=7001))
+        assert len(listing_a_after.records) == 1
+        assert listing_a_after.records[0].id == record_a_id
+
+
+class TestNoForgetCommand:
+    """Сценарий 6 (ADR-5.10): `/forget` не зарегистрирован — удаление только через inline-кнопку."""
+
+    def test_forget_command_is_not_registered(
+        self,
+        use_cases: tuple[CreateMemoryRecordUseCase, ListMemoryRecordsUseCase, DeleteMemoryRecordUseCase],
+    ) -> None:
+        application = _build_application(*use_cases)
+        callbacks = _handler_callbacks(application)
+
+        assert "forget" not in callbacks
+        # "start" — регистрируется build_telegram_application() безусловно (не входит в объём этой задачи).
+        assert set(callbacks) == {"start", "remember", "memory", "memory_delete_callback"}

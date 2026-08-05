@@ -23,6 +23,17 @@ Telegram `Update` ↔ внутренние DTO — единственное ме
 источник идентификатора пользователя для inline-кнопок (`CallbackQuery`),
 нажавшего которую пользователь мог не совпадать с автором исходного
 сообщения (групповые чаты) — используем именно того, кто нажал кнопку.
+
+`to_create_memory_record_command()`/`to_list_memory_records_command()`
+(Sprint 5, задача S5-07) — тот же принцип, для обработчиков `/remember`/
+`/memory`. `to_create_memory_record_command()` — место, где ADR-5.9
+буквально исполняется: `status=CONFIRMED, source=USER_EXPLICIT` заданы
+здесь явно (Telegram-хендлер), не хардкодятся внутри
+`CreateMemoryRecordUseCase`.
+
+`to_delete_memory_record_command()` (Sprint 5, задача S5-07, ADR-5.10) —
+тот же принцип, что и `to_select_profile_command()`: `telegram_user_id`
+из `update.callback_query.from_user`, не `update.effective_user`.
 """
 
 from __future__ import annotations
@@ -37,7 +48,13 @@ from dekoder.application.conversation.dto import (
     ProcessUserMessageCommand,
     StartNewConversationCommand,
 )
+from dekoder.application.memory.dto import (
+    CreateMemoryRecordCommand,
+    DeleteMemoryRecordCommand,
+    ListMemoryRecordsCommand,
+)
 from dekoder.application.profile.dto import GetActiveProfileCommand, SelectProfileCommand
+from dekoder.domain.memory.value_objects import MemorySource, MemoryStatus
 from dekoder.shared.domain.identifiers import CorrelationId
 
 # Реальный лимит Telegram на одно текстовое сообщение — 4096 символов;
@@ -117,6 +134,55 @@ def to_select_profile_command(update: Update, profile_id: UUID) -> SelectProfile
         raise ValueError("Update does not contain a callback query from a known user")
 
     return SelectProfileCommand(telegram_user_id=query.from_user.id, profile_id=profile_id)
+
+
+def to_create_memory_record_command(update: Update, text: str) -> CreateMemoryRecordCommand:
+    """
+    Строит команду для обработчика `/remember` из входящего `Update` и
+    уже извлечённого текста факта (разбор `"/remember <текст>"` —
+    ответственность `presentation/telegram/handlers/memory.py`, не этого
+    модуля). `status=CONFIRMED, source=USER_EXPLICIT` — явно, здесь
+    (ADR-5.9): `/remember` сохраняет запись сразу подтверждённой, без
+    двухшагового сценария.
+    """
+    user = update.effective_user
+    if user is None:
+        raise ValueError("Update does not contain a known user")
+
+    return CreateMemoryRecordCommand(
+        telegram_user_id=user.id,
+        text=text,
+        status=MemoryStatus.CONFIRMED,
+        source=MemorySource.USER_EXPLICIT,
+    )
+
+
+def to_list_memory_records_command(update: Update) -> ListMemoryRecordsCommand:
+    """
+    Строит команду для обработчика `/memory` из входящего `Update`.
+    `telegram_user_id` извлекается тем же способом, что и в `to_command()`/
+    `to_clear_conversation_command()`/`to_get_active_profile_command()` —
+    `update.effective_user.id`.
+    """
+    user = update.effective_user
+    if user is None:
+        raise ValueError("Update does not contain a known user")
+
+    return ListMemoryRecordsCommand(telegram_user_id=user.id)
+
+
+def to_delete_memory_record_command(update: Update, record_id: UUID) -> DeleteMemoryRecordCommand:
+    """
+    Строит команду для callback'а удаления записи памяти из входящего
+    `Update`. `telegram_user_id` извлекается из `update.callback_query.
+    from_user` (не `update.effective_user`) — тот же принцип, что и
+    `to_select_profile_command()` (ADR-5.10).
+    """
+    query = update.callback_query
+    if query is None or query.from_user is None:
+        raise ValueError("Update does not contain a callback query from a known user")
+
+    return DeleteMemoryRecordCommand(telegram_user_id=query.from_user.id, record_id=record_id)
 
 
 def split_message(text: str, limit: int = TELEGRAM_SAFE_MESSAGE_LIMIT) -> list[str]:

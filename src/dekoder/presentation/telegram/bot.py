@@ -40,6 +40,15 @@ Sprint 3 (задача S3-08): по той же причине команда `/
 использование `CallbackQueryHandler` в проекте — регистрируется с
 `pattern=r"^profile:"`, чтобы не перехватывать callback'и других
 возможных будущих inline-клавиатур.
+
+Sprint 5 (задача S5-07): по той же причине команды `/remember`/`/memory`
+(+ callback удаления записи памяти) регистрируются отдельной функцией
+`register_memory_handlers`, тоже вызываемой внутри `post_init`, поверх
+уже собранных `CreateMemoryRecordUseCase`/`ListMemoryRecordsUseCase`/
+`DeleteMemoryRecordUseCase`. Callback памяти регистрируется с
+`pattern=r"^memory_delete:"` — по тому же принципу, что и
+`pattern=r"^profile:"`, не перехватывает callback выбора профиля и
+наоборот.
 """
 
 from __future__ import annotations
@@ -56,10 +65,18 @@ from telegram.ext import (
 from dekoder.application.conversation.use_cases.clear_conversation import ClearConversation
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.application.conversation.use_cases.start_new_conversation import StartNewConversation
+from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
+from dekoder.application.memory.use_cases.delete_memory_record import DeleteMemoryRecordUseCase
+from dekoder.application.memory.use_cases.list_memory_records import ListMemoryRecordsUseCase
 from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
 from dekoder.application.profile.use_cases.list_profiles import ListProfiles
 from dekoder.application.profile.use_cases.select_profile import SelectProfile
 from dekoder.presentation.telegram.handlers.clear_conversation import ClearConversationHandler
+from dekoder.presentation.telegram.handlers.memory import (
+    MemoryDeleteCallbackHandler,
+    MemoryListCommandHandler,
+    RememberCommandHandler,
+)
 from dekoder.presentation.telegram.handlers.messages import TextMessageHandler
 from dekoder.presentation.telegram.handlers.new_conversation import NewConversationHandler
 from dekoder.presentation.telegram.handlers.profile import ProfileCommandHandler, ProfileSelectionCallbackHandler
@@ -97,3 +114,24 @@ def register_profile_handlers(
     """Регистрирует команду `/profile` и callback выбора профиля поверх уже собранных use case'ов."""
     application.add_handler(CommandHandler("profile", ProfileCommandHandler(list_profiles, get_active_profile)))
     application.add_handler(CallbackQueryHandler(ProfileSelectionCallbackHandler(select_profile), pattern=r"^profile:"))
+
+
+def register_memory_handlers(
+    application: Application,
+    create_memory_record: CreateMemoryRecordUseCase,
+    list_memory_records: ListMemoryRecordsUseCase,
+    delete_memory_record: DeleteMemoryRecordUseCase,
+) -> None:
+    """
+    Регистрирует команды `/remember`/`/memory` и callback удаления записи
+    памяти поверх уже собранных use case'ов памяти. Нет команды `/forget`
+    (ADR-5.10) — удаление только через inline-кнопку `MemoryDeleteCallbackHandler`.
+    """
+    application.add_handler(CommandHandler("remember", RememberCommandHandler(create_memory_record)))
+    application.add_handler(CommandHandler("memory", MemoryListCommandHandler(list_memory_records)))
+    application.add_handler(
+        CallbackQueryHandler(
+            MemoryDeleteCallbackHandler(delete_memory_record, list_memory_records),
+            pattern=r"^memory_delete:",
+        )
+    )
