@@ -12,10 +12,8 @@ from dekoder.application.ai_core.internal_services.execution_context_builder imp
 )
 from dekoder.application.ai_core.internal_services.knowledge_collector import KnowledgeCollector
 from dekoder.application.ai_core.internal_services.memory_collector import MemoryCollector
-from dekoder.application.ai_core.internal_services.prompt_assembler import PromptAssembler
 from dekoder.application.ai_core.internal_services.response_formatter import ResponseFormatter
 from dekoder.application.ai_core.responses import KnowledgeAnswerResult
-from dekoder.application.logging.ports import Logger
 from dekoder.application.memory.use_cases.record_dialogue_message import (
     RecordDialogueMessageUseCase,
 )
@@ -29,21 +27,17 @@ class AnswerKnowledgeQuestionUseCase:
         memory_collector: MemoryCollector,
         knowledge_collector: KnowledgeCollector,
         execution_context_builder: ExecutionContextBuilder,
-        prompt_assembler: PromptAssembler,
         model_gateway: ModelGateway,
         response_formatter: ResponseFormatter,
         record_dialogue_message: RecordDialogueMessageUseCase,
-        logger: Logger,
         correlation_id_generator: CorrelationIdGenerator,
     ) -> None:
         self._memory_collector = memory_collector
         self._knowledge_collector = knowledge_collector
         self._execution_context_builder = execution_context_builder
-        self._prompt_assembler = prompt_assembler
         self._model_gateway = model_gateway
         self._response_formatter = response_formatter
         self._record_dialogue_message = record_dialogue_message
-        self._logger = logger
         self._correlation_id_generator = correlation_id_generator
 
     def execute(self, command: AnswerKnowledgeQuestionCommand) -> KnowledgeAnswerResult:

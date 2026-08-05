@@ -14,7 +14,6 @@ from dekoder.application.ai_core.use_cases.answer_knowledge_question import (
 from dekoder.application.ai_core.use_cases.generate_content import GenerateContentUseCase
 from dekoder.application.ai_core.use_cases.regenerate import RegenerateUseCase
 from dekoder.application.ai_core.use_cases.route_command import RouteCommandUseCase
-from dekoder.application.logging.ports import Logger
 
 
 class TelegramUpdateHandler:
@@ -24,13 +23,11 @@ class TelegramUpdateHandler:
         answer_knowledge_question: AnswerKnowledgeQuestionUseCase,
         regenerate: RegenerateUseCase,
         route_command: RouteCommandUseCase,
-        logger: Logger,
     ) -> None:
         self._generate_content = generate_content
         self._answer_knowledge_question = answer_knowledge_question
         self._regenerate = regenerate
         self._route_command = route_command
-        self._logger = logger
 
     async def handle_update(self, update: telegram.Update) -> None:
         raise NotImplementedError

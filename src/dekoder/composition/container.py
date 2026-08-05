@@ -39,11 +39,9 @@ from dekoder.application.knowledge_base.use_cases.get_knowledge_cases import (
 from dekoder.application.knowledge_base.use_cases.get_knowledge_documents import (
     GetKnowledgeDocumentsUseCase,
 )
-from dekoder.application.logging.ports import Logger
 from dekoder.application.memory.ports import MemoryRepository
 from dekoder.application.model_catalog.ports import ModelCatalogRepository
 from dekoder.application.model_gateway.ports import ModelGateway
-from dekoder.application.prompt_engine.ports import PromptBuilder
 from dekoder.application.rag.ports import VectorRepository
 from dekoder.application.session.ports import SessionRepository
 from dekoder.application.skills.ports import ContentSkillRepository
@@ -69,8 +67,6 @@ class Container:
     file_storage: FileStoragePort
     vector_repository: VectorRepository
     model_gateway: ModelGateway
-    prompt_builder: PromptBuilder
-    logger: Logger
     admin_auth: AdminAuthPort
     clock: Clock
     correlation_id_generator: CorrelationIdGenerator
