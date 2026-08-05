@@ -69,12 +69,20 @@ class TestInitialMigrationCycle:
         table_names = {name for type_, name, _ in objects if type_ == "table"}
         index_names = {name for type_, name, _ in objects if type_ == "index"}
 
-        assert {"users", "conversations", "messages", "profiles", "user_active_profiles"} <= table_names
+        assert {
+            "users",
+            "conversations",
+            "messages",
+            "profiles",
+            "user_active_profiles",
+            "memory_records",
+        } <= table_names
         assert {
             "ix_conversations_user_id",
             "uq_conversations_active_user",
             "ix_messages_conversation_created",
             "uq_profiles_is_default",
+            "ix_memory_records_user_status",
         } <= index_names
 
         users_sql = next(sql for type_, name, sql in objects if type_ == "table" and name == "users")
@@ -103,6 +111,13 @@ class TestInitialMigrationCycle:
         )
         assert "WHERE is_default = 1" in profiles_partial_index_sql
 
+        memory_records_sql = next(sql for type_, name, sql in objects if type_ == "table" and name == "memory_records")
+        assert "ck_memory_records_category" in memory_records_sql
+        assert "ck_memory_records_source" in memory_records_sql
+        assert "ck_memory_records_status" in memory_records_sql
+        assert "ck_memory_records_confidence" in memory_records_sql
+        assert "fk_memory_records_user_id_users" in memory_records_sql
+
     def test_downgrade_removes_everything_and_upgrade_again_succeeds(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -118,7 +133,14 @@ class TestInitialMigrationCycle:
         # Повторный upgrade head после полного downgrade не должен падать.
         command.upgrade(config, "head")
         table_names = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
-        assert {"users", "conversations", "messages", "profiles", "user_active_profiles"} <= table_names
+        assert {
+            "users",
+            "conversations",
+            "messages",
+            "profiles",
+            "user_active_profiles",
+            "memory_records",
+        } <= table_names
 
     def test_downgrade_to_pre_profile_schema_removes_only_profile_tables(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -169,7 +191,7 @@ class TestProfileCatalogSeedMigration:
         assert len(default_rows) == 1
         assert default_rows[0][1] == "Деловой"
 
-    def test_downgrade_minus_one_removes_only_seed_rows_not_schema(
+    def test_downgrade_to_pre_seed_removes_only_seed_rows_not_schema(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         db_path = tmp_path / "seed-downgrade.db"
@@ -178,7 +200,11 @@ class TestProfileCatalogSeedMigration:
         command.upgrade(config, "head")
         assert len(_profile_rows(db_path)) == 4
 
-        command.downgrade(config, "-1")
+        # Явный целевой ревижн "14bf7e3ae815" (схема profiles/user_active_
+        # profiles, до сид-миграции 27c4e9f2a103), а не относительный "-1":
+        # с задачи S5-04 head — уже 161899ea36c0 (memory_records), поэтому
+        # "-1" откатывал бы только эту миграцию, не сид-данные профилей.
+        command.downgrade(config, "14bf7e3ae815")
 
         # Схема (таблица profiles) остаётся — откатились только вставленные строки.
         table_names = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
@@ -194,9 +220,62 @@ class TestProfileCatalogSeedMigration:
         command.upgrade(config, "head")
         ids_before = {row[0] for row in _profile_rows(db_path)}
 
-        command.downgrade(config, "-1")
+        # См. комментарий выше — явный ревижн, не относительный "-1".
+        command.downgrade(config, "14bf7e3ae815")
         command.upgrade(config, "head")
         ids_after = {row[0] for row in _profile_rows(db_path)}
 
         assert ids_before == ids_after
         assert len(ids_after) == 4
+
+
+class TestMemoryRecordsSchemaMigration:
+    """Тесты схемной миграции memory_records (Sprint 5, задача S5-04, ADR-5.7) — без сид-данных."""
+
+    def test_upgrade_head_creates_memory_records_without_seed_rows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = tmp_path / "memory-upgrade.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+
+        table_names = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
+        assert "memory_records" in table_names
+
+        connection = sqlite3.connect(db_path)
+        try:
+            row_count = connection.execute("SELECT COUNT(*) FROM memory_records").fetchone()[0]
+        finally:
+            connection.close()
+        # ADR-5.7: только схемная миграция, никакого сид-инсерта, в отличие от profiles.
+        assert row_count == 0
+
+    def test_downgrade_minus_one_removes_only_memory_records_table(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = tmp_path / "memory-downgrade.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+        table_names_before = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
+        assert "memory_records" in table_names_before
+
+        command.downgrade(config, "-1")
+
+        table_names_after = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
+        assert "memory_records" not in table_names_after
+        # Профили (S3-03/S3-04) не задеты — эта миграция откатывается независимо от них.
+        assert {"profiles", "user_active_profiles"} <= table_names_after
+        assert len(_profile_rows(db_path)) == 4
+
+    def test_upgrade_head_after_downgrade_succeeds(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        db_path = tmp_path / "memory-cycle.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+        command.downgrade(config, "-1")
+        command.upgrade(config, "head")
+
+        table_names = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
+        assert "memory_records" in table_names

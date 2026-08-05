@@ -17,7 +17,11 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
-from tests.support.fake_conversation_repositories import FakeProfileRepository, make_default_profile
+from tests.support.fake_conversation_repositories import (
+    FakeMemoryRepository,
+    FakeProfileRepository,
+    make_default_profile,
+)
 from tests.support.prompt_engine import make_test_prompt_builder
 
 from dekoder.application.conversation.dto import (
@@ -162,12 +166,16 @@ def _make_repositories_factory(
     conversations: FakeConversationRepository,
     messages: FakeMessageRepository,
     profiles: FakeProfileRepository | None = None,
+    memory: FakeMemoryRepository | None = None,
 ) -> ConversationRepositoriesFactory:
     profiles = profiles if profiles is not None else FakeProfileRepository()
+    memory = memory if memory is not None else FakeMemoryRepository()
 
     @asynccontextmanager
     async def _factory() -> AsyncIterator[ConversationRepositories]:
-        yield ConversationRepositories(users=users, conversations=conversations, messages=messages, profiles=profiles)
+        yield ConversationRepositories(
+            users=users, conversations=conversations, messages=messages, profiles=profiles, memory=memory
+        )
 
     return _factory
 
@@ -195,7 +203,7 @@ def _make_command(
 
 
 class _Repos:
-    __slots__ = ("users", "conversations", "messages", "profiles")
+    __slots__ = ("users", "conversations", "messages", "profiles", "memory")
 
     def __init__(
         self,
@@ -203,11 +211,13 @@ class _Repos:
         conversations: FakeConversationRepository,
         messages: FakeMessageRepository,
         profiles: FakeProfileRepository,
+        memory: FakeMemoryRepository,
     ) -> None:
         self.users = users
         self.conversations = conversations
         self.messages = messages
         self.profiles = profiles
+        self.memory = memory
 
 
 def _make_use_case(
@@ -218,12 +228,14 @@ def _make_use_case(
     conversations: FakeConversationRepository | None = None,
     messages: FakeMessageRepository | None = None,
     profiles: FakeProfileRepository | None = None,
+    memory: FakeMemoryRepository | None = None,
 ) -> tuple[ProcessUserMessage, _Repos]:
     users = users if users is not None else FakeUserRepository()
     conversations = conversations if conversations is not None else FakeConversationRepository()
     messages = messages if messages is not None else FakeMessageRepository()
     profiles = profiles if profiles is not None else FakeProfileRepository()
-    factory = _make_repositories_factory(users, conversations, messages, profiles)
+    memory = memory if memory is not None else FakeMemoryRepository()
+    factory = _make_repositories_factory(users, conversations, messages, profiles, memory)
     use_case = ProcessUserMessage(
         llm_provider=provider,
         repositories=factory,
@@ -232,7 +244,7 @@ def _make_use_case(
         temperature=0.7,
         max_tokens=512,
     )
-    return use_case, _Repos(users, conversations, messages, profiles)
+    return use_case, _Repos(users, conversations, messages, profiles, memory)
 
 
 class TestNewUser:

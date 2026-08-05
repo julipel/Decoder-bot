@@ -7,7 +7,9 @@
 получения короткоживущей группы репозиториев для одной транзакции
 (Sprint 2, задача S2-06, см. ниже; расширена полем `profiles` в Sprint 3,
 задача S3-05, ADR-3.3 — `ProfileRepository` встраивается в существующую
-группу, не в отдельную параллельную фабрику).
+группу, не в отдельную параллельную фабрику; расширена полем `memory` в
+Sprint 5, задача S5-03, ADR-5.5 — `MemoryRepository` встраивается тем же
+приёмом).
 
 `application/conversation/` не импортирует OpenRouter (или любого другого
 конкретного провайдера) — только этот протокол. Конкретные реализации
@@ -39,6 +41,7 @@ from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
+from dekoder.application.memory.ports import MemoryRepository
 from dekoder.application.profile.ports import ProfileRepository
 from dekoder.application.user.ports import UserRepository
 from dekoder.domain.conversation.entities import Conversation, Message
@@ -183,7 +186,8 @@ class ConversationRepositories:
     """
     Группа репозиториев, нужных `ProcessUserMessage` внутри ОДНОЙ
     короткоживущей транзакции (Sprint 2, задача S2-06; поле `profiles`
-    добавлено в Sprint 3, задача S3-05, ADR-3.3).
+    добавлено в Sprint 3, задача S3-05, ADR-3.3; поле `memory` добавлено
+    в Sprint 5, задача S5-03, ADR-5.5).
 
     Это не Generic Repository и не самостоятельный Unit of Work —
     абстрактный Unit of Work из backlog_2.md §15 (инвариант 14) явно
@@ -203,12 +207,16 @@ class ConversationRepositories:
     архитектуры») — use case'ы, которым `profiles` не нужен
     (`StartNewConversation`/`ClearConversation`), просто игнорируют это
     поле, как и раньше игнорировали лишние для них поля этой группы.
+    `memory` встроен тем же приёмом (ADR-5.5, backlog_5.md §3) — use
+    case'ы памяти (`application/memory/use_cases/*`) читают только это
+    поле, `ProcessUserMessage` читает его наравне с `profiles`.
     """
 
     users: UserRepository
     conversations: ConversationRepository
     messages: MessageRepository
     profiles: ProfileRepository
+    memory: MemoryRepository
 
 
 ConversationRepositoriesFactory = Callable[[], AbstractAsyncContextManager[ConversationRepositories]]

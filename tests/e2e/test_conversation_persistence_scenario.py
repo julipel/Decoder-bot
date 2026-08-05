@@ -64,6 +64,7 @@ from dekoder.application.conversation.use_cases.start_new_conversation import St
 from dekoder.bootstrap.repositories import (
     build_conversation_repositories_factory,
     build_conversation_repository,
+    build_memory_repository,
     build_message_repository,
     build_profile_repository,
     build_user_repository,
@@ -606,6 +607,7 @@ def _make_faulty_repositories_factory(
                 conversations=build_conversation_repository(session),
                 messages=_FaultyMessageRepository(),
                 profiles=build_profile_repository(session),
+                memory=build_memory_repository(session),
             )
 
     return _open_repositories

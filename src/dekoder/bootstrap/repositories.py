@@ -1,20 +1,22 @@
 """
 Bootstrap-фабрики репозиториев (Sprint 2, задачи S2-03/S2-04/S2-05/S2-06;
-Sprint 3, задача S3-05, ADR-3.3).
+Sprint 3, задача S3-05, ADR-3.3; Sprint 5, задача S5-03/S5-04, ADR-5.5).
 
 Единственное место, которому разрешено знать одновременно про порты
 `UserRepository`/`ConversationRepository`/`MessageRepository`/
-`ProfileRepository` (`application/user/ports.py`,
-`application/conversation/ports.py`, `application/profile/ports.py`) и их
-конкретные SQLAlchemy-реализации (`infrastructure/persistence/{
-user_repository.py, conversation_repository.py, message_repository.py,
-profile_repository.py}`) — то же правило единственной точки сборки, что
-и у `bootstrap/container.py` для `LLMProvider` (claude.md §8.5, §29).
+`ProfileRepository`/`MemoryRepository` (`application/user/ports.py`,
+`application/conversation/ports.py`, `application/profile/ports.py`,
+`application/memory/ports.py`) и их конкретные SQLAlchemy-реализации
+(`infrastructure/persistence/{user_repository.py, conversation_repository.py,
+message_repository.py, profile_repository.py, memory_repository.py}`) —
+то же правило единственной точки сборки, что и у `bootstrap/container.py`
+для `LLMProvider` (claude.md §8.5, §29).
 
 `build_user_repository`/`build_conversation_repository`/
-`build_message_repository`/`build_profile_repository` (S2-03/S2-04/
-S2-05/S3-05) собирают один репозиторий поверх уже открытой
-`AsyncSession` — низкоуровневые строительные блоки.
+`build_message_repository`/`build_profile_repository`/
+`build_memory_repository` (S2-03/S2-04/S2-05/S3-05/S5-04) собирают один
+репозиторий поверх уже открытой `AsyncSession` — низкоуровневые
+строительные блоки.
 
 `build_conversation_repositories_factory` (S2-06) — точка сборки, которую
 использует `ProcessUserMessage` (через `ConversationRepositoriesFactory`,
@@ -41,9 +43,11 @@ from dekoder.application.conversation.ports import (
     ConversationRepository,
     MessageRepository,
 )
+from dekoder.application.memory.ports import MemoryRepository
 from dekoder.application.profile.ports import ProfileRepository
 from dekoder.application.user.ports import UserRepository
 from dekoder.infrastructure.persistence.conversation_repository import SQLAlchemyConversationRepository
+from dekoder.infrastructure.persistence.memory_repository import SQLAlchemyMemoryRepository
 from dekoder.infrastructure.persistence.message_repository import SQLAlchemyMessageRepository
 from dekoder.infrastructure.persistence.profile_repository import SQLAlchemyProfileRepository
 from dekoder.infrastructure.persistence.session import session_scope
@@ -70,6 +74,11 @@ def build_profile_repository(session: AsyncSession) -> ProfileRepository:
     return SQLAlchemyProfileRepository(session)
 
 
+def build_memory_repository(session: AsyncSession) -> MemoryRepository:
+    """Собирает `MemoryRepository` поверх переданной `AsyncSession` (Sprint 5, задача S5-04)."""
+    return SQLAlchemyMemoryRepository(session)
+
+
 def build_conversation_repositories_factory(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> ConversationRepositoriesFactory:
@@ -90,6 +99,7 @@ def build_conversation_repositories_factory(
                 conversations=build_conversation_repository(session),
                 messages=build_message_repository(session),
                 profiles=build_profile_repository(session),
+                memory=build_memory_repository(session),
             )
 
     return _open_repositories

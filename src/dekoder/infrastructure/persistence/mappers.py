@@ -1,7 +1,7 @@
 """
 Явные функции преобразования Domain ↔ ORM (Infrastructure Layer, задача
-S2-02) для `User`, `Conversation`, `Message`, и (задача S3-03) для
-`UserProfile`.
+S2-02) для `User`, `Conversation`, `Message`, (задача S3-03) для
+`UserProfile`, и (Sprint 5, задача S5-04) для `MemoryRecord`.
 
 Не делают запросов, не коммитят, не грузят граф объектов — чистые
 функции `ORM -> Domain` и `Domain -> ORM` (backlog_2.md §8: «ORM Model →
@@ -31,10 +31,18 @@ from datetime import UTC, datetime
 
 from dekoder.domain.conversation.entities import Conversation, Message, MessageRole
 from dekoder.domain.conversation.value_objects import ModelId
+from dekoder.domain.memory.entities import MemoryRecord
+from dekoder.domain.memory.value_objects import (
+    MemoryCategory,
+    MemoryConfidence,
+    MemorySource,
+    MemoryStatus,
+)
 from dekoder.domain.profile.entities import UserProfile
 from dekoder.domain.profile.value_objects import ProfileStatus
 from dekoder.domain.user.entities import User
 from dekoder.infrastructure.persistence.conversation_orm import ConversationORM
+from dekoder.infrastructure.persistence.memory_record_orm import MemoryRecordORM
 from dekoder.infrastructure.persistence.message_orm import MessageORM
 from dekoder.infrastructure.persistence.profile_orm import ProfileORM
 from dekoder.infrastructure.persistence.user_orm import UserORM
@@ -161,4 +169,40 @@ def profile_to_domain(orm_profile: ProfileORM) -> UserProfile:
         is_default=orm_profile.is_default,
         created_at=_to_aware_utc(orm_profile.created_at),
         updated_at=_to_aware_utc(orm_profile.updated_at),
+    )
+
+
+def memory_record_to_orm(record: MemoryRecord) -> MemoryRecordORM:
+    """Domain `MemoryRecord` -> `MemoryRecordORM`."""
+    return MemoryRecordORM(
+        id=record.id,
+        user_id=record.user_id,
+        text=record.text,
+        category=record.category.value,
+        source=record.source.value,
+        status=record.status.value,
+        confidence=record.confidence.value,
+        is_sensitive=record.is_sensitive,
+        expires_at=_to_naive_utc(record.expires_at) if record.expires_at is not None else None,
+        updated_by=record.updated_by,
+        created_at=_to_naive_utc(record.created_at),
+        updated_at=_to_naive_utc(record.updated_at),
+    )
+
+
+def memory_record_to_domain(orm_record: MemoryRecordORM) -> MemoryRecord:
+    """`MemoryRecordORM` -> Domain `MemoryRecord`."""
+    return MemoryRecord(
+        id=orm_record.id,
+        user_id=orm_record.user_id,
+        text=orm_record.text,
+        category=MemoryCategory(orm_record.category),
+        source=MemorySource(orm_record.source),
+        status=MemoryStatus(orm_record.status),
+        confidence=MemoryConfidence(orm_record.confidence),
+        is_sensitive=orm_record.is_sensitive,
+        expires_at=_to_aware_utc(orm_record.expires_at) if orm_record.expires_at is not None else None,
+        updated_by=orm_record.updated_by,
+        created_at=_to_aware_utc(orm_record.created_at),
+        updated_at=_to_aware_utc(orm_record.updated_at),
     )
