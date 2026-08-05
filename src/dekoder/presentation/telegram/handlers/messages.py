@@ -36,6 +36,15 @@ class TextMessageHandler:
         bind_request_context(correlation_id=command.correlation_id)
         try:
             result = await self._process_user_message.execute(command)
+            # Sprint 4, задача S4-07 (ADR-4.6, «дополнительный механизм»):
+            # версии использованных шаблонов промпта — для операционной
+            # трассируемости («ассистент забыл, что я говорил раньше» —
+            # ADR-4.5), внутри области `bind_request_context` (тот же
+            # `correlation_id`, что и остальные логи этого запроса) — до
+            # `clear_request_context()` в `finally` ниже. Основной,
+            # проверяемый тестом механизм — `result.prompt_template_versions`
+            # (DTO use case'а), это лишь дополнение.
+            _logger.info("prompt_built", template_versions=dict(result.prompt_template_versions))
         except DekoderError as error:
             _logger.warning("process_user_message_failed", error_code=error.code)
             await message.reply_text(error.user_message)

@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from tests.support.fake_conversation_repositories import FakeProfileRepository, make_default_profile
+from tests.support.prompt_engine import make_test_prompt_builder
 
 from dekoder.application.conversation.dto import (
     LLMRequest,
@@ -26,6 +27,7 @@ from dekoder.application.conversation.dto import (
 )
 from dekoder.application.conversation.ports import ConversationRepositories, ConversationRepositoriesFactory
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
+from dekoder.application.prompt.ports import PromptBuilder
 from dekoder.domain.conversation.entities import Conversation, Message, MessageRole
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
 from dekoder.domain.user.entities import User
@@ -211,7 +213,7 @@ class _Repos:
 def _make_use_case(
     provider: FakeLLMProvider,
     default_model: str = "openai/gpt-4o-mini",
-    default_system_prompt: str = "Ты — ассистент.",
+    prompt_builder: PromptBuilder | None = None,
     users: FakeUserRepository | None = None,
     conversations: FakeConversationRepository | None = None,
     messages: FakeMessageRepository | None = None,
@@ -225,8 +227,8 @@ def _make_use_case(
     use_case = ProcessUserMessage(
         llm_provider=provider,
         repositories=factory,
+        prompt_builder=prompt_builder if prompt_builder is not None else make_test_prompt_builder(),
         default_model=ModelId(default_model),
-        default_system_prompt=default_system_prompt,
         temperature=0.7,
         max_tokens=512,
     )
@@ -559,23 +561,39 @@ class TestResultType:
 class TestPersonalization:
     """
     Sprint 3, задача S3-07 (ADR-3.3): системная инструкция LLMRequest
-    берётся из активного профиля пользователя, а не из статической
-    default_system_prompt.
+    берётся из активного профиля пользователя.
+
+    Sprint 4 (задача S4-07, ADR-4.7): собранный `system_prompt` больше не
+    РАВЕН `profile.system_instruction` как есть — это склейка секций 1
+    (базовая инструкция, безусловная для любого профиля), 2
+    (правила безопасности), 3 (параметры профиля, включая
+    `system_instruction`) и 8 (формат ответа). Поэтому тесты проверяют
+    вхождение (`in`), не равенство — и используют реальный
+    `PromptBuilder` (`tests.support.prompt_engine.make_test_prompt_builder`,
+    те же сид-шаблоны, что и в проде), а не `default_system_prompt`
+    (параметр удалён вместе с `_DEFAULT_SYSTEM_PROMPT`, ADR-4.7).
     """
 
-    async def test_system_prompt_equals_active_profile_instruction(self) -> None:
+    # Совпадает с текстом сид-шаблона `base_instruction`
+    # (`infrastructure/prompts/templates/base_instruction.txt`) — прежней
+    # константой `_DEFAULT_SYSTEM_PROMPT` (`bootstrap/container.py`) до
+    # её удаления в этой задаче (S4-07/ADR-4.7).
+    _BASE_INSTRUCTION_TEXT = "Ты — персональный ассистент «Декодер». Отвечай кратко и по делу."
+
+    async def test_system_prompt_contains_active_profile_instruction(self) -> None:
         profile = make_default_profile(name="Экспертный")
         object.__setattr__(profile, "system_instruction", "Отвечай точно и по делу, как эксперт.")
         profiles = FakeProfileRepository([profile])
         provider = FakeLLMProvider(response=_make_response())
-        use_case, _ = _make_use_case(
-            provider, default_system_prompt="Фолбэк, не должен использоваться", profiles=profiles
-        )
+        use_case, _ = _make_use_case(provider, profiles=profiles)
 
         await use_case.execute(_make_command())
 
         request = provider.received_requests[0]
-        assert request.system_prompt == "Отвечай точно и по делу, как эксперт."
+        assert "Отвечай точно и по делу, как эксперт." in request.system_prompt
+        # Секция 1 (базовая инструкция) присутствует безусловно, для
+        # любого профиля — не заменяется инструкцией профиля (ADR-4.7).
+        assert self._BASE_INSTRUCTION_TEXT in request.system_prompt
 
     async def test_different_users_with_different_selected_profiles_get_different_system_prompt(self) -> None:
         default_profile = make_default_profile(name="Деловой")
@@ -594,17 +612,33 @@ class TestPersonalization:
         await use_case.execute(_make_command(telegram_user_id=111))
         await use_case.execute(_make_command(telegram_user_id=222))
 
-        assert provider.received_requests[0].system_prompt == "Кратко и по делу."
-        assert provider.received_requests[1].system_prompt == "Отвечай образно, с метафорами."
+        first_prompt = provider.received_requests[0].system_prompt
+        second_prompt = provider.received_requests[1].system_prompt
+        assert "Кратко и по делу." in first_prompt
+        assert "Отвечай образно, с метафорами." in second_prompt
+        assert first_prompt != second_prompt
 
-    async def test_falls_back_to_default_system_prompt_when_profile_instruction_is_blank(self) -> None:
+    async def test_base_instruction_present_even_when_profile_instruction_is_blank(self) -> None:
+        """
+        Sprint 4, задача S4-07 (ADR-4.7): узкий эквивалент прежнего теста
+        Sprint 2/3 «fallback на default_system_prompt при пустом
+        system_instruction» — домен не допускает создать `UserProfile` с
+        пустой `system_instruction` (`__post_init__`), поэтому тест
+        обходит это через `object.__setattr__`, как и раньше; но
+        ожидаемое поведение изменилось (ADR-4.7): вместо fallback на
+        отдельную default-строку теперь просто присутствует секция 1
+        (безусловна для любого профиля), а секция 3 не подставляет вместо
+        пустой `system_instruction` ничего — не бросает и не превращает
+        весь промпт в пустую строку.
+        """
         profile = make_default_profile(name="Пустой")
         object.__setattr__(profile, "system_instruction", "   ")
         profiles = FakeProfileRepository([profile])
         provider = FakeLLMProvider(response=_make_response())
-        use_case, _ = _make_use_case(provider, default_system_prompt="Фолбэк-инструкция.", profiles=profiles)
+        use_case, _ = _make_use_case(provider, profiles=profiles)
 
         await use_case.execute(_make_command())
 
         request = provider.received_requests[0]
-        assert request.system_prompt == "Фолбэк-инструкция."
+        assert self._BASE_INSTRUCTION_TEXT in request.system_prompt
+        assert request.system_prompt.strip()

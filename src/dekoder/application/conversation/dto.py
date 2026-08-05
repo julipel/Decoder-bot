@@ -95,8 +95,8 @@ ClearConversationStatus` — enum по тому же образцу, что и �
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from enum import Enum
 from uuid import UUID
 
@@ -127,6 +127,15 @@ class ProcessUserMessageResult:
     conversation_id: UUID
     message_id: UUID
     usage: TokenUsage | None = None
+    # Имя (устойчивый `PromptTemplate.id`) → версия каждого шаблона,
+    # использованного `PromptBuilder.build()` для сборки промпта этого
+    # ответа (Sprint 4, задача S4-07, ADR-4.6) — «метаданные ответа» без
+    # изменения схемы БД/`Message`: это DTO уровня use case, не
+    # персистентная запись. Trailing-поле с безопасным значением по
+    # умолчанию (`{}`), по аналогии с `usage: TokenUsage | None = None`, —
+    # существующие частично-позиционные вызовы конструктора продолжают
+    # работать без изменений.
+    prompt_template_versions: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

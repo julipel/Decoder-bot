@@ -34,6 +34,22 @@ build_conversation_repositories_factory`). Ни Telegram-слой, ни любо
 `StartNewConversation`/`ClearConversation` (ни один из трёх не требует
 `LLMProvider`); никакой второй фабрики репозиториев не вводится (ADR-3.3).
 
+С задачи S4-07 (Sprint 4, ADR-4.1/4.2/4.7) контейнер также собирает
+Prompt Engine — `FileTemplateRepository` (`infrastructure/prompts/
+file_template_repository.py`, читает сид-шаблоны один раз при построении,
+ADR-4.2) и `DeterministicPromptBuilder` (`application/prompt/services/
+prompt_builder.py`), внедряемый в `ProcessUserMessage` вместо прежней
+константы `_DEFAULT_SYSTEM_PROMPT`/параметра `default_system_prompt`
+(Sprint 2/3) — базовая системная инструкция теперь безусловная секция 1
+Prompt Engine (текст мигрировал в `infrastructure/prompts/templates/
+base_instruction.txt`, задача S4-04), а не Python-константа этого модуля.
+`TokenBudgetPolicy` (`domain/prompt/policies.py`) конфигурируется
+эвристикой символов (`application/prompt/services/token_budget.py::
+estimate_size`, ADR-4.4) и бюджетом из `Settings.prompt.token_budget`
+(не хардкод) — `PromptTemplateRepository` не встраивается в
+`ConversationRepositoriesFactory`, внедряется в `DeterministicPromptBuilder`
+напрямую (ADR-4.2/4.3, нет второй фабрики репозиториев).
+
 `http_client` контейнер получает уже созданным и не отвечает за его
 жизненный цикл — открывает и закрывает клиент `bootstrap/application.py`
 через FastAPI lifespan. Аналогично с задачи S2-06 — `db_session_factory`
@@ -54,17 +70,14 @@ from dekoder.application.conversation.use_cases.start_new_conversation import St
 from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
 from dekoder.application.profile.use_cases.list_profiles import ListProfiles
 from dekoder.application.profile.use_cases.select_profile import SelectProfile
+from dekoder.application.prompt.services.prompt_builder import DeterministicPromptBuilder
+from dekoder.application.prompt.services.token_budget import estimate_size
 from dekoder.bootstrap.repositories import build_conversation_repositories_factory
 from dekoder.domain.conversation.value_objects import ModelId
+from dekoder.domain.prompt.policies import TokenBudgetPolicy
 from dekoder.infrastructure.llm.openrouter_adapter import OpenRouterLLMAdapter
+from dekoder.infrastructure.prompts.file_template_repository import FileTemplateRepository
 from dekoder.shared.config import Settings
-
-# Fallback-системный промпт (Sprint 3, задача S3-07, ADR-3.3) — используется
-# ProcessUserMessage только если у активного профиля пользователя пустая
-# (после strip()) system_instruction; основной путь — профиль пользователя
-# (ProfileRepository.get_active_profile), не эта константа. До Sprint 3 это
-# было единственным источником системной инструкции для всех пользователей.
-_DEFAULT_SYSTEM_PROMPT = "Ты — персональный ассистент «Декодер». Отвечай кратко и по делу."
 
 
 @dataclass(frozen=True)
@@ -98,11 +111,18 @@ def build_container(
         x_title=settings.application.name,
     )
     repositories_factory = build_conversation_repositories_factory(db_session_factory)
+    prompt_template_repository = FileTemplateRepository()
+    token_budget_policy = TokenBudgetPolicy(estimate_size=estimate_size)
+    prompt_builder = DeterministicPromptBuilder(
+        template_repository=prompt_template_repository,
+        token_budget_policy=token_budget_policy,
+        budget=settings.prompt.token_budget,
+    )
     process_user_message = ProcessUserMessage(
         llm_provider=llm_provider,
         repositories=repositories_factory,
+        prompt_builder=prompt_builder,
         default_model=ModelId(settings.openrouter.default_model),
-        default_system_prompt=_DEFAULT_SYSTEM_PROMPT,
         temperature=settings.llm.temperature,
         max_tokens=settings.llm.max_tokens,
     )

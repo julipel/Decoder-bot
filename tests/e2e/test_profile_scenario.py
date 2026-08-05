@@ -43,6 +43,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler
+from tests.support.prompt_engine import make_test_prompt_builder
 
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
 from dekoder.application.conversation.ports import ConversationRepositoriesFactory
@@ -124,8 +125,8 @@ def _make_process_user_message(
     return ProcessUserMessage(
         llm_provider=provider,
         repositories=repositories_factory,
+        prompt_builder=make_test_prompt_builder(),
         default_model=ModelId("openai/gpt-4o-mini"),
-        default_system_prompt="Фолбэк, не должен использоваться в этих сценариях.",
         temperature=0.7,
         max_tokens=512,
     )
@@ -279,7 +280,9 @@ class TestDefaultProfileWithoutSelection:
         await callbacks["text"](_make_text_update(user_id=1001), MagicMock())  # type: ignore[operator]
 
         assert len(provider.received_requests) == 1
-        assert provider.received_requests[0].system_prompt == "Отвечай кратко и по делу, формальный стиль."
+        # Sprint 4 (ADR-4.7): system_prompt — склейка секций Prompt Engine,
+        # не равен profile.system_instruction как есть — проверяем вхождение.
+        assert "Отвечай кратко и по делу, формальный стиль." in provider.received_requests[0].system_prompt
         assert catalog["business"] is not None  # профиль-дефолт действительно использован
 
 
@@ -321,8 +324,9 @@ class TestProfileSwitchAffectsOnlyFuture:
             _make_text_update(text="Второе сообщение", user_id=2001), MagicMock()
         )
 
-        assert provider_second.received_requests[0].system_prompt == (
+        assert (
             "Отвечай образно, с метафорами и нестандартными идеями."
+            in provider_second.received_requests[0].system_prompt
         )
 
         async with session_factory() as session:
@@ -364,8 +368,11 @@ class TestUserIsolation:
         await callbacks_a["text"](_make_text_update(text="Сообщение A", user_id=3001), MagicMock())  # type: ignore[operator]
         await callbacks_b["text"](_make_text_update(text="Сообщение B", user_id=3002), MagicMock())  # type: ignore[operator]
 
-        assert provider_a.received_requests[0].system_prompt == "Отвечай образно, с метафорами и нестандартными идеями."
-        assert provider_b.received_requests[0].system_prompt == "Отвечай кратко и по делу, формальный стиль."
+        prompt_a = provider_a.received_requests[0].system_prompt
+        prompt_b = provider_b.received_requests[0].system_prompt
+        assert "Отвечай образно, с метафорами и нестандартными идеями." in prompt_a
+        assert "Отвечай кратко и по делу, формальный стиль." in prompt_b
+        assert prompt_a != prompt_b
 
 
 class TestUnknownProfileIdIsRejected:

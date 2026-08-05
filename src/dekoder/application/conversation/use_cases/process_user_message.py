@@ -4,42 +4,52 @@ ProcessUserMessage — центральный use case обработки одн
 OpenRouter → ответ), эволюционировавший в Sprint 2 (задача S2-06) —
 теперь идентифицирует пользователя, получает/создаёт активный диалог,
 сохраняет сообщения и формирует LLM-контекст из истории, а не работает
-stateless одним сообщением, как в Sprint 1; и в Sprint 3 (задача S3-07,
+stateless одним сообщением, как в Sprint 1; в Sprint 3 (задача S3-07,
 ADR-3.3) — системная инструкция берётся из активного профиля вызывающего
-пользователя вместо статической глобальной константы.
+пользователя вместо статической глобальной константы; и в Sprint 4
+(задача S4-07, ADR-4.1/4.7/4.8) — построение промпта (и системной
+инструкции, и списка сообщений истории) целиком переезжает в
+`PromptBuilder` (Prompt Engine) — этот use case больше не строит
+`LLMMessage`/строку системного промпта самостоятельно.
 
-Зависит только от портов (`LLMProvider`, `ConversationRepositoriesFactory`),
-DTO собственного модуля и доменных типов (`Message`, `MessageRole`,
-`MessageText`, `ModelId`) — ни httpx, ни SQLAlchemy, ни ORM-моделей, ни
-Telegram, ни FastAPI, ни URL конкретного провайдера, ни переменных
-окружения. Настройки (`default_model`/`default_system_prompt`/
+Зависит только от портов (`LLMProvider`, `ConversationRepositoriesFactory`,
+`PromptBuilder`), DTO собственного модуля и доменных типов (`Message`,
+`MessageRole`, `MessageText`, `ModelId`, `PromptContext`) — ни httpx, ни
+SQLAlchemy, ни ORM-моделей, ни Telegram, ни FastAPI, ни URL конкретного
+провайдера, ни переменных окружения. Настройки (`default_model`/
 `temperature`/`max_tokens`) приходят через конструктор — это
-ответственность bootstrap-слоя, как и раньше.
+ответственность bootstrap-слоя, как и раньше. Константа
+`_DEFAULT_SYSTEM_PROMPT`/параметр `default_system_prompt` (Sprint 2/3)
+удалены (S4-07) — базовая инструкция, ранее подставлявшаяся как fallback
+на пустой профиль, теперь безусловная секция 1 Prompt Engine (ADR-4.7),
+рендерящаяся `PromptBuilder` независимо от содержимого профиля.
 
-Персонализация системной инструкции (Sprint 3, задача S3-07, ADR-3.3):
-`_save_user_message` (транзакция 1) сразу после получения/создания
-`User`/`Conversation` читает `repositories.profiles.get_active_profile
-(user.id)` — тем же вызовом `self._repositories()`, без отдельной
-транзакции — и возвращает `system_instruction` вместе с
-`conversation_id`; `execute()` подставляет её в `LLMRequest.
-system_prompt` как есть, без шаблонизации, без секций, без token-
-бюджета (Prompt Engine — вне объёма, Этап 6). Параметр конструктора
-`system_prompt` переименован в `default_system_prompt` — он остаётся
-защитным fallback'ом на случай пустой (после `strip()`) инструкции
-активного профиля, не основным путём (в норме `UserProfile.
-system_instruction` не может быть пустой — домен это гарантирует,
-`domain/profile/entities.py::__post_init__`, — но use case не должен
-зависеть от этой гарантии молча).
+Prompt Engine (Sprint 4, задача S4-07, ADR-4.1/4.7/4.8): `_save_user_message`
+(транзакция 1) сразу после получения/создания `User`/`Conversation`
+читает `repositories.profiles.get_active_profile(user.id)` — тем же
+вызовом `self._repositories()`, без отдельной транзакции — и возвращает
+`(conversation_id, profile: UserProfile)` вместо прежнего
+`(conversation_id, system_instruction: str)` (ADR-4.8): извлечение и
+дефолтинг строки инструкции больше не ответственность этого use case —
+`execute()` собирает `PromptContext(profile=profile, dialogue_history=history)`
+из уже полученных транзакциями данных и передаёт его
+`self._prompt_builder.build(context)` (синхронный, без I/O — ADR-4.1/4.8),
+получая обратно `PromptBuildResult` с готовыми `system_prompt`/`messages`/
+`template_versions`; `LLMRequest` строится из результата практически без
+преобразований («тривиальный транслятор», ADR-4.1) — role-mapping и
+склейка секций промпта больше не происходят здесь.
 
-Транзакционные границы (backlog_2.md §9, «Транзакционные границы»):
+Транзакционные границы (backlog_2.md §9, «Транзакционные границы»,
+не изменены в Sprint 4, ADR-4.8):
 
     Транзакция 1 (`_save_user_message`):
-        get/create User -> get/create Conversation -> save user Message -> commit
+        get/create User -> get/create Conversation -> save user Message ->
+        read active profile -> commit
 
     Вне транзакции:
         load history (отдельная короткая read-only транзакция,
-        `_load_history`) -> call LLM (полностью вне какой-либо открытой
-        DB-транзакции/сессии)
+        `_load_history`) -> PromptBuilder.build() (синхронно, без I/O) ->
+        call LLM (полностью вне какой-либо открытой DB-транзакции/сессии)
 
     Транзакция 2 (`_save_assistant_message`):
         save assistant Message -> commit
@@ -49,12 +59,14 @@ system_instruction` не может быть пустой — домен это 
 отдельная, независимая `AsyncSession` под капотом (bootstrap-реализация:
 `session_scope()`, задача S2-01). Ни одна из них не остаётся открытой во
 время сетевого вызова `LLMProvider.generate()` — критическое требование
-задачи S2-06.
+задачи S2-06, не затронутое интеграцией Prompt Engine (`PromptBuilder.
+build()` — синхронная чистая функция, вызывается между двумя короткими
+транзакциями, не удерживает ни одну из них открытой).
 
-Профили/Prompt Engine/память/RAG сюда не входят — следующие спринты.
-Команды `/new`/`/clear` не входят — отдельные use case (`StartNewConversation`/
-`ClearConversation`, следующая задача Sprint 2), `ProcessUserMessage` не
-анализирует текст сообщения на предмет команд управления диалогом.
+Prompt Engine/память/RAG-контент сюда не входят (Этапы 7-8 заполнят
+всегда-пустые `PromptContext.confirmed_memory_facts`/`knowledge_fragments`
+— этот use case их пока не собирает). Команды `/new`/`/clear` не входят —
+отдельные use case (`StartNewConversation`/`ClearConversation`).
 
 Задача S2-11 (финальная интеграция): `_build_message` гарантирует строго
 возрастающий `created_at` в рамках одного экземпляра (`_last_message_created_at`
@@ -72,15 +84,17 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from dekoder.application.conversation.dto import (
-    LLMMessage,
     LLMRequest,
     ProcessUserMessageCommand,
     ProcessUserMessageResult,
     TokenUsage,
 )
 from dekoder.application.conversation.ports import ConversationRepositoriesFactory, LLMProvider
+from dekoder.application.prompt.ports import PromptBuilder
 from dekoder.domain.conversation.entities import Message, MessageRole
 from dekoder.domain.conversation.value_objects import MessageText, ModelId
+from dekoder.domain.profile.entities import UserProfile
+from dekoder.domain.prompt.value_objects import PromptContext
 from dekoder.shared.errors import ValidationError
 
 
@@ -89,15 +103,15 @@ class ProcessUserMessage:
         self,
         llm_provider: LLMProvider,
         repositories: ConversationRepositoriesFactory,
+        prompt_builder: PromptBuilder,
         default_model: ModelId,
-        default_system_prompt: str,
         temperature: float,
         max_tokens: int,
     ) -> None:
         self._llm_provider = llm_provider
         self._repositories = repositories
+        self._prompt_builder = prompt_builder
         self._default_model = default_model
-        self._default_system_prompt = default_system_prompt
         self._temperature = temperature
         self._max_tokens = max_tokens
         # Найдено при задаче S2-11 (финальная интеграция): системные часы
@@ -121,12 +135,15 @@ class ProcessUserMessage:
         message_text = self._validate_message_text(command.message_text)
         model_id = command.model_id if command.model_id is not None else self._default_model
 
-        conversation_id, system_instruction = await self._save_user_message(command.telegram_user_id, message_text)
+        conversation_id, profile = await self._save_user_message(command.telegram_user_id, message_text)
         history = await self._load_history(conversation_id)
 
+        context = PromptContext(profile=profile, dialogue_history=history)
+        build_result = self._prompt_builder.build(context)
+
         request = LLMRequest(
-            system_prompt=system_instruction,
-            messages=[LLMMessage(role=message.role.value, content=message.content) for message in history],
+            system_prompt=build_result.system_prompt,
+            messages=build_result.messages,
             model_id=model_id,
             temperature=self._temperature,
             max_tokens=self._max_tokens,
@@ -144,9 +161,10 @@ class ProcessUserMessage:
             conversation_id=conversation_id,
             message_id=assistant_message.id,
             usage=TokenUsage(input_tokens=response.input_tokens, output_tokens=response.output_tokens),
+            prompt_template_versions=build_result.template_versions,
         )
 
-    async def _save_user_message(self, telegram_user_id: int, message_text: MessageText) -> tuple[UUID, str]:
+    async def _save_user_message(self, telegram_user_id: int, message_text: MessageText) -> tuple[UUID, UserProfile]:
         """
         Транзакция 1 (backlog_2.md §9): получить/создать пользователя,
         получить/создать его активный диалог, прочитать его активный
@@ -158,12 +176,13 @@ class ProcessUserMessage:
         сообщения — LLM в этом случае не вызывается, см. докстринг
         модуля).
 
-        Возвращает `(conversation_id, system_instruction)` —
-        `system_instruction` берётся из `profile.system_instruction`
-        активного профиля пользователя; если она пустая после `strip()`
-        (не должно происходить в норме — домен требует непустую строку,
-        ADR-3.2/3.5 — но use case не полагается на эту гарантию молча),
-        используется `self._default_system_prompt` как fallback.
+        Возвращает `(conversation_id, profile)` (Sprint 4, задача S4-07,
+        ADR-4.8) — раньше (Sprint 2/3) возвращался уже вычисленный
+        `system_instruction: str` с fallback-логикой внутри этого use
+        case; теперь этот use case передаёт весь `UserProfile` как есть,
+        а построение системной инструкции (и fallback на пустую строку,
+        ADR-4.7) — ответственность `PromptBuilder`/секции 3 Prompt
+        Engine, не здесь.
         """
         async with self._repositories() as repositories:
             user = await repositories.users.get_or_create_by_telegram_user_id(telegram_user_id)
@@ -171,8 +190,7 @@ class ProcessUserMessage:
             profile = await repositories.profiles.get_active_profile(user.id)
             user_message = self._build_message(conversation.id, MessageRole.USER, message_text.value)
             await repositories.messages.save(user_message)
-            system_instruction = profile.system_instruction.strip() or self._default_system_prompt
-            return conversation.id, system_instruction
+            return conversation.id, profile
 
     async def _load_history(self, conversation_id: UUID) -> list[Message]:
         """

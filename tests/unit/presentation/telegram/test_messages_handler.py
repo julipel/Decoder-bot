@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from telegram import Update
 from tests.support.fake_conversation_repositories import make_in_memory_repositories_factory
+from tests.support.prompt_engine import make_test_prompt_builder
 
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
@@ -46,8 +47,8 @@ def _make_process_user_message(provider: FakeLLMProvider) -> ProcessUserMessage:
     return ProcessUserMessage(
         llm_provider=provider,
         repositories=make_in_memory_repositories_factory(),
+        prompt_builder=make_test_prompt_builder(),
         default_model=ModelId("openai/gpt-4o-mini"),
-        default_system_prompt="Ты — ассистент.",
         temperature=0.7,
         max_tokens=512,
     )

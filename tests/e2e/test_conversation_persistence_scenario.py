@@ -54,6 +54,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler
+from tests.support.prompt_engine import make_test_prompt_builder
 
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
 from dekoder.application.conversation.ports import ConversationRepositories, ConversationRepositoriesFactory
@@ -134,8 +135,8 @@ def _make_process_user_message(
     return ProcessUserMessage(
         llm_provider=provider,
         repositories=repositories_factory,
+        prompt_builder=make_test_prompt_builder(),
         default_model=ModelId("openai/gpt-4o-mini"),
-        default_system_prompt="Ты — ассистент.",
         temperature=0.7,
         max_tokens=512,
     )

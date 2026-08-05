@@ -26,6 +26,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+from tests.support.prompt_engine import make_test_prompt_builder
 
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse, ProcessUserMessageCommand
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
@@ -118,8 +119,8 @@ def _make_use_case(
     return ProcessUserMessage(
         llm_provider=provider,
         repositories=build_conversation_repositories_factory(session_factory),
+        prompt_builder=make_test_prompt_builder(),
         default_model=ModelId("openai/gpt-4o-mini"),
-        default_system_prompt="Ты — ассистент.",
         temperature=0.7,
         max_tokens=512,
     )
@@ -306,7 +307,8 @@ class TestProfileSwitchAffectsOnlyFutureMessages:
 
         assert second_result.conversation_id == first_result.conversation_id
         assert len(provider.received_requests) == 2
-        assert provider.received_requests[1].system_prompt == "Отвечай образно, с метафорами."
+        # Sprint 4 (ADR-4.7): system_prompt — склейка секций Prompt Engine, проверяем вхождение, не равенство.
+        assert "Отвечай образно, с метафорами." in provider.received_requests[1].system_prompt
         assert provider.received_requests[1].system_prompt != provider.received_requests[0].system_prompt
 
         async with session_factory() as session:
