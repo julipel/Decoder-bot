@@ -1870,6 +1870,217 @@ Telegram
   (S4-01…S4-08) полностью завершён, 496 тестов, ruff/ruff format/mypy
   проходят — см. §36 для подробностей.
 
+## Текущий спринт (обновление 4)
+
+**Спринт 5: долговременная память — контролируемое сохранение,
+просмотр, удаление подтверждённых фактов пользователя, влияющих на
+ответы ассистента через секцию 4 Prompt Engine — завершён (S5-01…S5-08).**
+
+Цель и полный состав спринта — внешняя архитектурная спецификация
+`backlog_5.md` (12 ADR, не входит в этот репозиторий) и §33/§15 ниже.
+Прогресс по задачам:
+
+* [x] S5-01 — удаление мёртвого v2.0-скелета памяти:
+  `application/memory/*` (порт `MemoryRepository` со старой формой
+  `record_message`/`stage_fact_draft`/`confirm_fact_draft`/
+  `forget_fact`, use cases `RecordDialogueMessageUseCase` и др., все
+  `raise NotImplementedError`), `domain/memory/*` (`DialogueEntry`,
+  `MemoryFact`, `MemoryFactDraft` — простые `@dataclass`, без
+  `frozen`/`slots`/валидации), `infrastructure/persistence/
+  sqlite_memory_repository.py`, `application/ai_core/internal_services/
+  memory_collector.py` — та же логика, что ADR-4.10 (Sprint 4, S4-01):
+  правдоподобно выглядящий «модуль памяти» ровно в момент, когда строился
+  настоящий (ADR-5.1) — его форма (диалог+черновик факта) структурно не
+  совпадала со спецификацией Этапа 7 (`MemoryRecord`/`MemoryCategory`/
+  `MemoryStatus`/`MemorySource`/`MemoryConfidence`), это артефакт другой,
+  отменённой модели предметной области, не частичная реализация. Точечно
+  зачищен импорт/поле `MemoryRepository`/`Container.memory_repository` в
+  `composition/container.py`. Отклонение от буквального текста задачи
+  (которая ограничивала точечную зачистку только `composition/
+  container.py`): сама доменная модель, удаляемая этой задачей,
+  транзитивно импортировалась ещё из четырёх файлов, не входящих в узел
+  памяти (`shared/application/execution_context.py`,
+  `application/ai_core/internal_services/execution_context_builder.py`,
+  `application/ai_core/use_cases/{generate_content,
+  answer_knowledge_question,route_command}.py`) — без точечной зачистки
+  dangling-импортов и там дерево не проходило бы `mypy src` целиком.
+  Разрешено тем же приёмом, что уже установлен S4-01 для идентичной
+  ситуации (Logger/PromptAssembler/PromptBuilder): убраны только
+  импорт и ставший недостижимым параметр/метод, поведение
+  (`raise NotImplementedError`) не изменилось. `shared/domain/
+  identifiers.py` не тронут (используется остальным v2.0-скелетом, его
+  судьба — отдельная будущая задача, ADR-5.1) — единственный оставшийся
+  grep-хит (`DialogueEntryId`) — ожидаемое, задокументированное
+  исключение. Остальной v2.0-скелет (`admin`, `rag`, `session`, `skills`,
+  `model_catalog`, `knowledge_base`, `model_gateway`,
+  `infrastructure/vector_storage`, `interfaces/`, `composition/` за
+  пределами точечной правки) не тронут — см. §36 для подробностей.
+* [x] S5-02 — доменный слой памяти (`domain/memory/{entities,
+  value_objects}.py`), стиль `domain/profile/entities.py::UserProfile`:
+  `MemoryRecord` (`frozen=True, slots=True`, `__post_init__`: непустой
+  `text`, `updated_at >= created_at`) с полями `id`/`user_id: UUID`
+  (плоский тип, без обёртки — ADR-5.2, `shared/domain/identifiers.py` не
+  импортируется), `text`, `category`, `source`, `status`, `confidence`,
+  `is_sensitive: bool`, `expires_at: datetime | None`, `updated_by: str`,
+  `created_at`/`updated_at`. Четыре plain `Enum` (не `str, Enum` — стиль
+  `ProfileStatus`): `MemoryCategory` (`PERSONAL`/`PREFERENCE`/`FACT`/
+  `OTHER`), `MemorySource` (`USER_EXPLICIT`/`ADMIN`/`INFERRED` —
+  последние два зарезервированы, ничего в Sprint 5 их не производит),
+  `MemoryStatus` (`PENDING`/`CONFIRMED`/`REJECTED`), `MemoryConfidence`
+  (`LOW`/`MEDIUM`/`HIGH`). Ноль I/O-зависимостей. Юнит-тесты — валидация
+  + типы полей `id`/`user_id` + подтверждение plain-`Enum` стиля — см.
+  §36 для подробностей.
+* [x] S5-03/S5-04 — порт `MemoryRepository` (`application/memory/
+  ports.py`, `@runtime_checkable`, стиль `ProfileRepository`: `save`,
+  `find_relevant(user_id, limit)`, `list_confirmed_by_user`, `get_by_id`,
+  `update_status`, `delete(record_id, user_id)`), встроен в
+  `ConversationRepositories.memory` тем же приёмом, что `profiles`
+  (ADR-3.3/5.5) — без второй фабрики репозиториев; `MemoryRecordORM` +
+  `SQLAlchemyMemoryRepository` (`infrastructure/persistence/
+  memory_record_orm.py`/`memory_repository.py`) — `category`/`source`/
+  `status`/`confidence` как `String`+`CheckConstraint` (стиль
+  `ProfileORM.status`); `find_relevant` сортирует `confidence DESC,
+  created_at DESC` через явный `CASE`-ранг (`_CONFIDENCE_RANK`) — простая
+  лексикографическая сортировка строк `'low'/'medium'/'high'` НЕ ставит
+  `'high'` первым (`'medium' > 'low' > 'high'` по алфавиту), обнаружено
+  при проектировании запроса, не задним числом; `delete` изолирует
+  пользователей на уровне SQL (`WHERE id = :id AND user_id = :user_id`).
+  Схемная Alembic-миграция `161899ea36c0_create_memory_records.py` —
+  таблица `memory_records` + индекс `(user_id, status)`, без сид-данных
+  (ADR-5.7, в отличие от `profiles`). Отклонение от буквального текста
+  задач: `backlog_5_tasks.md` разносит порт (S5-03, включая проводку
+  `bootstrap/repositories.py`) и адаптер (S5-04) по разным
+  коммитам/задачам — но `ConversationRepositories.memory`, сделанное
+  обязательным полем без значения по умолчанию (тем же стилем, что
+  `profiles`), требует реальной реализации уже в `bootstrap/
+  repositories.py::build_conversation_repositories_factory`, иначе дерево
+  не собирается (`mypy`); реализация объединена в один коммит — тот же
+  прецедент, которым Sprint 3 уже разрешил идентичную коллизию для
+  `ProfileRepository` (задача S3-05, «add ProfileRepository port,
+  SQLAlchemy adapter, wire into ConversationRepositories» — одним
+  коммитом). Попутно исправлены два теста миграций (`test_migrations.py`),
+  использовавших относительный `downgrade(config, "-1")` в расчёте на
+  то, что сид-миграция профилей (`27c4e9f2a103`) — head; после S5-04 head
+  — `161899ea36c0`, тесты переведены на явный целевой ревижн
+  (`"14bf7e3ae815"`), устойчивый к будущим миграциям поверх — см. §36 для
+  подробностей.
+* [x] S5-05 — use cases памяти (`application/memory/use_cases/*`):
+  `CreateMemoryRecordUseCase` (принимает `status`/`source` параметром, не
+  хардкодит `CONFIRMED` внутри себя — ADR-5.9; создаёт пользователя
+  автоматически, `get_or_create_by_telegram_user_id`, тем же приёмом, что
+  `ProcessUserMessage` — `/remember` может быть первым действием
+  пользователя), `ConfirmMemoryRecordUseCase`/`RejectMemoryRecordUseCase`
+  (полноценно реализованы, не заглушки — задел на будущий подтверждаемый
+  сценарий, без вызывающего Telegram-сценария в Sprint 5, тот же
+  прецедент, что тиры 4/5 `TokenBudgetPolicy`, ADR-4.5/S4-06),
+  `ListMemoryRecordsUseCase` (только `CONFIRMED`, не создаёт
+  пользователя), `DeleteMemoryRecordUseCase` (идемпотентна — прецедент
+  `MessageRepository.clear`, не полагается на Telegram-слой как
+  единственную защиту владения). `UpdateMemoryRecord` сознательно не
+  реализован — задокументировано в докстринге `application/memory/
+  use_cases/__init__.py` (нет вызывающего сценария без админ-интерфейса,
+  Этап 10). Каждый use case, меняющий память (create/confirm/reject/
+  delete), логирует через `shared.logging.get_logger` — без `record.text`
+  при `is_sensitive=True` (ADR-5.8/5.12); `ListMemoryRecordsUseCase` не
+  логирует — read-only, ADR-5.12 требует журналирования только изменений.
+  Тесты перехватывают реальный JSON-вывод `shared/logging.py` (`capsys`,
+  как `tests/unit/shared/test_logging.py`), подтверждают отсутствие
+  текста факта для чувствительных записей и присутствие — для обычных
+  (не только отрицательная проверка) — см. §36 для подробностей.
+* [x] S5-06 — интеграция в `ProcessUserMessage` (ADR-5.4/5.6/5.11):
+  `_save_user_message` (транзакция 1) сразу после `repositories.profiles.
+  get_active_profile(user.id)` читает `repositories.memory.find_relevant(
+  user.id, limit=self._max_relevant_memory)` — тем же приёмом, тем же
+  вызовом `self._repositories()`, без новой транзакции; возвращает
+  `(conversation_id, profile, memory_records)`; `execute()` собирает
+  `PromptContext(profile=profile, dialogue_history=history,
+  confirmed_memory_facts=[r.text for r in memory_records])`. Отдельный
+  use-case класс `FindRelevantMemory` не создан — порт вызывается
+  напрямую (ADR-5.4, по прецеденту `get_active_profile`/ADR-4.9).
+  `shared/config.py::MemorySettings` (`env_prefix="MEMORY_"`,
+  `max_relevant_records: int = Field(default=5, gt=0)`, стиль
+  `PromptSettings.token_budget`) — лимит из `Settings`, не хардкод.
+  `git diff --stat feature/sprint-4..HEAD -- src/dekoder/domain/prompt
+  src/dekoder/application/prompt src/dekoder/infrastructure/prompts` —
+  пусто: ноль изменений в Prompt Engine (ADR-5.11), подтверждено
+  командой, не на слово. Интеграционный тест с РЕАЛЬНЫМ `PromptBuilder`
+  (не fake) подтверждает: собранный `system_prompt` содержит текст
+  подтверждённого факта; `PENDING`/истёкшие записи исключены;
+  `find_relevant` вызывается в пределах уже существующих 3 вызовов
+  `self._repositories()` за `execute()` (не увеличилось относительно
+  Sprint 4) — см. §36 для подробностей.
+* [x] S5-07 — Telegram `/remember`/`/memory`
+  (`presentation/telegram/handlers/memory.py`): `RememberCommandHandler`
+  (текст после команды — `maxsplit=1`, сохраняет внутренние
+  пробелы/переносы, в отличие от `context.args`; пустой текст — понятная
+  ошибка, не падение; `status=CONFIRMED, source=USER_EXPLICIT` — явно, в
+  `mapper.py::to_create_memory_record_command`, не хардкод внутри use
+  case'а, ADR-5.9), `MemoryListCommandHandler` (`InlineKeyboardMarkup`, по
+  кнопке 🗑 на запись; пустой список — дружелюбное сообщение, не пустая
+  клавиатура), `MemoryDeleteCallbackHandler` (`telegram_user_id` из
+  `update.callback_query.from_user`, НЕ `update.effective_user` — тот же
+  принцип, что `ProfileSelectionCallbackHandler`/`to_select_profile_command`,
+  ADR-5.10; `query.answer()` + `query.edit_message_text(...)` с
+  обновлённым списком). Нет команды `/forget` (ADR-5.10) — удаление
+  только через inline-кнопку. `bot.py::register_memory_handlers` +
+  `telegram_main.py` регистрируют три хендлера тем же способом, что и
+  `/profile` (внутри `post_init`, после DB-зависимого контейнера);
+  `bootstrap/container.py` собирает `CreateMemoryRecordUseCase`/
+  `ListMemoryRecordsUseCase`/`DeleteMemoryRecordUseCase` — не
+  `ConfirmMemoryRecordUseCase`/`RejectMemoryRecordUseCase` (нет
+  Telegram-вызывающего сценария в Sprint 5, ADR-5.9, контейнер не
+  собирает объекты, которые некому передать). E2E-тест
+  (`tests/e2e/test_memory_scenario.py`, реальный `telegram.ext.
+  Application` + реальная временная SQLite): `/remember` → `/memory`
+  показывает факт с кнопкой; пустой текст/пустой список; удаление через
+  callback; **пользователь B не может удалить запись пользователя A даже
+  подделав `callback_data` с чужим id** (ADR-5.10 AC) — получает свой
+  пустой список, не тихий успех; `/forget` не зарегистрирован — см. §36
+  для подробностей.
+* [x] S5-08 — финальная интеграция и E2E-проверка Sprint 5: полный аудит
+  `bootstrap/container.py` (DI-сборка `SQLAlchemyMemoryRepository`,
+  `MemorySettings`, трёх use case'ов памяти) не выявил дефектов — вся
+  сборка уже была корректно подключена задачами S5-03…S5-07. Как и
+  S4-08 (и в отличие от S2-11/S3-09, каждая из которых нашла и точечно
+  исправила один-два реальных интеграционных дефекта), полный аудит
+  S5-08 не выявил ни одного нового интеграционного дефекта, требующего
+  исправления — честный результат: узкие границы транзакций/DI,
+  установленные Sprint 2-4, оказалось достаточно просто расширить
+  дополнительным полем/портом без структурных сюрпризов. Добавлен
+  `tests/e2e/test_memory_prompt_scenario.py` — «Сценарий 4» §18.4 «Плана
+  реализации.md» буквально: `/remember` → `/new` → обычное сообщение →
+  собранный `system_prompt` (эквивалент `PromptBuildResult.system_prompt`
+  — `LLMRequest.system_prompt=build_result.system_prompt` без
+  преобразований, ADR-4.1) реально содержит сохранённый факт; факт
+  пользователя A никогда не появляется в промпте пользователя B; `/clear`
+  и `/new` не удаляют `memory_records` (факт по-прежнему в `/memory`
+  после очистки истории/начала нового диалога — §13.5 «Плана
+  реализации.md»); редакция чувствительных записей в логах
+  эмпирически подтверждена и поверх РЕАЛЬНОГО `SQLAlchemyMemoryRepository`
+  (не только fake-репозитория из S5-05) — создание/удаление записи с
+  `is_sensitive=True` не публикует `record.text` в JSON-вывод. Собран
+  реальный Docker-образ (`docker compose build`), запущен контейнер
+  (`docker compose up -d api`) — `/health` отвечает `200`; `alembic
+  upgrade head` → `downgrade -1` → `upgrade head` внутри контейнера
+  проходит без ошибок, схема `memory_records` (все `CHECK`-ограничения +
+  FK + индекс `(user_id, status)`) подтверждена прямым запросом к
+  `sqlite_master` внутри контейнера; `Settings().memory.
+  max_relevant_records == 5` и полный состав полей `ApplicationContainer`
+  (включая три use case'а памяти) подтверждены реальным импортом внутри
+  собранного образа, не только локально. Полный набор тестов (565),
+  Ruff, Ruff format, MyPy проходят. `README.md` обновлён: диаграмма
+  основного сценария показывает память в цепочке `ProcessUserMessage`,
+  дерево каталогов включает `domain/memory`/`application/memory`/новые
+  файлы `infrastructure/persistence/`/`presentation/telegram/handlers/
+  memory.py`, раздел «База данных и миграции» — четвёртая ревизия
+  (`161899ea36c0`, без сид-данных), таблица переменных окружения —
+  `MemorySettings`/`MEMORY_MAX_RELEVANT_RECORDS`, раздел «Тесты» —
+  `test_memory_scenario.py`/`test_memory_prompt_scenario.py`, абзац про
+  мёртвый v2.0-скелет — про удаление узла памяти в S5-01. `.env.example`
+  дополнен разделом `MemorySettings`. Новая бизнес-функциональность не
+  добавлена — Sprint 5 (S5-01…S5-08) полностью завершён, 565 тестов,
+  ruff/ruff format/mypy проходят — см. §36 для подробностей.
+
 ---
 
 # 33. План следующих спринтов
@@ -1992,11 +2203,12 @@ Docker, e2e-тест, README) и актуализации README/§32. Допо�
 Telegram Adapter), S2-09 (`ClearConversation` use case), S2-10
 (подключение команды `/clear` к Telegram Adapter) и S2-11 (финальная
 интеграция и E2E-проверка) — Спринт 2 полностью завершён. Спринт 3
-(пользовательские профили, S3-01…S3-09) и Спринт 4 (Prompt Engine,
-S4-01…S4-08) документированы подробно в §32 («Текущий этап разработки»)
-— их отдельные записи не дублируются построчно в этот раздел тем же
+(пользовательские профили, S3-01…S3-09), Спринт 4 (Prompt Engine,
+S4-01…S4-08) и Спринт 5 (долговременная память, S5-01…S5-08)
+документированы подробно в §32 («Текущий этап разработки») — их
+отдельные записи не дублируются построчно в этот раздел тем же
 хронологическим стилем, что и Спринт 2; актуальное итоговое состояние
-после Sprint 4 — в подразделах «В разработке»/«Не реализовано»/
+после Sprint 5 — в подразделах «В разработке»/«Не реализовано»/
 «Известные расхождения»/«Следующее действие» ниже.
 
 ## Реализовано
@@ -2963,17 +3175,29 @@ e2e), ruff/ruff format/mypy проходят.
 
 ## В разработке
 
-Ничего — Sprint 4 полностью завершён (S4-01…S4-08). Следующий шаг —
-Этап 7, долговременная память (§33).
+Ничего — Sprint 5 полностью завершён (S5-01…S5-08). Следующий шаг —
+Этап 8, база знаний и RAG (§33).
 
 ## Не реализовано
 
 * персональные (не каталожные) профили пользователя, `CreateProfile`/
-  `UpdateProfile`/`DeactivateProfile`, память, RAG, каталог моделей,
+  `UpdateProfile`/`DeactivateProfile`, RAG, каталог моделей,
   административные функции — по плану, следующие спринты/этапы (§33).
-  Prompt Engine (Этап 6) реализован в Sprint 4 — секции 4/5 (память/RAG)
-  уже структурно готовы (`domain/prompt/value_objects.py`), но всегда
-  пусты до соответствующих спринтов.
+  Prompt Engine (Этап 6) реализован в Sprint 4 — секция 5 (RAG) уже
+  структурно готова (`domain/prompt/value_objects.py`), но всегда пуста
+  до соответствующего спринта. Долговременная память (Этап 7) реализована
+  в Sprint 5 — секция 4 больше не относится к «не реализовано»: заполняется
+  реальными данными `MemoryRepository.find_relevant`.
+* `UpdateMemoryRecord` (§13.6 «Плана реализации.md») — сознательно не
+  реализован в Sprint 5 (ADR-5.9, S5-05): нет вызывающего сценария без
+  административного интерфейса (Этап 10). `ConfirmMemoryRecord`/
+  `RejectMemoryRecord` реализованы полноценно, но не подключены к
+  Telegram — нет двухшагового подтверждаемого сценария в MVP (ADR-5.9).
+* команда `/forget` (упомянута §13.6 «Плана реализации.md») — заменена
+  inline-удалением в `/memory` (ADR-5.10), сознательно не реализована.
+* векторный поиск по памяти (§13.7 «Плана реализации.md»: «может быть
+  добавлен позднее») — Sprint 5 использует только простой SQL-фильтр
+  (ADR-5.6).
 
 ## Известные расхождения
 
@@ -3022,6 +3246,31 @@ Prompt Engine). Остальной v2.0-скелет (`admin`, `memory`, `rag`,
 `infrastructure/vector_storage`, `interfaces/`, `composition/`) не
 тронут — признан нежизнеспособным той же логикой, но его зачистка
 осознанно вынесена в отдельную будущую задачу (ADR-4.10), не в Sprint 4.
+
+**Обновление Sprint 5 (S5-01, ADR-5.1):** узел памяти старого дерева,
+релевантный Sprint 5, удалён — `application/memory/*` (порт
+`MemoryRepository` со старой формой `record_message`/
+`stage_fact_draft`/`confirm_fact_draft`/`forget_fact`, use cases,
+все `raise NotImplementedError`), `domain/memory/*` (`DialogueEntry`,
+`MemoryFact`, `MemoryFactDraft` — простые `@dataclass`, без `frozen`/
+`slots`/валидации), `infrastructure/persistence/
+sqlite_memory_repository.py`, `application/ai_core/internal_services/
+memory_collector.py` — та же логика, что ADR-4.10: правдоподобно
+выглядящий «модуль памяти» ровно в момент, когда строился настоящий
+(структурно другая модель предметной области — диалог+черновик факта,
+не `MemoryRecord`). Точечная зачистка dangling-импортов затронула не
+только `composition/container.py` (буквально названный в тексте
+задачи), но и четыре файла `application/ai_core/`/`shared/application/
+execution_context.py`, транзитивно импортировавших удаляемые типы —
+задокументировано как отклонение от буквального текста задачи в §32
+(S5-01) и в сообщении коммита. Остальной v2.0-скелет (`admin`, `rag`,
+`session`, `skills`, `model_catalog`, `knowledge_base`, `model_gateway`,
+`infrastructure/vector_storage`, `interfaces/`, `composition/` за
+пределами точечной правки) не тронут — признан нежизнеспособным той же
+логикой, зачистка осознанно вынесена в отдельную будущую задачу
+(ADR-4.10/ADR-5.1), не в Sprint 5. `shared/domain/identifiers.py`
+по-прежнему не тронут — его `DialogueEntryId` остаётся единственным
+ожидаемым grep-хитом старой формы имён в `src`/`tests`.
 
 ## Последнее принятое решение
 
@@ -3228,3 +3477,47 @@ S3-09 (каждая нашла и точечно исправила один-д�
 дерево каталогов, переменные окружения, тесты, абзац про мёртвый
 v2.0-скелет). Следующий шаг — Этап 7, долговременная память (§33), не
 начат.
+
+S5-08 завершена — Sprint 5 (S5-01…S5-08) полностью завершён. Полный
+аудит `bootstrap/container.py` (DI-сборка `SQLAlchemyMemoryRepository`
+через `repositories_factory`, `MemorySettings.max_relevant_records` в
+`ProcessUserMessage`, три use case'а памяти —
+`CreateMemoryRecordUseCase`/`ListMemoryRecordsUseCase`/
+`DeleteMemoryRecordUseCase`) не выявил ни одного дефекта — вся сборка
+уже была корректно подключена задачами S5-03…S5-07; как и S4-08 (и в
+отличие от S2-11/S3-09, каждая из которых нашла и точечно исправила
+один-два реальных интеграционных дефекта), S5-08 не нашла новых
+дефектов, требующих исправления. Эмпирически подтверждено:
+`tests/e2e/test_memory_prompt_scenario.py` доказывает «Сценарий 4» §18.4
+«Плана реализации.md» буквально — `/remember` → `/new` → обычное
+сообщение → собранный `system_prompt` реально содержит сохранённый
+факт (эквивалент прямой проверки `PromptBuildResult.system_prompt`,
+`LLMRequest.system_prompt=build_result.system_prompt` без преобразований,
+ADR-4.1); факт пользователя A никогда не появляется в промпте
+пользователя B; `/clear`/`/new` не удаляют `memory_records` (факт
+по-прежнему в `/memory` после очистки истории/начала нового диалога);
+редакция чувствительных записей в логах подтверждена не только на
+fake-репозитории (S5-05), но и поверх РЕАЛЬНОГО
+`SQLAlchemyMemoryRepository` — создание/удаление записи с
+`is_sensitive=True` не публикует `record.text` в JSON-вывод
+`shared/logging.py`. Реальный Docker-образ собран и запущен, `/health`
+отвечает `200`, `alembic upgrade head` → `downgrade -1` → `upgrade head`
+внутри контейнера проходит без ошибок; схема `memory_records`
+(`CHECK`-ограничения на `category`/`source`/`status`/`confidence`, FK
+`user_id → users.id`, индекс `(user_id, status)`) подтверждена прямым
+запросом к `sqlite_master` внутри контейнера, не только по исходнику
+миграции; `Settings().memory.max_relevant_records == 5` (значение по
+умолчанию, не заданное явно в `.env`) и полный состав полей
+`ApplicationContainer` (включая три use case'а памяти) подтверждены
+реальным импортом внутри собранного образа. 565 тестов, ruff/ruff
+format/mypy проходят. `README.md` обновлён под фактическое состояние
+Sprint 5 (диаграмма сценария включает память в цепочку
+`ProcessUserMessage`, дерево каталогов — `domain/memory`/
+`application/memory`/новые файлы `infrastructure/persistence/`/
+`presentation/telegram/handlers/memory.py`, раздел «База данных и
+миграции» — четвёртая ревизия без сид-данных, таблица переменных
+окружения — `MemorySettings`, раздел «Тесты» —
+`test_memory_scenario.py`/`test_memory_prompt_scenario.py`, абзац про
+мёртвый v2.0-скелет — про удаление узла памяти в S5-01); `.env.example`
+дополнен `MemorySettings`. Следующий шаг — Этап 8, база знаний и RAG
+(§33), не начат.

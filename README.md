@@ -8,31 +8,37 @@ Prompt Engine, база знаний с RAG, память диалога, адм
 
 **Что реально работает сейчас** — Sprint 1 (Walking Skeleton), Sprint 2
 (постоянное хранилище, диалоги, история), Sprint 3 (пользовательские
-профили) и Sprint 4 (Prompt Engine — централизованная сборка промпта)
-полностью завершены:
+профили), Sprint 4 (Prompt Engine — централизованная сборка промпта) и
+Sprint 5 (долговременная память) полностью завершены:
 
 ```text
-Telegram → ProcessUserMessage → (профиль + история) → PromptContext → PromptBuilder → PromptBuildResult
-                 │                                                                          │
-                 ├── User/Conversation/Message сохраняются в SQLite                          │
-                 └──────────────────────────────────────────────── LLMProvider → OpenRouterLLMAdapter → ответ
+Telegram → ProcessUserMessage → (профиль + память + история) → PromptContext → PromptBuilder → PromptBuildResult
+                 │                                                                                   │
+                 ├── User/Conversation/Message сохраняются в SQLite                                  │
+                 └───────────────────────────────────────────────────── LLMProvider → OpenRouterLLMAdapter → ответ
 
-Telegram /new     → StartNewConversation → закрывает текущий диалог, создаёт новый
-Telegram /clear   → ClearConversation    → удаляет историю, диалог остаётся активным
-Telegram /profile → ListProfiles/GetActiveProfile/SelectProfile → выбор профиля через inline-клавиатуру
+Telegram /new      → StartNewConversation → закрывает текущий диалог, создаёт новый (память не трогает)
+Telegram /clear    → ClearConversation    → удаляет историю, диалог остаётся активным (память не трогает)
+Telegram /profile  → ListProfiles/GetActiveProfile/SelectProfile → выбор профиля через inline-клавиатуру
+Telegram /remember → CreateMemoryRecordUseCase → сохраняет факт сразу подтверждённым (status=CONFIRMED)
+Telegram /memory   → ListMemoryRecordsUseCase → список подтверждённых фактов с inline-удалением (🗑)
 ```
 
 Пользователь пишет боту в Telegram → сообщение уходит в use case
 `ProcessUserMessage` → пользователь и его активный диалог находятся или
-создаются в SQLite, читается его активный профиль (`ProfileRepository`),
-сообщение пользователя сохраняется → история диалога читается из базы →
-`ProcessUserMessage` собирает `PromptContext` (профиль + история) и
-передаёт его `PromptBuilder` (Prompt Engine, Sprint 4) — тот детерминированно
-собирает системную инструкцию из 8 фиксированных секций (базовая
-инструкция, правила безопасности, параметры активного профиля — теперь
-используются ВСЕ описательные поля профиля, не только
-`system_instruction`, — пустые плейсхолдеры памяти/RAG, история диалога,
-текущий запрос, требования к формату ответа), исключая пустые секции и
+создаются в SQLite, читается его активный профиль (`ProfileRepository`) и
+до `MemorySettings.max_relevant_records` (по умолчанию 5) подтверждённых
+записей памяти (`MemoryRepository.find_relevant` — только `CONFIRMED`, не
+истёкшие, отсортированные по значимости и свежести, Sprint 5), сообщение
+пользователя сохраняется → история диалога читается из базы →
+`ProcessUserMessage` собирает `PromptContext` (профиль + подтверждённая
+память + история) и передаёт его `PromptBuilder` (Prompt Engine, Sprint 4)
+— тот детерминированно собирает системную инструкцию из 8 фиксированных
+секций (базовая инструкция, правила безопасности, параметры активного
+профиля — используются ВСЕ описательные поля профиля, не только
+`system_instruction`, — подтверждённая память (заполнена реальными
+данными с Sprint 5; пустой плейсхолдер RAG), история диалога, текущий
+запрос, требования к формату ответа), исключая пустые секции и
 ограничивая суммарный объём эвристическим `TokenBudgetPolicy` (обрезает
 старую историю первой, если она есть; текущий запрос и системные секции
 неприкосновенны) → адаптер `OpenRouterLLMAdapter` обращается к
@@ -40,18 +46,26 @@ OpenRouter → ответ модели сохраняется как сообщ�
 возвращается пользователю в Telegram; версии использованных шаблонов
 промпта доступны в `ProcessUserMessageResult.prompt_template_versions`.
 Команда `/new` закрывает текущий диалог и начинает новый (старая история
-не удаляется, просто перестаёт быть активной); `/clear` удаляет
-сообщения текущего диалога, не закрывая и не пересоздавая сам диалог;
-`/profile` показывает каталог из 4 предустановленных профилей с
-отметкой текущего активного и позволяет переключиться через
-inline-кнопку — переключение влияет только на будущие сообщения, не
-переписывает уже сохранённую историю, и не влияет на других
-пользователей. Персональных (не каталожных) профилей,
-`CreateProfile`/`UpdateProfile`/`DeactivateProfile`, долговременной
-памяти, RAG и выбора модели ещё нет — они добавляются по следующим
-спринтам/этапам (`claude.md`, §33); секции 4 (память) и 5 (RAG) Prompt
-Engine уже структурно готовы, но всегда пусты до соответствующих
-спринтов.
+не удаляется, просто перестаёт быть активной; подтверждённая память не
+удаляется — память не равна истории сообщений, §13.5 «Плана
+реализации.md»); `/clear` удаляет сообщения текущего диалога, не закрывая
+и не пересоздавая сам диалог и не трогая память; `/profile` показывает
+каталог из 4 предустановленных профилей с отметкой текущего активного и
+позволяет переключиться через inline-кнопку — переключение влияет только
+на будущие сообщения, не переписывает уже сохранённую историю, и не
+влияет на других пользователей; `/remember <текст>` сохраняет факт сразу
+подтверждённым, без двухшагового сценария (ADR-5.9); `/memory` показывает
+только подтверждённые факты с кнопкой 🗑 на каждой записи — удаление
+только через inline-кнопку, команды `/forget` нет (ADR-5.10); один
+пользователь никогда не видит и не может удалить факты другого
+(`user_id`-изоляция на уровне `MemoryRepository`, не только Telegram-слоя).
+Персональных (не каталожных) профилей, `CreateProfile`/`UpdateProfile`/
+`DeactivateProfile`, RAG и выбора модели ещё нет — они добавляются по
+следующим спринтам/этапам (`claude.md`, §33); секция 5 (RAG) Prompt
+Engine уже структурно готова, но всегда пуста до соответствующего
+спринта. Автоматическое извлечение фактов AI из диалога не реализовано и
+не планируется в MVP (§13.2 «Плана реализации.md») — память растёт
+только через явную команду `/remember`.
 
 ## Архитектура
 
@@ -72,30 +86,36 @@ src/dekoder/
 │   ├── conversation/                # MessageText/ModelId/ProviderId, MessageRole, Message, Conversation (Aggregate Root)
 │   ├── user/                        # User
 │   ├── profile/                     # UserProfile, ProfileStatus (Sprint 3, S3-02)
-│   └── prompt/                      # PromptTemplate/PromptTemplateStatus, PromptSection/PromptContext/
-│                                     #   PromptBuildResult, TokenBudgetPolicy (Sprint 4, S4-02)
+│   ├── prompt/                      # PromptTemplate/PromptTemplateStatus, PromptSection/PromptContext/
+│   │                                 #   PromptBuildResult, TokenBudgetPolicy (Sprint 4, S4-02)
+│   └── memory/                      # MemoryRecord, MemoryCategory/MemorySource/MemoryStatus/MemoryConfidence (Sprint 5, S5-02)
 ├── application/
 │   ├── conversation/                # DTO, LLMProvider/ConversationRepository/MessageRepository/ConversationRepositories (порты),
 │   │                                 #   ProcessUserMessage, StartNewConversation, ClearConversation
 │   ├── user/                        # UserRepository (порт)
 │   ├── profile/                     # ProfileRepository (порт), DTO, ListProfiles/GetActiveProfile/SelectProfile (S3-05/S3-06)
-│   └── prompt/                      # PromptBuilder/PromptTemplateRepository (порты, S4-03);
-│                                     #   services/prompt_builder.py::DeterministicPromptBuilder (S4-05),
-│                                     #   services/token_budget.py::estimate_size (S4-06)
+│   ├── prompt/                      # PromptBuilder/PromptTemplateRepository (порты, S4-03);
+│   │                                 #   services/prompt_builder.py::DeterministicPromptBuilder (S4-05),
+│   │                                 #   services/token_budget.py::estimate_size (S4-06)
+│   └── memory/                      # MemoryRepository (порт, S5-03), DTO, use_cases/ — CreateMemoryRecord/
+│                                     #   ConfirmMemoryRecord/RejectMemoryRecord/ListMemoryRecords/DeleteMemoryRecord (S5-05)
 ├── infrastructure/
 │   ├── llm/                         # OpenRouterLLMAdapter
 │   ├── persistence/                 # base.py/engine.py/session.py (SQLAlchemy async, S2-01) +
 │   │                                 #   user_orm.py/conversation_orm.py/message_orm.py + mappers.py (S2-02) +
 │   │                                 #   user_repository.py/conversation_repository.py/message_repository.py (S2-03..S2-05) +
-│   │                                 #   profile_orm.py/user_active_profile_orm.py/profile_repository.py (Sprint 3, S3-03/S3-05)
+│   │                                 #   profile_orm.py/user_active_profile_orm.py/profile_repository.py (Sprint 3, S3-03/S3-05) +
+│   │                                 #   memory_record_orm.py/memory_repository.py::SQLAlchemyMemoryRepository (Sprint 5, S5-04)
 │   └── prompts/                     # file_template_repository.py::FileTemplateRepository +
 │                                     #   templates/{manifest.json, *.txt} — 6 сид-шаблонов (Sprint 4, S4-04)
-├── presentation/telegram/           # /start, /new, /clear, /profile, обработчик текстовых сообщений, mapper.py, bot.py
+├── presentation/telegram/           # /start, /new, /clear, /profile, /remember, /memory (S5-07),
+│                                     #   обработчик текстовых сообщений, mapper.py, bot.py
 ├── bootstrap/                       # container.py, application.py, database.py, repositories.py — единственное место сборки
 └── shared/                          # config.py, logging.py, errors.py
 
 alembic/                             # users/conversations/messages (S2-02) + profiles/user_active_profiles (S3-03) +
-                                      #   сид-каталог из 4 профилей (S3-04) — Sprint 4 не добавляет миграций
+                                      #   сид-каталог из 4 профилей (S3-04) + memory_records, схема без сид-данных
+                                      #   (Sprint 5, S5-04, ADR-5.7) — Sprint 4 не добавляет миграций
                                       #   (шаблоны промпта — файловое хранилище, не БД, ADR-4.2)
 ```
 
@@ -120,11 +140,18 @@ alembic/                             # users/conversations/messages (S2-02) + pr
 > нерабочий «построитель промпта») были удалены в Sprint 4 (задача
 > S4-01) — оба создавали прямой риск путаницы именно в момент, когда
 > строился настоящий Prompt Engine (`domain/prompt/`, `application/
-> prompt/`, `infrastructure/prompts/`). Остальной v2.0-скелет (`admin`,
-> `memory`, `rag`, `session`, `skills`, `model_catalog`, `knowledge_base`,
+> prompt/`, `infrastructure/prompts/`). Мёртвый узел памяти
+> (`application/memory/*` со старой формой `DialogueEntry`/`MemoryFact`/
+> `MemoryFactDraft`, `domain/memory/*`, `infrastructure/persistence/
+> sqlite_memory_repository.py`, `application/ai_core/internal_services/
+> memory_collector.py`) был удалён в Sprint 5 (задача S5-01) по той же
+> логике — прямой риск путаницы именно в момент, когда строилась
+> настоящая долговременная память (`domain/memory/`, `application/
+> memory/`, реальная форма `MemoryRecord`). Остальной v2.0-скелет
+> (`admin`, `rag`, `session`, `skills`, `model_catalog`, `knowledge_base`,
 > `model_gateway`, `infrastructure/vector_storage`, `interfaces/`,
 > `composition/`) по-прежнему не тронут — признан нежизнеспособным, но
-> его зачистка вынесена в отдельную будущую задачу (ADR-4.10).
+> его зачистка вынесена в отдельную будущую задачу (ADR-4.10/ADR-5.1).
 
 ## Технологический стек
 
@@ -213,7 +240,7 @@ uv run alembic upgrade head
 умолчанию `sqlite+aiosqlite:///./data/app.db`). Схема базы данных
 создаётся и изменяется **только** через Alembic — `Base.metadata.
 create_all()` нигде не вызывается в рабочем коде (только в тестовых
-фикстурах). Три ревизии:
+фикстурах). Четыре ревизии:
 
 - `alembic/versions/a96ab72bfa8a_create_users_conversations_messages.py`
   (Sprint 2) — создаёт таблицы `users` → `conversations` → `messages` с
@@ -227,7 +254,15 @@ create_all()` нигде не вызывается в рабочем коде (�
 - `alembic/versions/27c4e9f2a103_seed_profile_catalog.py` (Sprint 3,
   S3-04) — data migration, вносит 4 предустановленных профиля через
   `op.bulk_insert` с детерминированными UUID; `downgrade()` удаляет ровно
-  эти 4 строки по `id`.
+  эти 4 строки по `id`;
+- `alembic/versions/161899ea36c0_create_memory_records.py` (Sprint 5,
+  S5-04) — создаёт таблицу `memory_records` (владелец, текст факта,
+  категория/источник/статус/значимость через `String`+`CheckConstraint`,
+  признак чувствительности, срок действия, автор изменения) с индексом
+  `(user_id, status)`, ускоряющим `MemoryRepository.find_relevant`/
+  `list_confirmed_by_user`; **без** сид-данных (ADR-5.7) — в отличие от
+  `profiles`, память исключительно пользовательские данные, растущие
+  только через `/remember`.
 
 ```powershell
 # Применить все миграции (создаёт/обновляет схему БД) — идемпотентно,
@@ -274,6 +309,7 @@ upgrade head` перед первым стартом приложения — с
 | `OpenRouterSettings` | `OPENROUTER_` | `OPENROUTER_API_KEY` | `OPENROUTER_BASE_URL`, `OPENROUTER_DEFAULT_MODEL` |
 | `DatabaseSettings` | `DATABASE_` | — | `DATABASE_URL` |
 | `PromptSettings` | `PROMPT_` | — | `PROMPT_TOKEN_BUDGET` (эвристический бюджет `TokenBudgetPolicy`, ADR-4.4) |
+| `MemorySettings` | `MEMORY_` | — | `MEMORY_MAX_RELEVANT_RECORDS` (лимит `MemoryRepository.find_relevant`, по умолчанию 5, ADR-5.6) |
 
 Отсутствие обязательного секрета в окружении останавливает процесс при
 создании `Settings()` (fail-fast), а не на первом запросе.
@@ -321,7 +357,18 @@ tests/
                      # test_prompt_engine_scenario.py (Sprint 4, S4-08) — собранный системный промпт
                      #   реально содержит секцию активного профиля; искусственно длинный диалог
                      #   реально обрезается TokenBudgetPolicy, ответ пользователю всё равно приходит
-                     #   — поверх РЕАЛЬНОЙ временной SQLite и реального telegram.ext.Application
+                     #   — поверх РЕАЛЬНОЙ временной SQLite и реального telegram.ext.Application;
+                     # test_memory_scenario.py (Sprint 5, S5-07) — /remember сохраняет и виден в
+                     #   /memory с кнопкой удаления; пустой текст/пустой список; удаление через
+                     #   inline-кнопку; пользователь A не может удалить запись пользователя B даже
+                     #   подделав callback_data; /forget не зарегистрирован — поверх РЕАЛЬНОЙ
+                     #   временной SQLite;
+                     # test_memory_prompt_scenario.py (Sprint 5, S5-08) — «Сценарий 4» §18.4
+                     #   «Плана реализации.md» буквально: /remember → /new → сообщение →
+                     #   собранный system_prompt содержит факт; изоляция памяти между
+                     #   пользователями; /clear и /new не удаляют memory_records; редакция
+                     #   чувствительных записей в логах поверх РЕАЛЬНОГО
+                     #   SQLAlchemyMemoryRepository (не fake) — поверх РЕАЛЬНОЙ временной SQLite
 ```
 
 Ни один тест не обращается к реальному Telegram API или реальному
