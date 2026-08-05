@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -34,9 +34,36 @@ from dekoder.application.conversation.use_cases.process_user_message import Proc
 from dekoder.application.prompt.ports import PromptBuilder
 from dekoder.domain.conversation.entities import Conversation, Message, MessageRole
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
+from dekoder.domain.memory.entities import MemoryRecord
+from dekoder.domain.memory.value_objects import (
+    MemoryCategory,
+    MemoryConfidence,
+    MemorySource,
+    MemoryStatus,
+)
 from dekoder.domain.user.entities import User
 from dekoder.shared.domain.identifiers import CorrelationId
 from dekoder.shared.errors import InfrastructureError, LLMProviderError, ValidationError
+
+
+def _make_memory_record(user_id: UUID, **overrides: object) -> MemoryRecord:
+    now = datetime.now(UTC)
+    defaults: dict[str, object] = {
+        "id": uuid4(),
+        "user_id": user_id,
+        "text": "Работает Python-разработчиком.",
+        "category": MemoryCategory.FACT,
+        "source": MemorySource.USER_EXPLICIT,
+        "status": MemoryStatus.CONFIRMED,
+        "confidence": MemoryConfidence.MEDIUM,
+        "is_sensitive": False,
+        "expires_at": None,
+        "updated_by": "user",
+        "created_at": now,
+        "updated_at": now,
+    }
+    defaults.update(overrides)
+    return MemoryRecord(**defaults)  # type: ignore[arg-type]
 
 
 class FakeUserRepository:
@@ -243,6 +270,7 @@ def _make_use_case(
         default_model=ModelId(default_model),
         temperature=0.7,
         max_tokens=512,
+        max_relevant_memory=5,
     )
     return use_case, _Repos(users, conversations, messages, profiles, memory)
 
@@ -654,3 +682,97 @@ class TestPersonalization:
         request = provider.received_requests[0]
         assert self._BASE_INSTRUCTION_TEXT in request.system_prompt
         assert request.system_prompt.strip()
+
+
+class TestMemoryIntegration:
+    """
+    Sprint 5, задача S5-06 (ADR-5.4/5.6/5.11): `PromptContext.
+    confirmed_memory_facts` заполняется реальными данными
+    `MemoryRepository.find_relevant`, вызываемого напрямую внутри
+    транзакции 1 — не отдельным use case'ом, не отдельной транзакцией.
+
+    Как и `TestPersonalization`, использует реальный `PromptBuilder`
+    (`tests.support.prompt_engine.make_test_prompt_builder`) — предмет
+    проверки именно содержимое собранного `system_prompt` (ADR-5.11 DoD:
+    «интеграционный тест: execute() с реальным PromptBuilder и
+    подготовленными записями памяти — system_prompt содержит текст
+    факта»), а не факт вызова fake-объекта.
+    """
+
+    async def test_system_prompt_contains_confirmed_memory_fact(self) -> None:
+        users = FakeUserRepository()
+        user = await users.get_or_create_by_telegram_user_id(900)
+        memory = FakeMemoryRepository([_make_memory_record(user.id, text="Живёт в Берлине.")])
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, users=users, memory=memory)
+
+        await use_case.execute(_make_command(telegram_user_id=900))
+
+        request = provider.received_requests[0]
+        assert "Живёт в Берлине." in request.system_prompt
+
+    async def test_pending_and_expired_records_are_excluded(self) -> None:
+        """`find_relevant` — единственная точка правила «неподтверждённая/истёкшая память не входит в контекст»."""
+        users = FakeUserRepository()
+        user = await users.get_or_create_by_telegram_user_id(901)
+        pending = _make_memory_record(user.id, text="Черновой факт про кошку.", status=MemoryStatus.PENDING)
+        expired = _make_memory_record(
+            user.id, text="Просроченный факт про собаку.", expires_at=datetime.now(UTC) - timedelta(days=1)
+        )
+        memory = FakeMemoryRepository([pending, expired])
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, users=users, memory=memory)
+
+        await use_case.execute(_make_command(telegram_user_id=901))
+
+        request = provider.received_requests[0]
+        assert "Черновой факт про кошку." not in request.system_prompt
+        assert "Просроченный факт про собаку." not in request.system_prompt
+
+    async def test_empty_memory_still_produces_a_valid_prompt(self) -> None:
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider)
+
+        await use_case.execute(_make_command())
+
+        request = provider.received_requests[0]
+        assert request.system_prompt.strip()
+
+    async def test_find_relevant_is_called_within_the_existing_three_transactions(self) -> None:
+        """
+        AC-3: `find_relevant` вызывается внутри уже существующей
+        транзакции 1 — количество вызовов `self._repositories()` за одно
+        `execute()` не увеличилось относительно Sprint 4 (по-прежнему 3:
+        сохранение сообщения пользователя+профиль+память, загрузка
+        истории, сохранение сообщения ассистента).
+        """
+        users = FakeUserRepository()
+        user = await users.get_or_create_by_telegram_user_id(902)
+        memory = FakeMemoryRepository([_make_memory_record(user.id)])
+        inner_factory = _make_repositories_factory(
+            users, FakeConversationRepository(), FakeMessageRepository(), memory=memory
+        )
+
+        call_count = 0
+
+        @asynccontextmanager
+        async def _counting_factory() -> AsyncIterator[ConversationRepositories]:
+            nonlocal call_count
+            call_count += 1
+            async with inner_factory() as repositories:
+                yield repositories
+
+        provider = FakeLLMProvider(response=_make_response())
+        use_case = ProcessUserMessage(
+            llm_provider=provider,
+            repositories=_counting_factory,
+            prompt_builder=make_test_prompt_builder(),
+            default_model=ModelId("openai/gpt-4o-mini"),
+            temperature=0.7,
+            max_tokens=512,
+            max_relevant_memory=5,
+        )
+
+        await use_case.execute(_make_command(telegram_user_id=902))
+
+        assert call_count == 3

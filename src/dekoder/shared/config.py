@@ -108,6 +108,25 @@ class PromptSettings(BaseSettings):
     token_budget: int = Field(default=12000, gt=0)
 
 
+class MemorySettings(BaseSettings):
+    """
+    Настройки долговременной памяти (Sprint 5, задача S5-06, ADR-5.6).
+
+    `max_relevant_records` — `limit` для `MemoryRepository.find_relevant`,
+    вызываемого `ProcessUserMessage` (не хардкод-число внутри use case'а,
+    ADR-5.6 «Архитектурные заметки для Claude Code»). Значение по
+    умолчанию (5) — небольшое, чтобы не раздувать секцию 4 промпта:
+    объём текста дополнительно ограничивает `TokenBudgetPolicy` тир 4
+    (Sprint 4, ADR-4.5), это значение — только количество записей.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="MEMORY_", env_file=_ENV_FILES, env_file_encoding="utf-8", extra="ignore"
+    )
+
+    max_relevant_records: int = Field(default=5, gt=0)
+
+
 class Settings(BaseSettings):
     """
     Корневой объект конфигурации — группирует настройки по областям.
@@ -126,3 +145,4 @@ class Settings(BaseSettings):
     openrouter: OpenRouterSettings = Field(default_factory=OpenRouterSettings)  # type: ignore[arg-type]
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     prompt: PromptSettings = Field(default_factory=PromptSettings)
+    memory: MemorySettings = Field(default_factory=MemorySettings)

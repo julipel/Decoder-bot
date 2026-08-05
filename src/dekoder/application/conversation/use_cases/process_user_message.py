@@ -39,6 +39,20 @@ Prompt Engine (Sprint 4, задача S4-07, ADR-4.1/4.7/4.8): `_save_user_messa
 преобразований («тривиальный транслятор», ADR-4.1) — role-mapping и
 склейка секций промпта больше не происходят здесь.
 
+Долговременная память (Sprint 5, задача S5-06, ADR-5.4/5.6/5.11): тем же
+приёмом, что и `profile` — сразу после `repositories.profiles.
+get_active_profile(user.id)`, ещё внутри транзакции 1, `_save_user_message`
+читает `repositories.memory.find_relevant(user.id, limit=self.
+_max_relevant_memory)` и возвращает `(conversation_id, profile,
+memory_records)`. Отдельного use-case класса `FindRelevantMemory` нет
+(ADR-5.4) — порт вызывается напрямую. `execute()` передаёт
+`[r.text for r in memory_records]` в `PromptContext.confirmed_memory_facts`
+без переупорядочивания (`find_relevant` уже вернул `confidence DESC,
+created_at DESC`, ADR-5.6/5.11) — ни один файл `domain/prompt/`/
+`application/prompt/`/`infrastructure/prompts/` этой задачей не меняется,
+секция 4 промпта (Sprint 4) рендерит переданные факты без единого
+изменения на своей стороне.
+
 Транзакционные границы (backlog_2.md §9, «Транзакционные границы»,
 не изменены в Sprint 4, ADR-4.8):
 
@@ -63,10 +77,11 @@ Prompt Engine (Sprint 4, задача S4-07, ADR-4.1/4.7/4.8): `_save_user_messa
 build()` — синхронная чистая функция, вызывается между двумя короткими
 транзакциями, не удерживает ни одну из них открытой).
 
-Prompt Engine/память/RAG-контент сюда не входят (Этапы 7-8 заполнят
-всегда-пустые `PromptContext.confirmed_memory_facts`/`knowledge_fragments`
-— этот use case их пока не собирает). Команды `/new`/`/clear` не входят —
-отдельные use case (`StartNewConversation`/`ClearConversation`).
+RAG-контент сюда не входит (Этап 8 заполнит всегда-пустой
+`PromptContext.knowledge_fragments` — этот use case его пока не
+собирает); `confirmed_memory_facts` заполняется реальными данными с
+Sprint 5 (см. выше). Команды `/new`/`/clear` не входят — отдельные use
+case (`StartNewConversation`/`ClearConversation`).
 
 Задача S2-11 (финальная интеграция): `_build_message` гарантирует строго
 возрастающий `created_at` в рамках одного экземпляра (`_last_message_created_at`
@@ -80,6 +95,7 @@ Prompt Engine/память/RAG-контент сюда не входят (Эта
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -93,6 +109,7 @@ from dekoder.application.conversation.ports import ConversationRepositoriesFacto
 from dekoder.application.prompt.ports import PromptBuilder
 from dekoder.domain.conversation.entities import Message, MessageRole
 from dekoder.domain.conversation.value_objects import MessageText, ModelId
+from dekoder.domain.memory.entities import MemoryRecord
 from dekoder.domain.profile.entities import UserProfile
 from dekoder.domain.prompt.value_objects import PromptContext
 from dekoder.shared.errors import ValidationError
@@ -107,6 +124,7 @@ class ProcessUserMessage:
         default_model: ModelId,
         temperature: float,
         max_tokens: int,
+        max_relevant_memory: int,
     ) -> None:
         self._llm_provider = llm_provider
         self._repositories = repositories
@@ -114,6 +132,7 @@ class ProcessUserMessage:
         self._default_model = default_model
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._max_relevant_memory = max_relevant_memory
         # Найдено при задаче S2-11 (финальная интеграция): системные часы
         # некоторых сред (в т.ч. Windows) недостаточно точны, чтобы две
         # последовательные `datetime.now(UTC)` внутри одного `execute()`
@@ -135,10 +154,14 @@ class ProcessUserMessage:
         message_text = self._validate_message_text(command.message_text)
         model_id = command.model_id if command.model_id is not None else self._default_model
 
-        conversation_id, profile = await self._save_user_message(command.telegram_user_id, message_text)
+        conversation_id, profile, memory_records = await self._save_user_message(command.telegram_user_id, message_text)
         history = await self._load_history(conversation_id)
 
-        context = PromptContext(profile=profile, dialogue_history=history)
+        context = PromptContext(
+            profile=profile,
+            dialogue_history=history,
+            confirmed_memory_facts=[record.text for record in memory_records],
+        )
         build_result = self._prompt_builder.build(context)
 
         request = LLMRequest(
@@ -164,33 +187,40 @@ class ProcessUserMessage:
             prompt_template_versions=build_result.template_versions,
         )
 
-    async def _save_user_message(self, telegram_user_id: int, message_text: MessageText) -> tuple[UUID, UserProfile]:
+    async def _save_user_message(
+        self, telegram_user_id: int, message_text: MessageText
+    ) -> tuple[UUID, UserProfile, Sequence[MemoryRecord]]:
         """
         Транзакция 1 (backlog_2.md §9): получить/создать пользователя,
         получить/создать его активный диалог, прочитать его активный
         профиль (Sprint 3, задача S3-07, ADR-3.3 — тем же вызовом
-        `self._repositories()`, не отдельной транзакцией), сохранить
-        сообщение пользователя — всё поверх ОДНОЙ короткоживущей
-        транзакции, завершаемой commit'ом при выходе из `async with`
-        (или rollback'ом при любой ошибке, включая ошибку сохранения
-        сообщения — LLM в этом случае не вызывается, см. докстринг
-        модуля).
+        `self._repositories()`, не отдельной транзакцией), прочитать
+        релевантную память (Sprint 5, задача S5-06, ADR-5.4/5.6 — тем же
+        приёмом, сразу после чтения профиля), сохранить сообщение
+        пользователя — всё поверх ОДНОЙ короткоживущей транзакции,
+        завершаемой commit'ом при выходе из `async with` (или rollback'ом
+        при любой ошибке, включая ошибку сохранения сообщения — LLM в
+        этом случае не вызывается, см. докстринг модуля).
 
-        Возвращает `(conversation_id, profile)` (Sprint 4, задача S4-07,
-        ADR-4.8) — раньше (Sprint 2/3) возвращался уже вычисленный
-        `system_instruction: str` с fallback-логикой внутри этого use
-        case; теперь этот use case передаёт весь `UserProfile` как есть,
-        а построение системной инструкции (и fallback на пустую строку,
-        ADR-4.7) — ответственность `PromptBuilder`/секции 3 Prompt
-        Engine, не здесь.
+        Возвращает `(conversation_id, profile, memory_records)` (Sprint 4,
+        задача S4-07, ADR-4.8; Sprint 5, задача S5-06, ADR-5.6) — раньше
+        (Sprint 2/3) возвращался уже вычисленный `system_instruction: str`
+        с fallback-логикой внутри этого use case; теперь этот use case
+        передаёт весь `UserProfile` и уже отфильтрованные/отсортированные
+        `MemoryRecord` (`MemoryRepository.find_relevant`, единственная
+        точка бизнес-правила «неподтверждённая память не входит в
+        контекст», ADR-5.6) как есть — построение системной инструкции и
+        рендер секции 4 промпта — ответственность `PromptBuilder`, не
+        здесь.
         """
         async with self._repositories() as repositories:
             user = await repositories.users.get_or_create_by_telegram_user_id(telegram_user_id)
             conversation = await repositories.conversations.get_or_create_active(user.id)
             profile = await repositories.profiles.get_active_profile(user.id)
+            memory_records = await repositories.memory.find_relevant(user.id, limit=self._max_relevant_memory)
             user_message = self._build_message(conversation.id, MessageRole.USER, message_text.value)
             await repositories.messages.save(user_message)
-            return conversation.id, profile
+            return conversation.id, profile, memory_records
 
     async def _load_history(self, conversation_id: UUID) -> list[Message]:
         """

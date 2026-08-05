@@ -123,6 +123,7 @@ def _make_use_case(
         default_model=ModelId("openai/gpt-4o-mini"),
         temperature=0.7,
         max_tokens=512,
+        max_relevant_memory=5,
     )
 
 

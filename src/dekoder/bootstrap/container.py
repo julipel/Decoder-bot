@@ -55,6 +55,15 @@ estimate_size`, ADR-4.4) и бюджетом из `Settings.prompt.token_budget`
 через FastAPI lifespan. Аналогично с задачи S2-06 — `db_session_factory`
 (единая фабрика сессий, `bootstrap/database.py::init_database`) контейнер
 тоже получает уже созданной, не создаёт её сам.
+
+С задачи S5-06 (Sprint 5, ADR-5.6/5.11) `ProcessUserMessage` дополнительно
+получает `max_relevant_memory=settings.memory.max_relevant_records` —
+лимит `MemoryRepository.find_relevant`, вызываемого внутри транзакции 1
+(`repositories_factory` уже собирает `SQLAlchemyMemoryRepository` как
+поле `ConversationRepositories.memory`, задача S5-03/S5-04 — здесь
+ничего дополнительно не собирается, `repositories_factory` переиспользуется
+как есть). Ни `PromptBuilder`, ни `TokenBudgetPolicy` этой задачей не
+меняются.
 """
 
 from __future__ import annotations
@@ -125,6 +134,7 @@ def build_container(
         default_model=ModelId(settings.openrouter.default_model),
         temperature=settings.llm.temperature,
         max_tokens=settings.llm.max_tokens,
+        max_relevant_memory=settings.memory.max_relevant_records,
     )
     start_new_conversation = StartNewConversation(repositories=repositories_factory)
     clear_conversation = ClearConversation(repositories=repositories_factory)
