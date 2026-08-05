@@ -1,0 +1,71 @@
+[
+  {
+    "id": "base_instruction",
+    "name": "Базовая системная инструкция",
+    "version": "1.0.0",
+    "purpose": "base_instruction",
+    "text_file": "base_instruction.txt",
+    "required_variables": [],
+    "status": "active",
+    "updated_at": "2026-01-01T00:00:00+00:00"
+  },
+  {
+    "id": "safety_rules",
+    "name": "Правила безопасности",
+    "version": "1.0.0",
+    "purpose": "safety_rules",
+    "text_file": "safety_rules.txt",
+    "required_variables": [],
+    "status": "active",
+    "updated_at": "2026-01-01T00:00:00+00:00"
+  },
+  {
+    "id": "profile_parameters",
+    "name": "Параметры активного профиля",
+    "version": "1.0.0",
+    "purpose": "profile_parameters",
+    "text_file": "profile_parameters.txt",
+    "required_variables": [
+      "system_instruction",
+      "response_style",
+      "target_audience",
+      "formality_level",
+      "preferred_structure",
+      "forbidden_phrasing_line",
+      "response_length_line",
+      "additional_constraints_line"
+    ],
+    "status": "active",
+    "updated_at": "2026-01-01T00:00:00+00:00"
+  },
+  {
+    "id": "memory_placeholder",
+    "name": "Плейсхолдер долговременной памяти (Этап 7)",
+    "version": "1.0.0",
+    "purpose": "memory_placeholder",
+    "text_file": "memory_placeholder.txt",
+    "required_variables": ["memory_facts"],
+    "status": "active",
+    "updated_at": "2026-01-01T00:00:00+00:00"
+  },
+  {
+    "id": "knowledge_placeholder",
+    "name": "Плейсхолдер RAG-контекста (Этап 8)",
+    "version": "1.0.0",
+    "purpose": "knowledge_placeholder",
+    "text_file": "knowledge_placeholder.txt",
+    "required_variables": ["knowledge_fragments"],
+    "status": "active",
+    "updated_at": "2026-01-01T00:00:00+00:00"
+  },
+  {
+    "id": "response_format",
+    "name": "Требования к формату ответа",
+    "version": "1.0.0",
+    "purpose": "response_format",
+    "text_file": "response_format.txt",
+    "required_variables": [],
+    "status": "active",
+    "updated_at": "2026-01-01T00:00:00+00:00"
+  }
+]

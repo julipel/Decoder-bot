@@ -34,6 +34,16 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# Sprint 4, задача S4-04 (ADR-4.2): сид-шаблоны Prompt Engine — плоские
+# текстовые файлы + JSON-манифест, не Python-модули, поэтому `packages.
+# find` (требует `__init__.py`) их не подхватывает сам по себе; без этой
+# записи `pip install .` (используется в `Dockerfile`) собрал бы пакет
+# без `infrastructure/prompts/templates/*`, и `FileTemplateRepository`
+# падал бы при старте внутри контейнера, работая только при локальном
+# запуске из исходников.
+"dekoder.infrastructure.prompts" = ["templates/*.txt", "templates/*.json"]
+
 [tool.ruff]
 target-version = "py311"
 # 120, а не типичные 88/100: кодовая база документирована на русском
