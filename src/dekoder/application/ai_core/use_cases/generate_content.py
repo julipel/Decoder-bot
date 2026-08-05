@@ -11,15 +11,11 @@ from dekoder.application.ai_core.internal_services.execution_context_builder imp
     ExecutionContextBuilder,
 )
 from dekoder.application.ai_core.internal_services.knowledge_collector import KnowledgeCollector
-from dekoder.application.ai_core.internal_services.memory_collector import MemoryCollector
 from dekoder.application.ai_core.internal_services.model_selector import ModelSelector
 from dekoder.application.ai_core.internal_services.response_formatter import ResponseFormatter
 from dekoder.application.ai_core.internal_services.session_coordinator import SessionCoordinator
 from dekoder.application.ai_core.internal_services.skill_resolver import SkillResolver
 from dekoder.application.ai_core.responses import GenerationResult
-from dekoder.application.memory.use_cases.record_dialogue_message import (
-    RecordDialogueMessageUseCase,
-)
 from dekoder.application.model_gateway.ports import ModelGateway
 from dekoder.shared.utils.correlation import CorrelationIdGenerator
 
@@ -30,23 +26,19 @@ class GenerateContentUseCase:
         session_coordinator: SessionCoordinator,
         skill_resolver: SkillResolver,
         model_selector: ModelSelector,
-        memory_collector: MemoryCollector,
         knowledge_collector: KnowledgeCollector,
         execution_context_builder: ExecutionContextBuilder,
         model_gateway: ModelGateway,
         response_formatter: ResponseFormatter,
-        record_dialogue_message: RecordDialogueMessageUseCase,
         correlation_id_generator: CorrelationIdGenerator,
     ) -> None:
         self._session_coordinator = session_coordinator
         self._skill_resolver = skill_resolver
         self._model_selector = model_selector
-        self._memory_collector = memory_collector
         self._knowledge_collector = knowledge_collector
         self._execution_context_builder = execution_context_builder
         self._model_gateway = model_gateway
         self._response_formatter = response_formatter
-        self._record_dialogue_message = record_dialogue_message
         self._correlation_id_generator = correlation_id_generator
 
     def execute(self, command: GenerateContentCommand) -> GenerationResult:

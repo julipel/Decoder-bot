@@ -7,12 +7,6 @@ application/ai_core/). Тонкие проброс-методы, без собс
 
 from __future__ import annotations
 
-from dekoder.application.memory.queries import DialogueEntryView, MemoryFactView
-from dekoder.application.memory.use_cases.confirm_memory_fact import ConfirmMemoryFactUseCase
-from dekoder.application.memory.use_cases.forget_memory_fact import ForgetMemoryFactUseCase
-from dekoder.application.memory.use_cases.get_dialogue_history import GetDialogueHistoryUseCase
-from dekoder.application.memory.use_cases.get_memory_facts import GetMemoryFactsUseCase
-from dekoder.application.memory.use_cases.stage_memory_fact import StageMemoryFactUseCase
 from dekoder.application.model_catalog.queries import ModelOptionView
 from dekoder.application.model_catalog.use_cases.get_available_models import (
     GetAvailableModelsUseCase,
@@ -29,9 +23,7 @@ from dekoder.application.session.use_cases.start_generation_session import (
 from dekoder.application.session.use_cases.submit_user_input import SubmitUserInputUseCase
 from dekoder.application.skills.queries import SkillOptionView
 from dekoder.application.skills.use_cases.get_available_skills import GetAvailableSkillsUseCase
-from dekoder.domain.memory.fact import MemoryFact
-from dekoder.domain.memory.fact_draft import MemoryFactDraft
-from dekoder.shared.domain.identifiers import DraftId, SkillId, UserId
+from dekoder.shared.domain.identifiers import SkillId, UserId
 from dekoder.shared.domain.value_objects import ContentType, GenerationType
 
 
@@ -47,11 +39,6 @@ class RouteCommandUseCase:
         cancel_session: CancelSessionUseCase,
         reset_session: ResetSessionUseCase,
         get_available_models: GetAvailableModelsUseCase,
-        stage_memory_fact: StageMemoryFactUseCase,
-        confirm_memory_fact: ConfirmMemoryFactUseCase,
-        forget_memory_fact: ForgetMemoryFactUseCase,
-        get_memory_facts: GetMemoryFactsUseCase,
-        get_dialogue_history: GetDialogueHistoryUseCase,
     ) -> None:
         self._get_available_skills = get_available_skills
         self._start_generation_session = start_generation_session
@@ -62,11 +49,6 @@ class RouteCommandUseCase:
         self._cancel_session = cancel_session
         self._reset_session = reset_session
         self._get_available_models = get_available_models
-        self._stage_memory_fact = stage_memory_fact
-        self._confirm_memory_fact = confirm_memory_fact
-        self._forget_memory_fact = forget_memory_fact
-        self._get_memory_facts = get_memory_facts
-        self._get_dialogue_history = get_dialogue_history
 
     def start_session(self, user_id: UserId) -> GenerationSessionView:
         raise NotImplementedError
@@ -77,16 +59,4 @@ class RouteCommandUseCase:
         raise NotImplementedError
 
     def list_available_models(self, skill_id: SkillId, generation_type: GenerationType) -> list[ModelOptionView]:
-        raise NotImplementedError
-
-    def stage_fact(self, user_id: UserId, fact_text: str) -> MemoryFactDraft:
-        raise NotImplementedError
-
-    def confirm_fact(self, user_id: UserId, draft_id: DraftId) -> MemoryFact:
-        raise NotImplementedError
-
-    def list_facts(self, user_id: UserId) -> list[MemoryFactView]:
-        raise NotImplementedError
-
-    def list_dialogue_history(self, user_id: UserId, limit: int) -> list[DialogueEntryView]:
         raise NotImplementedError

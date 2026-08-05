@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from dekoder.domain.memory.dialogue_entry import DialogueEntry
-from dekoder.domain.memory.fact import MemoryFact
 from dekoder.domain.rag.fragment import KnowledgeFragment
 from dekoder.domain.session.session import GenerationSession
 from dekoder.domain.skills.skill import ContentSkill
@@ -31,6 +29,4 @@ class ExecutionContext:
     content_type: ContentType | None
     session: GenerationSession
     user_input: dict[str, str]
-    confirmed_facts: list[MemoryFact]
-    dialogue_history: list[DialogueEntry]
     knowledge_fragments: list[KnowledgeFragment] = field(default_factory=list)

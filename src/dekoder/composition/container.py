@@ -39,7 +39,6 @@ from dekoder.application.knowledge_base.use_cases.get_knowledge_cases import (
 from dekoder.application.knowledge_base.use_cases.get_knowledge_documents import (
     GetKnowledgeDocumentsUseCase,
 )
-from dekoder.application.memory.ports import MemoryRepository
 from dekoder.application.model_catalog.ports import ModelCatalogRepository
 from dekoder.application.model_gateway.ports import ModelGateway
 from dekoder.application.rag.ports import VectorRepository
@@ -62,7 +61,6 @@ class Container:
     content_skill_repository: ContentSkillRepository
     model_catalog_repository: ModelCatalogRepository
     session_repository: SessionRepository
-    memory_repository: MemoryRepository
     knowledge_repository: KnowledgeRepository
     file_storage: FileStoragePort
     vector_repository: VectorRepository
