@@ -1647,6 +1647,229 @@ Telegram
   не добавлена — Sprint 3 (S3-01…S3-09) полностью завершён, 427 тестов,
   ruff/ruff format/mypy проходят — см. §36 для подробностей.
 
+## Текущий спринт (обновление 3)
+
+**Спринт 4: Prompt Engine — централизованная сборка промпта — завершён
+(S4-01…S4-08).**
+
+Цель и полный состав спринта — внешняя архитектурная спецификация
+`backlog_4.md` (не входит в этот репозиторий) и §33 ниже. Прогресс по
+задачам:
+
+* [x] S4-01 — удаление мёртвого v2.0-скелета логирования
+  (`infrastructure/logging/{composite_logger,file_audit_logger,
+  stdout_technical_logger}.py`, `application/logging/ports.py::Logger`,
+  `domain/logging/entries.py::AuditRecord/TechnicalLogEvent/
+  SystemEventEntry`) и мёртвого v2.0-построителя промпта
+  (`application/prompt_engine/{ports.py,prompt_builder.py}`,
+  `application/ai_core/internal_services/prompt_assembler.py`) — оба
+  риска путаницы прямо для этого спринта (правдоподобно выглядящий
+  «второй логгер»/«второй построитель промпта» ровно в момент, когда
+  строятся настоящие, ADR-4.10, пересмотрено с пользователем — изначально
+  `prompt_engine` планировалось не трогать). Точечно зачищены dangling-
+  импорты `Logger`/`PromptAssembler`/`PromptBuilder` (мёртвых типов) в
+  семи файлах `application/admin/use_cases/*`, двух use case'ах
+  `application/ai_core/use_cases/{answer_knowledge_question,
+  generate_content}.py`, `composition/container.py`,
+  `interfaces/telegram/handlers.py` — убраны только импорт и ставший
+  недостижимым параметр конструктора, поведение файлов (`raise
+  NotImplementedError`) не изменилось. `application/ai_core/` как
+  директория сохранена — удалён только `prompt_assembler.py`. Остальной
+  v2.0-скелет (`admin`, `memory`, `rag`, `session`, `skills`,
+  `model_catalog`, `knowledge_base`, `model_gateway`,
+  `infrastructure/vector_storage`, `interfaces/`, `composition/` за
+  пределами точечной зачистки) не тронут — см. §36 для подробностей.
+* [x] S4-02 — доменный слой Prompt Engine
+  (`domain/prompt/{entities.py,value_objects.py,policies.py}`):
+  `PromptTemplate`(+`PromptTemplateStatus`, `ACTIVE`/`ARCHIVED`),
+  `PromptSection`, `PromptContext` (`dialogue_history: Sequence[Message]`
+  — переиспользует `domain.conversation.entities.Message`, последний
+  элемент по соглашению — текущий запрос пользователя, ADR-4.1;
+  `confirmed_memory_facts`/`knowledge_fragments: Sequence[str] = ()` —
+  плейсхолдеры Этапов 7/8, ADR-4.3, не новые доменные типы),
+  `PromptBuildResult` (`messages: Sequence[application.conversation.
+  dto.LLMMessage]` — намеренная, документированная узкая зависимость
+  domain→application: `LLMMessage` сам не имеет I/O-зависимостей, а
+  ADR-4.1 требует, чтобы `ProcessUserMessage` мог передать `result.
+  messages` в `LLMRequest` без преобразования). `TokenBudgetPolicy`
+  (`domain/prompt/policies.py`) реализована полностью в этой же задаче
+  (не только «форма», как изначально предполагал план S4-02, — алгоритм
+  тиров ADR-4.5 оказался достаточно простым и детерминированным, чтобы
+  не откладывать до S4-06 и не переписывать дважды): 6 тиров сокращения
+  строго по приоритету (секции 1/2/3/8 и последнее сообщение
+  неприкосновенны; секции 4/5 — no-op в Sprint 4, но реальные
+  исполняемые ветки; история обрезается с самого старого элемента).
+  Юнит-тесты — валидация сущностей + полная матрица тиров
+  `TokenBudgetPolicy` на синтетических данных (включая искусственно
+  большие «неприкосновенные» секции). Ноль I/O в `domain/prompt/` за
+  пределами документированной зависимости на `LLMMessage` — см. §36 для
+  подробностей.
+* [x] S4-03 — порты Prompt Engine (`application/prompt/ports.py`):
+  `PromptBuilder` (`Protocol`, синхронный `build(context) ->
+  PromptBuildResult`, без `@runtime_checkable` — единственная реализация
+  внедряется через конструктор, не через fake structural-typing тесты) и
+  `PromptTemplateRepository` (`Protocol`, `@runtime_checkable`, по стилю
+  `ProfileRepository`/`UserRepository`: `get(name) -> PromptTemplate`
+  (поднимает ошибку при отсутствии шаблона — конфигурационная ошибка, не
+  штатный `None`), `list_all() -> Sequence[PromptTemplate]`, оба
+  синхронные — файлы читаются один раз при построении репозитория, не на
+  каждый вызов). `PromptTemplateRepository` не встроен в
+  `ConversationRepositories`/`ConversationRepositoriesFactory` — вторая
+  фабрика репозиториев не появилась (подтверждено grep) — см. §36 для
+  подробностей.
+* [x] S4-04 — `infrastructure/prompts/file_template_repository.py::
+  FileTemplateRepository` + `infrastructure/prompts/templates/` (JSON-
+  манифест + 6 текстовых файлов): `base_instruction` (текст — буквально
+  прежняя `_DEFAULT_SYSTEM_PROMPT`, перенесённая из `bootstrap/
+  container.py`), `safety_rules`, `profile_parameters` (`string.Template`
+  с переменными под все описательные поля `UserProfile`, включая
+  предрендеренные опциональные строки `forbidden_phrasing_line`/
+  `response_length_line`/`additional_constraints_line` — пустые, если
+  соответствующее поле профиля не задано, без надуманных «пустых
+  меток»), `response_format` (формулировка совместима с чанкингом
+  `presentation/telegram/mapper.py::split_message` — не обещает доставку
+  одним сообщением), `memory_placeholder`/`knowledge_placeholder`
+  (комментарий про Этап 7/8 в тексте). Шаблоны читаются один раз в
+  `__init__` (`dict[str, PromptTemplate]`), ошибки — `InfrastructureError`
+  с понятным сообщением (не голый `OSError`/`KeyError`/
+  `JSONDecodeError`). Добавлен `[tool.setuptools.package-data]` в
+  `pyproject.toml` для `dekoder.infrastructure.prompts` — без этой
+  записи `pip install .` (используется `Dockerfile`) молча не включил бы
+  `templates/*.txt`/`manifest.json` в собранный wheel (это не
+  Python-пакет — в `templates/` нет `__init__.py`), приложение упало бы
+  внутри контейнера при первом обращении к `FileTemplateRepository`,
+  хотя работало бы штатно при локальном запуске из исходников —
+  проверено эмпирически (сборка wheel, инспекция содержимого архива).
+  Никакой новой зависимости-шаблонизатора не добавлено (`string.Template`,
+  stdlib) — см. §36 для подробностей.
+* [x] S4-05 — `application/prompt/services/prompt_builder.py::
+  DeterministicPromptBuilder` — единственная реализация `PromptBuilder`:
+  рендерит секции 1/2/8 без пользовательских переменных, секцию 3 из
+  ВСЕХ описательных полей активного профиля (не только
+  `system_instruction`, ADR-4.7 — `preferred_model` намеренно не
+  используется, выбор модели — Этап 10), секции 4/5 тем же кодовым
+  путём для пустых (Sprint 4) и будущих непустых (Этапы 7/8) входных
+  данных; строит `messages` из `context.dialogue_history` (role-mapping,
+  переехавший из `ProcessUserMessage`); вызывает `TokenBudgetPolicy.
+  enforce(...)` последним шагом. Проверка обязательных переменных шаблона
+  — приватный метод `_substitute` этого же сервиса (не отдельный
+  `PromptValidationService`, ADR-4.9) — поднимает `ApplicationError`,
+  называющую и шаблон, и недостающие переменные. Тесты: порядок секций
+  1,2,3,4,5,8 (не включает 6/7 — они в `messages`), пустые секции 4/5 не
+  протекают в `system_prompt`, полный рендер профиля на синтетическом
+  профиле с непустыми `forbidden_phrasing`/`response_length_hint`/
+  `additional_constraints`, явная ошибка на отсутствующую переменную,
+  детерминированность, `template_versions` заполнен — плюс интеграционный
+  прогон на реальном `FileTemplateRepository` для всех 4 сид-профилей
+  (`alembic/versions/27c4e9f2a103_seed_profile_catalog.py`), доказывающий,
+  что собранный `system_prompt` видимо различается по профилю (ADR-4.7
+  DoD) — см. §36 для подробностей.
+* [x] S4-06 — `application/prompt/services/token_budget.py::
+  estimate_size` — эвристика по количеству символов (не токенизатор),
+  изолированная в отдельной функции, задокументированная как MVP-
+  приближение (ADR-4.4). `shared/config.py::PromptSettings`
+  (`env_prefix="PROMPT_"`, `token_budget: int = 12000`) — бюджет из
+  `Settings`, не хардкод, по аналогии с `LLMSettings.temperature/
+  max_tokens`. Полный алгоритм тиров `TokenBudgetPolicy` уже был
+  реализован в S4-02 (ADR-4.5 явно помещает его в `domain/prompt/
+  policies.py`) — эта задача добавляет конкретную эвристику + бюджет из
+  `Settings`, которыми конфигурируется политика, и подтверждает (grep)
+  ровно одну точку вызова `enforce()` во всём проекте
+  (`application/prompt/services/prompt_builder.py`). Добавлен
+  end-to-end тест (`test_token_budget.py`), прогоняющий
+  `DeterministicPromptBuilder` с реальными сид-шаблонами и реальной
+  эвристикой (не синтетическим `len`, как в S4-02) — подтверждает
+  обрезание длинной истории по всему стеку Prompt Engine, а не только в
+  изолированном юните политики — см. §36 для подробностей.
+* [x] S4-07 — интеграция в `ProcessUserMessage`
+  (ADR-4.1/4.6/4.7/4.8): `_save_user_message` (транзакция 1) возвращает
+  `(conversation_id, profile: UserProfile)` вместо прежнего
+  `(conversation_id, system_instruction: str)`; `execute()` после
+  `_load_history` собирает `PromptContext(profile=profile,
+  dialogue_history=history)`, вызывает `self._prompt_builder.build(context)`
+  и строит `LLMRequest` практически без преобразований из
+  `PromptBuildResult` — ни цикла role-mapping, ни склейки строк промпта
+  в use case больше нет. Три короткие транзакции не реструктурированы
+  (по-прежнему ровно 3 вызова `self._repositories()`, `PromptBuilder.
+  build()` вызывается синхронно между транзакцией загрузки истории и
+  вызовом LLM, ни разу не внутри открытой сессии). Новое trailing-поле
+  `ProcessUserMessageResult.prompt_template_versions: Mapping[str, str]
+  = {}` (по аналогии с `usage: TokenUsage | None = None`) заполняется
+  из `PromptBuildResult.template_versions`; `presentation/telegram/
+  handlers/messages.py` логирует те же данные через `shared.logging.
+  get_logger` внутри уже установленного `bind_request_context`, до
+  `clear_request_context()` в `finally`. Удалены `_DEFAULT_SYSTEM_PROMPT`
+  и параметр конструктора `default_system_prompt` из `bootstrap/
+  container.py`/`ProcessUserMessage` — база текста уже мигрировала в
+  сид-шаблон `base_instruction` (S4-04) и рендерится безусловно как
+  секция 1. Перед удалением проверено покрытие Sprint 2/3: один тест
+  (`TestPersonalization::test_falls_back_to_default_system_prompt_when_
+  profile_instruction_is_blank`) напрямую проверял это поведение —
+  заменён узким эквивалентом
+  (`test_base_instruction_present_even_when_profile_instruction_is_blank`),
+  доказывающим тот же сценарий «пустой профиль» через новую, всегда
+  присутствующую секцию 1, а не через отдельный fallback (ADR-4.7 явно
+  фиксирует это как видимое, ожидаемое изменение поведения — собранный
+  `system_prompt` теперь длиннее и структурированнее, чем в Sprint 3,
+  даже когда доменные данные не изменились). `bootstrap/container.py`
+  собирает и внедряет `FileTemplateRepository`/`TokenBudgetPolicy`/
+  `DeterministicPromptBuilder`, бюджет — из `settings.prompt.
+  token_budget`. Все прямые конструкторы `ProcessUserMessage` в
+  существующих тестах (6 файлов: unit/integration/e2e) переведены на
+  новый параметр `prompt_builder` через новый
+  `tests/support/prompt_engine.py::make_test_prompt_builder()` (реальный
+  `DeterministicPromptBuilder` + реальные сид-шаблоны, просторный
+  бюджет по умолчанию — не fake); сравнения `request.system_prompt` по
+  точному равенству заменены на проверку вхождения — собранный промпт
+  теперь составная, более длинная строка, не `profile.system_instruction`
+  как есть (тот же явно задокументированный ADR-4.7 эффект) — см. §36
+  для подробностей.
+* [x] S4-08 — финальная интеграция и E2E-проверка Sprint 4: полный
+  аудит `bootstrap/container.py` (DI-сборка `FileTemplateRepository`/
+  `TokenBudgetPolicy`/`DeterministicPromptBuilder`, бюджет из `Settings`)
+  не выявил дефектов — вся сборка уже была корректно подключена в
+  S4-07. В отличие от S2-11/S3-09 (каждая нашла и исправила один-два
+  реальных интеграционных дефекта), полный аудит S4-08 не выявил ни
+  одного нового интеграционного дефекта, требующего исправления —
+  честный, а не подогнанный результат: Prompt Engine проектировался с
+  самого начала с учётом ограничений, обнаруженных в предыдущих
+  спринтах (единственная фабрика репозиториев, синхронный `PromptBuilder`
+  без I/O, `package-data` для сид-шаблонов уже добавлен в S4-04 и
+  проверен сборкой wheel заранее). Добавлен
+  `tests/e2e/test_prompt_engine_scenario.py` — два обязательных
+  сценария поверх РЕАЛЬНОГО `telegram.ext.Application` + временной
+  SQLite (тот же харнесс, что и `test_conversation_persistence_scenario.py`/
+  `test_profile_scenario.py`): (1) собранный системный промпт реально
+  содержит секцию активного профиля, не пуст; (2) диалог из 25
+  предыдущих сообщений с заведомо малым `TokenBudgetPolicy`-бюджетом
+  (1500 символов) — реально обрезается (LLM получает меньше 51
+  сообщений, последнее — текущий запрос, неприкосновенный), ответ
+  пользователю всё равно приходит нормально через `TextMessageHandler`.
+  Видимая разница промпта между двумя профилями через `/profile`
+  (переключение) уже доказана `tests/e2e/test_profile_scenario.py`
+  (обновлена в S4-07 под составной `system_prompt`) — не дублировалась
+  здесь. Собран реальный Docker-образ (`docker build`), запущен
+  контейнер (`docker run` с временным volume и переопределённым
+  `TELEGRAM_WEBHOOK_SECRET` для теста) — `/health` отвечает `200`;
+  `alembic upgrade head` → `downgrade -1` → `upgrade head` внутри
+  контейнера проходит без ошибок (сид-каталог восстанавливается: 4
+  профиля, ровно 1 `is_default`); отдельно подтверждено, что
+  `FileTemplateRepository()` внутри контейнера реально находит и
+  загружает все 6 сид-шаблонов (проверка `package-data`-фикса из S4-04
+  на настоящем собранном образе, не только на локальном wheel);
+  `build_container()` внутри контейнера собирает `ProcessUserMessage` с
+  `prompt_builder._budget == 12000` (значение из `.env`/`Settings`, не
+  хардкод). Полный набор тестов (496), Ruff, Ruff format, MyPy проходят.
+  `README.md` обновлён: диаграмма основного сценария показывает
+  `PromptContext -> PromptBuilder -> PromptBuildResult`, дерево
+  каталогов включает `domain/prompt`/`application/prompt`/
+  `infrastructure/prompts`, таблица переменных окружения — `PromptSettings`/
+  `PROMPT_TOKEN_BUDGET`, раздел «Тесты» — `test_prompt_engine_scenario.py`,
+  абзац про мёртвый v2.0-скелет — про удаление логгера/`prompt_engine` в
+  S4-01. Новая бизнес-функциональность не добавлена — Sprint 4
+  (S4-01…S4-08) полностью завершён, 496 тестов, ruff/ruff format/mypy
+  проходят — см. §36 для подробностей.
+
 ---
 
 # 33. План следующих спринтов
@@ -1768,7 +1991,13 @@ Docker, e2e-тест, README) и актуализации README/§32. Допо�
 (`StartNewConversation` use case), S2-08 (подключение команды `/new` к
 Telegram Adapter), S2-09 (`ClearConversation` use case), S2-10
 (подключение команды `/clear` к Telegram Adapter) и S2-11 (финальная
-интеграция и E2E-проверка) — Спринт 2 полностью завершён.
+интеграция и E2E-проверка) — Спринт 2 полностью завершён. Спринт 3
+(пользовательские профили, S3-01…S3-09) и Спринт 4 (Prompt Engine,
+S4-01…S4-08) документированы подробно в §32 («Текущий этап разработки»)
+— их отдельные записи не дублируются построчно в этот раздел тем же
+хронологическим стилем, что и Спринт 2; актуальное итоговое состояние
+после Sprint 4 — в подразделах «В разработке»/«Не реализовано»/
+«Известные расхождения»/«Следующее действие» ниже.
 
 ## Реализовано
 
@@ -2734,15 +2963,17 @@ e2e), ruff/ruff format/mypy проходят.
 
 ## В разработке
 
-Ничего — Sprint 3 полностью завершён (S3-01…S3-09). Следующий шаг —
-Этап 6, Prompt Engine (§33).
+Ничего — Sprint 4 полностью завершён (S4-01…S4-08). Следующий шаг —
+Этап 7, долговременная память (§33).
 
 ## Не реализовано
 
 * персональные (не каталожные) профили пользователя, `CreateProfile`/
-  `UpdateProfile`/`DeactivateProfile`, Prompt Engine, память, RAG,
-  каталог моделей, административные функции — по плану, следующие
-  спринты/этапы (§33).
+  `UpdateProfile`/`DeactivateProfile`, память, RAG, каталог моделей,
+  административные функции — по плану, следующие спринты/этапы (§33).
+  Prompt Engine (Этап 6) реализован в Sprint 4 — секции 4/5 (память/RAG)
+  уже структурно готовы (`domain/prompt/value_objects.py`), но всегда
+  пусты до соответствующих спринтов.
 
 ## Известные расхождения
 
@@ -2778,6 +3009,19 @@ ports.py::LLMProvider` (этот срез, async, только текст, ре�
 Реконсиляция (удалить/переименовать одно из деревьев, объединить порты)
 — решение, которое нужно принимать явно и отдельно, не молча, когда
 до него дойдёт очередь (см. §31).
+
+**Обновление Sprint 4 (S4-01, ADR-4.10):** два узла старого дерева,
+релевантных Sprint 4, удалены — `infrastructure/logging/`/
+`application/logging/*`/`domain/logging/*` (не используемый реальными
+composition root'ами v2.0-логгер — прямой риск путаницы для требования
+«версия шаблона в метаданных ответа») и `application/prompt_engine/`/
+`application/ai_core/internal_services/prompt_assembler.py` (нерабочий
+«второй построитель промпта» ровно в момент, когда строился настоящий
+Prompt Engine). Остальной v2.0-скелет (`admin`, `memory`, `rag`,
+`session`, `skills`, `model_catalog`, `knowledge_base`, `model_gateway`,
+`infrastructure/vector_storage`, `interfaces/`, `composition/`) не
+тронут — признан нежизнеспособным той же логикой, но его зачистка
+осознанно вынесена в отдельную будущую задачу (ADR-4.10), не в Sprint 4.
 
 ## Последнее принятое решение
 
@@ -2954,20 +3198,33 @@ composition root, продиктованное новой зависимость
 
 ## Следующее действие
 
-S3-09 завершена — Sprint 3 (S3-01…S3-09) полностью завершён и готов к
-финальной приёмке. Аудит composition root/DI/транзакций/миграций для
-профильного среза подтвердил, что все компоненты S3-01…S3-08 уже были
-корректно собраны и подключены (единственная фабрика репозиториев,
-активный профиль читается внутри транзакции 1 `ProcessUserMessage`,
-presentation-слой без SQLAlchemy); найден и точечно исправлен один
-реальный интеграционный дефект — `Dockerfile` не копировал
-`alembic.ini`/`alembic/` в образ, поэтому `alembic upgrade head` внутри
-собранного контейнера падал (`FAILED: No 'script_location' key found in
-configuration»), хотя ни один существующий тест этого не ловил (все
-интеграционные/e2e-тесты запускают `alembic` с хоста, из корня
-репозитория) — подробности см. выше, запись S3-09. Добавлен
-`tests/e2e/test_profile_scenario.py` (5 тестов, пять обязательных
-сценариев backlog_3_tasks.md S3-09). `README.md` обновлён под
-фактическое состояние Sprint 3. Новая бизнес-функциональность не
-добавлялась в этой задаче (только исправление/тесты/документация).
-Следующий шаг — Этап 6, Prompt Engine (§33), не начат.
+S4-08 завершена — Sprint 4 (S4-01…S4-08) полностью завершён. Полный
+аудит `bootstrap/container.py` (DI-сборка `FileTemplateRepository`/
+`TokenBudgetPolicy`/`DeterministicPromptBuilder`, бюджет из
+`Settings.prompt.token_budget`) не выявил ни одного дефекта — вся
+сборка уже была корректно подключена задачей S4-07; в отличие от S2-11/
+S3-09 (каждая нашла и точечно исправила один-два реальных
+интеграционных дефекта), S4-08 не нашла новых дефектов, требующих
+исправления — честный результат аудита, не подогнанный под ожидание
+«обязательно что-то найти». Эмпирически подтверждено: собранный
+системный промпт реально содержит секцию активного профиля и не пуст
+(`tests/e2e/test_prompt_engine_scenario.py`, дополняет уже существующую
+проверку видимой разницы между двумя профилями в
+`tests/e2e/test_profile_scenario.py`); искусственно длинный диалог (25
+сообщений) с заведомо малым бюджетом `TokenBudgetPolicy` (1500 символов)
+реально обрезается на полном вертикальном срезе (Telegram-хендлер →
+`ProcessUserMessage` → `PromptBuilder` → `LLMProvider`), последнее
+сообщение (текущий запрос) сохранено, ответ пользователю приходит
+нормально; реальный Docker-образ собран и запущен, `/health` отвечает
+`200`, `alembic upgrade head` → `downgrade -1` → `upgrade head` внутри
+контейнера проходит без ошибок (сид-каталог восстанавливается: 4
+профиля, 1 `is_default`), `FileTemplateRepository()` внутри контейнера
+реально находит и загружает все 6 сид-шаблонов (проверка
+`package-data`-фикса из S4-04 на настоящем образе, не только на
+локальном wheel), `build_container()` внутри контейнера собирает
+`ProcessUserMessage` с бюджетом `12000` из `.env`/`Settings`, не
+хардкод. 496 тестов, ruff/ruff format/mypy проходят. `README.md`
+обновлён под фактическое состояние Sprint 4 (диаграмма сценария,
+дерево каталогов, переменные окружения, тесты, абзац про мёртвый
+v2.0-скелет). Следующий шаг — Этап 7, долговременная память (§33), не
+начат.

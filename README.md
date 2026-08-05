@@ -7,15 +7,15 @@ Prompt Engine, база знаний с RAG, память диалога, адм
 документы, а не описание того, что уже запускается.
 
 **Что реально работает сейчас** — Sprint 1 (Walking Skeleton), Sprint 2
-(постоянное хранилище, диалоги, история) и Sprint 3 (пользовательские
-профили) полностью завершены:
+(постоянное хранилище, диалоги, история), Sprint 3 (пользовательские
+профили) и Sprint 4 (Prompt Engine — централизованная сборка промпта)
+полностью завершены:
 
 ```text
-Telegram → ProcessUserMessage → ProfileRepository (активный профиль) → LLMProvider → OpenRouterLLMAdapter → ответ
-                 │
-                 ├── User/Conversation/Message сохраняются в SQLite
-                 └── история активного диалога передаётся в LLM целиком,
-                     системная инструкция берётся из активного профиля пользователя
+Telegram → ProcessUserMessage → (профиль + история) → PromptContext → PromptBuilder → PromptBuildResult
+                 │                                                                          │
+                 ├── User/Conversation/Message сохраняются в SQLite                          │
+                 └──────────────────────────────────────────────── LLMProvider → OpenRouterLLMAdapter → ответ
 
 Telegram /new     → StartNewConversation → закрывает текущий диалог, создаёт новый
 Telegram /clear   → ClearConversation    → удаляет историю, диалог остаётся активным
@@ -25,22 +25,33 @@ Telegram /profile → ListProfiles/GetActiveProfile/SelectProfile → выбор
 Пользователь пишет боту в Telegram → сообщение уходит в use case
 `ProcessUserMessage` → пользователь и его активный диалог находятся или
 создаются в SQLite, читается его активный профиль (`ProfileRepository`),
-сообщение пользователя сохраняется → история диалога читается из базы и
-передаётся в LLM через порт `LLMProvider`, системная инструкция —
-`system_instruction` активного профиля пользователя (не общая константа
-для всех) → адаптер `OpenRouterLLMAdapter` обращается к OpenRouter →
-ответ модели сохраняется как сообщение ассистента и возвращается
-пользователю в Telegram. Команда `/new` закрывает текущий диалог и
-начинает новый (старая история не удаляется, просто перестаёт быть
-активной); `/clear` удаляет сообщения текущего диалога, не закрывая и не
-пересоздавая сам диалог; `/profile` показывает каталог из 4
-предустановленных профилей с отметкой текущего активного и позволяет
-переключиться через inline-кнопку — переключение влияет только на
-будущие сообщения, не переписывает уже сохранённую историю, и не влияет
-на других пользователей. Персональных (не каталожных) профилей,
-`CreateProfile`/`UpdateProfile`/`DeactivateProfile`, Prompt Engine,
+сообщение пользователя сохраняется → история диалога читается из базы →
+`ProcessUserMessage` собирает `PromptContext` (профиль + история) и
+передаёт его `PromptBuilder` (Prompt Engine, Sprint 4) — тот детерминированно
+собирает системную инструкцию из 8 фиксированных секций (базовая
+инструкция, правила безопасности, параметры активного профиля — теперь
+используются ВСЕ описательные поля профиля, не только
+`system_instruction`, — пустые плейсхолдеры памяти/RAG, история диалога,
+текущий запрос, требования к формату ответа), исключая пустые секции и
+ограничивая суммарный объём эвристическим `TokenBudgetPolicy` (обрезает
+старую историю первой, если она есть; текущий запрос и системные секции
+неприкосновенны) → адаптер `OpenRouterLLMAdapter` обращается к
+OpenRouter → ответ модели сохраняется как сообщение ассистента и
+возвращается пользователю в Telegram; версии использованных шаблонов
+промпта доступны в `ProcessUserMessageResult.prompt_template_versions`.
+Команда `/new` закрывает текущий диалог и начинает новый (старая история
+не удаляется, просто перестаёт быть активной); `/clear` удаляет
+сообщения текущего диалога, не закрывая и не пересоздавая сам диалог;
+`/profile` показывает каталог из 4 предустановленных профилей с
+отметкой текущего активного и позволяет переключиться через
+inline-кнопку — переключение влияет только на будущие сообщения, не
+переписывает уже сохранённую историю, и не влияет на других
+пользователей. Персональных (не каталожных) профилей,
+`CreateProfile`/`UpdateProfile`/`DeactivateProfile`, долговременной
 памяти, RAG и выбора модели ещё нет — они добавляются по следующим
-спринтам/этапам (`claude.md`, §33).
+спринтам/этапам (`claude.md`, §33); секции 4 (память) и 5 (RAG) Prompt
+Engine уже структурно готовы, но всегда пусты до соответствующих
+спринтов.
 
 ## Архитектура
 
@@ -60,24 +71,32 @@ src/dekoder/
 ├── domain/
 │   ├── conversation/                # MessageText/ModelId/ProviderId, MessageRole, Message, Conversation (Aggregate Root)
 │   ├── user/                        # User
-│   └── profile/                     # UserProfile, ProfileStatus (Sprint 3, S3-02)
+│   ├── profile/                     # UserProfile, ProfileStatus (Sprint 3, S3-02)
+│   └── prompt/                      # PromptTemplate/PromptTemplateStatus, PromptSection/PromptContext/
+│                                     #   PromptBuildResult, TokenBudgetPolicy (Sprint 4, S4-02)
 ├── application/
 │   ├── conversation/                # DTO, LLMProvider/ConversationRepository/MessageRepository/ConversationRepositories (порты),
 │   │                                 #   ProcessUserMessage, StartNewConversation, ClearConversation
 │   ├── user/                        # UserRepository (порт)
-│   └── profile/                     # ProfileRepository (порт), DTO, ListProfiles/GetActiveProfile/SelectProfile (S3-05/S3-06)
+│   ├── profile/                     # ProfileRepository (порт), DTO, ListProfiles/GetActiveProfile/SelectProfile (S3-05/S3-06)
+│   └── prompt/                      # PromptBuilder/PromptTemplateRepository (порты, S4-03);
+│                                     #   services/prompt_builder.py::DeterministicPromptBuilder (S4-05),
+│                                     #   services/token_budget.py::estimate_size (S4-06)
 ├── infrastructure/
 │   ├── llm/                         # OpenRouterLLMAdapter
-│   └── persistence/                 # base.py/engine.py/session.py (SQLAlchemy async, S2-01) +
-│                                     #   user_orm.py/conversation_orm.py/message_orm.py + mappers.py (S2-02) +
-│                                     #   user_repository.py/conversation_repository.py/message_repository.py (S2-03..S2-05) +
-│                                     #   profile_orm.py/user_active_profile_orm.py/profile_repository.py (Sprint 3, S3-03/S3-05)
+│   ├── persistence/                 # base.py/engine.py/session.py (SQLAlchemy async, S2-01) +
+│   │                                 #   user_orm.py/conversation_orm.py/message_orm.py + mappers.py (S2-02) +
+│   │                                 #   user_repository.py/conversation_repository.py/message_repository.py (S2-03..S2-05) +
+│   │                                 #   profile_orm.py/user_active_profile_orm.py/profile_repository.py (Sprint 3, S3-03/S3-05)
+│   └── prompts/                     # file_template_repository.py::FileTemplateRepository +
+│                                     #   templates/{manifest.json, *.txt} — 6 сид-шаблонов (Sprint 4, S4-04)
 ├── presentation/telegram/           # /start, /new, /clear, /profile, обработчик текстовых сообщений, mapper.py, bot.py
 ├── bootstrap/                       # container.py, application.py, database.py, repositories.py — единственное место сборки
 └── shared/                          # config.py, logging.py, errors.py
 
 alembic/                             # users/conversations/messages (S2-02) + profiles/user_active_profiles (S3-03) +
-                                      #   сид-каталог из 4 профилей (S3-04)
+                                      #   сид-каталог из 4 профилей (S3-04) — Sprint 4 не добавляет миграций
+                                      #   (шаблоны промпта — файловое хранилище, не БД, ADR-4.2)
 ```
 
 > В репозитории также существует более крупное, отдельное от этого
@@ -93,7 +112,19 @@ alembic/                             # users/conversations/messages (S2-02) + pr
 > отложенное решение, подробности в `claude.md`, §36. Мёртвый скелет
 > `domain/profile/`/`application/profile/*` из этого дерева был удалён в
 > Sprint 3 (задача S3-01) — он конфликтовал по имени/форме с реальным
-> `UserProfile`, который этот срез теперь использует.
+> `UserProfile`, который этот срез теперь использует. Мёртвый
+> `infrastructure/logging/`/`application/logging/*`/`domain/logging/*`
+> (v2.0-логгер, не используемый реальными composition root'ами — они
+> используют `shared/logging.py`) и мёртвый `application/prompt_engine/`/
+> `application/ai_core/internal_services/prompt_assembler.py` (второй,
+> нерабочий «построитель промпта») были удалены в Sprint 4 (задача
+> S4-01) — оба создавали прямой риск путаницы именно в момент, когда
+> строился настоящий Prompt Engine (`domain/prompt/`, `application/
+> prompt/`, `infrastructure/prompts/`). Остальной v2.0-скелет (`admin`,
+> `memory`, `rag`, `session`, `skills`, `model_catalog`, `knowledge_base`,
+> `model_gateway`, `infrastructure/vector_storage`, `interfaces/`,
+> `composition/`) по-прежнему не тронут — признан нежизнеспособным, но
+> его зачистка вынесена в отдельную будущую задачу (ADR-4.10).
 
 ## Технологический стек
 
@@ -104,6 +135,10 @@ pydantic / pydantic-settings, structlog. С Sprint 2 подключены и
 `messages` (ORM-модели, репозитории, единственная миграция схемы
 `alembic/versions/`), с `PRAGMA foreign_keys=ON` для каждого SQLite-
 соединения (`infrastructure/persistence/engine.py`).
+Prompt Engine (Sprint 4) не добавляет ни одной новой зависимости —
+подстановка переменных в шаблоны промпта использует только стандартную
+библиотеку (`string.Template`), не Jinja2 и не другой шаблонизатор;
+шаблоны хранятся в текстовых файлах за портом, не в БД (ADR-4.2).
 Qdrant и остальной стек из `docs/versions/01_requirements_analysis_v2.0.md`
 по-прежнему относятся к будущим спринтам и в этом срезе не подключены.
 
@@ -238,6 +273,7 @@ upgrade head` перед первым стартом приложения — с
 | `LLMSettings` | `LLM_` | — | `LLM_TIMEOUT`, `LLM_MAX_TOKENS`, `LLM_TEMPERATURE` |
 | `OpenRouterSettings` | `OPENROUTER_` | `OPENROUTER_API_KEY` | `OPENROUTER_BASE_URL`, `OPENROUTER_DEFAULT_MODEL` |
 | `DatabaseSettings` | `DATABASE_` | — | `DATABASE_URL` |
+| `PromptSettings` | `PROMPT_` | — | `PROMPT_TOKEN_BUDGET` (эвристический бюджет `TokenBudgetPolicy`, ADR-4.4) |
 
 Отсутствие обязательного секрета в окружении останавливает процесс при
 создании `Settings()` (fail-fast), а не на первом запросе.
@@ -281,7 +317,11 @@ tests/
                      # test_profile_scenario.py (Sprint 3, S3-09) — дефолтный профиль без выбора,
                      #   переключение влияет только на будущие сообщения, изоляция пользователей,
                      #   отказ на неизвестный profile_id, полный цикл /profile через реальный
-                     #   CallbackQueryHandler — поверх РЕАЛЬНОЙ временной SQLite
+                     #   CallbackQueryHandler — поверх РЕАЛЬНОЙ временной SQLite;
+                     # test_prompt_engine_scenario.py (Sprint 4, S4-08) — собранный системный промпт
+                     #   реально содержит секцию активного профиля; искусственно длинный диалог
+                     #   реально обрезается TokenBudgetPolicy, ответ пользователю всё равно приходит
+                     #   — поверх РЕАЛЬНОЙ временной SQLite и реального telegram.ext.Application
 ```
 
 Ни один тест не обращается к реальному Telegram API или реальному
