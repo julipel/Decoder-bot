@@ -177,6 +177,11 @@ class KnowledgeSettings(BaseSettings):
     chunk_size: int = Field(default=1500, gt=0)
     chunk_overlap: int = Field(default=200, ge=0)
     search_limit: int = Field(default=5, gt=0)
+    # Относительный путь, тем же приёмом, что и `DatabaseSettings.url`
+    # (не зависит от абсолютного пути конкретной машины); каталог
+    # создаётся автоматически `LocalDocumentStorageAdapter` при первой
+    # записи, не здесь.
+    storage_path: str = "./data/knowledge_documents"
     min_relevance_score: float = Field(default=0.5, ge=0.0, le=1.0)
 
 

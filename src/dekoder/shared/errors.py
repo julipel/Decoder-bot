@@ -7,7 +7,8 @@
     ├── ApplicationError
     └── InfrastructureError
         └── ExternalServiceError
-            └── LLMProviderError
+            ├── LLMProviderError
+            └── EmbeddingProviderError
 
 Подклассы добавляются только при появлении конкретного сценария
 использования — не создавайте их заранее (например, отдельный класс на
@@ -87,3 +88,9 @@ class LLMProviderError(ExternalServiceError):
     """Ошибка при обращении к провайдеру генеративной модели."""
 
     code = "LLM_PROVIDER_ERROR"
+
+
+class EmbeddingProviderError(ExternalServiceError):
+    """Ошибка при обращении к провайдеру эмбеддингов (Sprint 6, ADR-6.3) — не `LLMProviderError`, другой сервис."""
+
+    code = "EMBEDDING_PROVIDER_ERROR"
