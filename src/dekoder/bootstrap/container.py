@@ -74,6 +74,17 @@ estimate_size`, ADR-4.4) и бюджетом из `Settings.prompt.token_budget`
 `RejectMemoryRecordUseCase` НЕ собираются здесь — нет вызывающего
 Telegram-сценария в Sprint 5 (ADR-5.9), контейнер не создаёт объекты,
 которые некому передать.
+
+С задачи S6-08 (Sprint 6, ADR-6.4) контейнер также собирает
+`SemanticSearchService` (`application/knowledge/services/
+semantic_search_service.py`) — композицию `OpenAiEmbeddingProvider`
+(поверх отдельного `openai_http_client`, независимого от
+`http_client`/OpenRouter, ADR-6.3) и `QdrantVectorRepository` (поверх
+`qdrant_client`) — и внедряет её в `ProcessUserMessage` как
+`knowledge_search`, параллельно `llm_provider`. `IndexKnowledgeDocumentUseCase`/
+`DeleteKnowledgeDocumentUseCase` здесь НЕ собираются — индексация не
+часть диалогового контейнера (ADR-6.4/ADR-6.6), её собирает отдельно
+`scripts/index_document.py` (задача S6-09), не `api`/`telegram-bot`.
 """
 
 from __future__ import annotations
@@ -81,11 +92,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import httpx
+from qdrant_client import AsyncQdrantClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from dekoder.application.conversation.use_cases.clear_conversation import ClearConversation
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.application.conversation.use_cases.start_new_conversation import StartNewConversation
+from dekoder.application.knowledge.services.semantic_search_service import SemanticSearchService
 from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.application.memory.use_cases.delete_memory_record import DeleteMemoryRecordUseCase
 from dekoder.application.memory.use_cases.list_memory_records import ListMemoryRecordsUseCase
@@ -97,8 +110,10 @@ from dekoder.application.prompt.services.token_budget import estimate_size
 from dekoder.bootstrap.repositories import build_conversation_repositories_factory
 from dekoder.domain.conversation.value_objects import ModelId
 from dekoder.domain.prompt.policies import TokenBudgetPolicy
+from dekoder.infrastructure.embeddings.openai_embedding_provider import OpenAiEmbeddingProvider
 from dekoder.infrastructure.llm.openrouter_adapter import OpenRouterLLMAdapter
 from dekoder.infrastructure.prompts.file_template_repository import FileTemplateRepository
+from dekoder.infrastructure.qdrant.vector_repository import QdrantVectorRepository
 from dekoder.shared.config import Settings
 
 
@@ -119,6 +134,8 @@ class ApplicationContainer:
 def build_container(
     settings: Settings,
     http_client: httpx.AsyncClient,
+    openai_http_client: httpx.AsyncClient,
+    qdrant_client: AsyncQdrantClient,
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> ApplicationContainer:
     """
@@ -128,7 +145,10 @@ def build_container(
     (`bootstrap/database.py::init_database`). `StartNewConversation`
     (задача S2-08) и `ClearConversation` (задача S2-10) переиспользуют ту
     же `repositories_factory`, что и `ProcessUserMessage` — не отдельную
-    фабрику.
+    фабрику. `openai_http_client`/`qdrant_client` (задача S6-08) — уже
+    готовые клиенты для `SemanticSearchService`, тем же приёмом, что и
+    `http_client` для `OpenRouterLLMAdapter`: контейнер не отвечает за их
+    подключение/закрытие.
     """
     llm_provider = OpenRouterLLMAdapter(
         client=http_client,
@@ -143,10 +163,26 @@ def build_container(
         token_budget_policy=token_budget_policy,
         budget=settings.prompt.token_budget,
     )
+    embedding_provider = OpenAiEmbeddingProvider(
+        client=openai_http_client,
+        api_key=settings.openai.api_key.get_secret_value(),
+        model=settings.openai.embedding_model,
+    )
+    vector_repository = QdrantVectorRepository(
+        client=qdrant_client,
+        collection_name=settings.qdrant.collection_name,
+    )
+    knowledge_search = SemanticSearchService(
+        embedding_provider=embedding_provider,
+        vector_repository=vector_repository,
+        limit=settings.knowledge.search_limit,
+        min_relevance_score=settings.knowledge.min_relevance_score,
+    )
     process_user_message = ProcessUserMessage(
         llm_provider=llm_provider,
         repositories=repositories_factory,
         prompt_builder=prompt_builder,
+        knowledge_search=knowledge_search,
         default_model=ModelId(settings.openrouter.default_model),
         temperature=settings.llm.temperature,
         max_tokens=settings.llm.max_tokens,

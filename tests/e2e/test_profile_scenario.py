@@ -43,6 +43,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler
+from tests.support.fake_knowledge_repositories import FakeKnowledgeSearchService
 from tests.support.prompt_engine import make_test_prompt_builder
 
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
@@ -126,6 +127,7 @@ def _make_process_user_message(
         llm_provider=provider,
         repositories=repositories_factory,
         prompt_builder=make_test_prompt_builder(),
+        knowledge_search=FakeKnowledgeSearchService(),
         default_model=ModelId("openai/gpt-4o-mini"),
         temperature=0.7,
         max_tokens=512,

@@ -38,6 +38,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from telegram import Update
 from telegram.ext import Application, MessageHandler
+from tests.support.fake_knowledge_repositories import FakeKnowledgeSearchService
 
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
 from dekoder.application.conversation.ports import ConversationRepositoriesFactory
@@ -111,6 +112,7 @@ def _make_process_user_message(
         llm_provider=provider,
         repositories=repositories_factory,
         prompt_builder=prompt_builder,
+        knowledge_search=FakeKnowledgeSearchService(),
         default_model=ModelId("openai/gpt-4o-mini"),
         temperature=0.7,
         max_tokens=512,

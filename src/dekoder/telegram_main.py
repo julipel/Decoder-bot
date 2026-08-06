@@ -55,6 +55,14 @@ register_memory_handlers`) регистрируются тоже внутри `p
 после обработчиков `/profile`, поверх уже собранных
 `container.create_memory_record`/`container.list_memory_records`/
 `container.delete_memory_record`.
+
+С задачи S6-08 (Sprint 6) `post_init` дополнительно открывает второй
+`httpx.AsyncClient` (для `OpenAiEmbeddingProvider`, ADR-6.3) и
+`AsyncQdrantClient` до регистрации обработчиков; оба закрываются в
+`_shutdown`. В отличие от `init_database`, `ensure_collection` НЕ
+fail-fast (см. `bootstrap/application.py` — тот же принцип для обоих
+процессов): RAG — дополнение к диалогу, недоступность Qdrant при старте
+логируется, не останавливает polling.
 """
 
 from __future__ import annotations
@@ -65,6 +73,7 @@ from telegram.ext import Application
 
 from dekoder.bootstrap.container import build_container
 from dekoder.bootstrap.database import dispose_database, init_database
+from dekoder.infrastructure.qdrant.client import build_qdrant_client, ensure_collection
 from dekoder.presentation.telegram.bot import (
     build_telegram_application,
     register_clear_conversation_handler,
@@ -74,6 +83,7 @@ from dekoder.presentation.telegram.bot import (
     register_profile_handlers,
 )
 from dekoder.shared.config import Settings
+from dekoder.shared.errors import InfrastructureError
 from dekoder.shared.logging import configure_logging, get_logger
 
 _logger = get_logger(__name__)
@@ -90,6 +100,12 @@ def main() -> None:
         base_url=settings.openrouter.base_url,
         timeout=settings.llm.timeout,
     )
+    # timeout переиспользует LLMSettings.timeout — см. bootstrap/application.py.
+    openai_http_client = httpx.AsyncClient(
+        base_url=settings.openai.base_url,
+        timeout=settings.llm.timeout,
+    )
+    qdrant_client = build_qdrant_client(settings.qdrant)
     application = build_telegram_application(bot_token=settings.telegram.bot_token.get_secret_value())
 
     # Заполняется внутри `_startup`, читается внутри `_shutdown` — оба
@@ -104,8 +120,13 @@ def main() -> None:
         _logger.info("telegram_polling_started")
         db_engine, db_session_factory = await init_database(settings)
         db_engine_holder["engine"] = db_engine
+        try:
+            await ensure_collection(qdrant_client, settings.qdrant)
+        except InfrastructureError as error:
+            # Не fail-fast — см. докстринг модуля/bootstrap/application.py.
+            _logger.error("qdrant_collection_unavailable_at_startup", error=str(error))
 
-        container = build_container(settings, http_client, db_session_factory)
+        container = build_container(settings, http_client, openai_http_client, qdrant_client, db_session_factory)
         register_message_handler(app, container.process_user_message)
         register_new_conversation_handler(app, container.start_new_conversation)
         register_clear_conversation_handler(app, container.clear_conversation)
@@ -123,6 +144,8 @@ def main() -> None:
         # реально закрываются.
         _logger.info("telegram_polling_stopping")
         await http_client.aclose()
+        await openai_http_client.aclose()
+        await qdrant_client.close()
         db_engine = db_engine_holder.get("engine")
         if db_engine is not None:
             await dispose_database(db_engine)

@@ -77,11 +77,31 @@ created_at DESC`, ADR-5.6/5.11) — ни один файл `domain/prompt/`/
 build()` — синхронная чистая функция, вызывается между двумя короткими
 транзакциями, не удерживает ни одну из них открытой).
 
-RAG-контент сюда не входит (Этап 8 заполнит всегда-пустой
-`PromptContext.knowledge_fragments` — этот use case его пока не
-собирает); `confirmed_memory_facts` заполняется реальными данными с
-Sprint 5 (см. выше). Команды `/new`/`/clear` не входят — отдельные use
-case (`StartNewConversation`/`ClearConversation`).
+База знаний / RAG (Sprint 6, задача S6-08, ADR-6.4/6.5): в отличие от
+`profile`/`memory` (чтение внутри транзакции 1, чистый SQL), поиск по
+базе знаний требует внешних HTTP-вызовов (эмбеддинг запроса + Qdrant) —
+он не может жить внутри короткой DB-транзакции наравне с `profiles`/
+`memory`. `_knowledge_search: KnowledgeSearchService` внедряется отдельным
+параметром конструктора, как `llm_provider` (не через
+`ConversationRepositoriesFactory`), и вызывается вне какой-либо
+DB-транзакции — сразу после `_load_history`, перед сборкой
+`PromptContext` — тем же местом в потоке выполнения, где раньше (до
+Sprint 6) сразу следовал вызов `PromptBuilder.build()`. Найденные
+`SearchResult` форматируются в строки с указанием источника
+(`_format_knowledge_fragment`) и передаются в
+`PromptContext.knowledge_fragments`; ни один файл `domain/prompt/`/
+`application/prompt/`/`infrastructure/prompts/` этой задачей не меняется
+(ADR-6.5, тот же приём, что и ADR-5.11 для памяти) — из шаблона знаний
+меняется только статический текст (защита от prompt injection, §14.9),
+не код. Сбой поиска (эмбеддинги/Qdrant недоступны) не должен обрушивать
+ответ пользователю целиком — в отличие от `LLMProvider.generate()`
+(центральная ценность ответа), RAG — дополнение к нему: `_search_knowledge`
+перехватывает любую ошибку, логирует и возвращает пустой список,
+`PromptContext.knowledge_fragments` в этом случае пуст, как и при
+отсутствии релевантных результатов (§14.8: «ответ формируется без RAG»).
+
+Команды `/new`/`/clear` не входят — отдельные use case
+(`StartNewConversation`/`ClearConversation`).
 
 Задача S2-11 (финальная интеграция): `_build_message` гарантирует строго
 возрастающий `created_at` в рамках одного экземпляра (`_last_message_created_at`
@@ -106,13 +126,18 @@ from dekoder.application.conversation.dto import (
     TokenUsage,
 )
 from dekoder.application.conversation.ports import ConversationRepositoriesFactory, LLMProvider
+from dekoder.application.knowledge.ports import KnowledgeSearchService
 from dekoder.application.prompt.ports import PromptBuilder
 from dekoder.domain.conversation.entities import Message, MessageRole
 from dekoder.domain.conversation.value_objects import MessageText, ModelId
+from dekoder.domain.knowledge.search import SearchResult
 from dekoder.domain.memory.entities import MemoryRecord
 from dekoder.domain.profile.entities import UserProfile
 from dekoder.domain.prompt.value_objects import PromptContext
 from dekoder.shared.errors import ValidationError
+from dekoder.shared.logging import get_logger
+
+_logger = get_logger(__name__)
 
 
 class ProcessUserMessage:
@@ -121,6 +146,7 @@ class ProcessUserMessage:
         llm_provider: LLMProvider,
         repositories: ConversationRepositoriesFactory,
         prompt_builder: PromptBuilder,
+        knowledge_search: KnowledgeSearchService,
         default_model: ModelId,
         temperature: float,
         max_tokens: int,
@@ -129,6 +155,7 @@ class ProcessUserMessage:
         self._llm_provider = llm_provider
         self._repositories = repositories
         self._prompt_builder = prompt_builder
+        self._knowledge_search = knowledge_search
         self._default_model = default_model
         self._temperature = temperature
         self._max_tokens = max_tokens
@@ -156,11 +183,13 @@ class ProcessUserMessage:
 
         conversation_id, profile, memory_records = await self._save_user_message(command.telegram_user_id, message_text)
         history = await self._load_history(conversation_id)
+        knowledge_results = await self._search_knowledge(message_text.value)
 
         context = PromptContext(
             profile=profile,
             dialogue_history=history,
             confirmed_memory_facts=[record.text for record in memory_records],
+            knowledge_fragments=[_format_knowledge_fragment(result) for result in knowledge_results],
         )
         build_result = self._prompt_builder.build(context)
 
@@ -234,6 +263,20 @@ class ProcessUserMessage:
         async with self._repositories() as repositories:
             return await repositories.messages.history(conversation_id)
 
+    async def _search_knowledge(self, query_text: str) -> Sequence[SearchResult]:
+        """
+        Вне DB-транзакций (ADR-6.4, см. докстринг модуля). Любая ошибка
+        (эмбеддинги/Qdrant недоступны) не должна обрушивать ответ
+        пользователю — логируется и трактуется как отсутствие
+        релевантного контекста (§14.8: «ответ формируется без RAG»),
+        не как сбой всего `execute()`.
+        """
+        try:
+            return await self._knowledge_search.search(query_text)
+        except Exception as error:
+            _logger.error("knowledge_search_failed", error=str(error))
+            return []
+
     async def _save_assistant_message(self, conversation_id: UUID, response_text: str) -> Message:
         """
         Транзакция 2 (backlog_2.md §9): сохранить ответ ассистента,
@@ -278,3 +321,20 @@ class ProcessUserMessage:
                 user_message="Сообщение не может быть пустым.",
                 cause=error,
             ) from error
+
+
+def _format_knowledge_fragment(result: SearchResult) -> str:
+    """
+    Строка одного фрагмента секции 5 промпта (Sprint 6, задача S6-08,
+    §14.8 «данные источников отделены от общих рассуждений») — источник
+    первой строкой, текст фрагмента — следующими. `PromptContext.
+    knowledge_fragments: Sequence[str]` не несёт структуры — единственное
+    место, где источник вообще становится видимым модели, это сама
+    строка (никаких отдельных метаданных `PromptBuildResult` не несёт,
+    ADR-6.5 не меняет `domain/prompt/`).
+    """
+    source = result.source
+    location = f", стр. {source.page_number}" if source.page_number is not None else ""
+    if source.section_title:
+        location = f"{location}, раздел «{source.section_title}»"
+    return f"Источник: {source.document_title}{location}\n{result.text}"

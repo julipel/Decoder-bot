@@ -2,7 +2,8 @@
 In-memory fake-реализации портов базы знаний
 (`application/knowledge/ports.py`) — общий тестовый helper для
 `IndexKnowledgeDocumentUseCase`/`DeleteKnowledgeDocumentUseCase`/
-`SemanticSearchService` (Sprint 6, задачи S6-06/S6-07).
+`SemanticSearchService`/`ProcessUserMessage` (Sprint 6, задачи
+S6-06/S6-07/S6-08).
 
 Тот же приём, что и `tests/support/fake_conversation_repositories.py`:
 только словари в памяти, без SQLAlchemy/Qdrant/httpx. Реальные парсеры и
@@ -12,6 +13,7 @@ In-memory fake-реализации портов базы знаний
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
@@ -120,3 +122,24 @@ class FakeVectorRepository:
     async def delete_by_document(self, document_id: UUID) -> None:
         self.deleted_documents.append(document_id)
         self.chunks_by_document.pop(document_id, None)
+
+
+class FakeKnowledgeSearchService:
+    """
+    In-memory fake порта `KnowledgeSearchService` (Sprint 6, задача
+    S6-08) — то, что внедряется в `ProcessUserMessage` вместо реального
+    `SemanticSearchService` в unit-тестах. Пустой список по умолчанию —
+    тот же контракт, что и `SemanticSearchService`: ProcessUserMessage не
+    должен требовать непустой RAG-контекст, чтобы вообще отвечать.
+    """
+
+    def __init__(self, results: Sequence[SearchResult] | None = None, *, fail: bool = False) -> None:
+        self._results = list(results) if results is not None else []
+        self._fail = fail
+        self.search_calls: list[str] = []
+
+    async def search(self, query_text: str) -> Sequence[SearchResult]:
+        self.search_calls.append(query_text)
+        if self._fail:
+            raise RuntimeError("FakeKnowledgeSearchService: имитация сбоя поиска по базе знаний")
+        return list(self._results)

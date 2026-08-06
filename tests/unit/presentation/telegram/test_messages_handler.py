@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from telegram import Update
 from tests.support.fake_conversation_repositories import make_in_memory_repositories_factory
+from tests.support.fake_knowledge_repositories import FakeKnowledgeSearchService
 from tests.support.prompt_engine import make_test_prompt_builder
 
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
@@ -48,6 +49,7 @@ def _make_process_user_message(provider: FakeLLMProvider) -> ProcessUserMessage:
         llm_provider=provider,
         repositories=make_in_memory_repositories_factory(),
         prompt_builder=make_test_prompt_builder(),
+        knowledge_search=FakeKnowledgeSearchService(),
         default_model=ModelId("openai/gpt-4o-mini"),
         temperature=0.7,
         max_tokens=512,

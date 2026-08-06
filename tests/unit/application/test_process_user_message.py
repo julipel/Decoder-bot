@@ -22,6 +22,7 @@ from tests.support.fake_conversation_repositories import (
     FakeProfileRepository,
     make_default_profile,
 )
+from tests.support.fake_knowledge_repositories import FakeKnowledgeSearchService
 from tests.support.prompt_engine import make_test_prompt_builder
 
 from dekoder.application.conversation.dto import (
@@ -31,9 +32,11 @@ from dekoder.application.conversation.dto import (
 )
 from dekoder.application.conversation.ports import ConversationRepositories, ConversationRepositoriesFactory
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
+from dekoder.application.knowledge.ports import KnowledgeSearchService
 from dekoder.application.prompt.ports import PromptBuilder
 from dekoder.domain.conversation.entities import Conversation, Message, MessageRole
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
+from dekoder.domain.knowledge.search import SearchResult, SourceReference
 from dekoder.domain.memory.entities import MemoryRecord
 from dekoder.domain.memory.value_objects import (
     MemoryCategory,
@@ -256,17 +259,20 @@ def _make_use_case(
     messages: FakeMessageRepository | None = None,
     profiles: FakeProfileRepository | None = None,
     memory: FakeMemoryRepository | None = None,
+    knowledge_search: KnowledgeSearchService | None = None,
 ) -> tuple[ProcessUserMessage, _Repos]:
     users = users if users is not None else FakeUserRepository()
     conversations = conversations if conversations is not None else FakeConversationRepository()
     messages = messages if messages is not None else FakeMessageRepository()
     profiles = profiles if profiles is not None else FakeProfileRepository()
     memory = memory if memory is not None else FakeMemoryRepository()
+    knowledge_search = knowledge_search if knowledge_search is not None else FakeKnowledgeSearchService()
     factory = _make_repositories_factory(users, conversations, messages, profiles, memory)
     use_case = ProcessUserMessage(
         llm_provider=provider,
         repositories=factory,
         prompt_builder=prompt_builder if prompt_builder is not None else make_test_prompt_builder(),
+        knowledge_search=knowledge_search,
         default_model=ModelId(default_model),
         temperature=0.7,
         max_tokens=512,
@@ -767,6 +773,7 @@ class TestMemoryIntegration:
             llm_provider=provider,
             repositories=_counting_factory,
             prompt_builder=make_test_prompt_builder(),
+            knowledge_search=FakeKnowledgeSearchService(),
             default_model=ModelId("openai/gpt-4o-mini"),
             temperature=0.7,
             max_tokens=512,
@@ -775,4 +782,68 @@ class TestMemoryIntegration:
 
         await use_case.execute(_make_command(telegram_user_id=902))
 
+        # Поиск по базе знаний — вне DB-транзакций (ADR-6.4, Sprint 6):
+        # число вызовов self._repositories() не увеличилось относительно
+        # Sprint 5, несмотря на добавление RAG в execute().
         assert call_count == 3
+
+
+class TestKnowledgeIntegration:
+    """
+    Sprint 6, задача S6-08 (ADR-6.4/6.5): `PromptContext.knowledge_fragments`
+    заполняется результатами `KnowledgeSearchService.search`, вызываемого
+    напрямую (без отдельного use case'а) вне DB-транзакций — в отличие от
+    `TestMemoryIntegration`, поиск не проходит через `_repositories()`.
+
+    Как и `TestMemoryIntegration`, использует реальный `PromptBuilder`
+    (`tests.support.prompt_engine.make_test_prompt_builder`) — предмет
+    проверки именно содержимое собранного `system_prompt`.
+    """
+
+    async def test_system_prompt_contains_found_fragment_text(self) -> None:
+        result = SearchResult(
+            text="Гарантия действует 24 месяца.",
+            score=0.9,
+            source=SourceReference(
+                document_id=uuid4(),
+                document_title="Условия гарантии",
+                chunk_index=0,
+                section_title=None,
+                page_number=None,
+            ),
+        )
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, knowledge_search=FakeKnowledgeSearchService([result]))
+
+        await use_case.execute(_make_command())
+
+        request = provider.received_requests[0]
+        assert "Гарантия действует 24 месяца." in request.system_prompt
+        assert "Условия гарантии" in request.system_prompt
+
+    async def test_search_is_called_with_the_users_message_text(self) -> None:
+        knowledge_search = FakeKnowledgeSearchService()
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, knowledge_search=knowledge_search)
+
+        await use_case.execute(_make_command(text="Какая гарантия на товар?"))
+
+        assert knowledge_search.search_calls == ["Какая гарантия на товар?"]
+
+    async def test_empty_search_result_still_produces_a_valid_prompt(self) -> None:
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, knowledge_search=FakeKnowledgeSearchService([]))
+
+        await use_case.execute(_make_command())
+
+        request = provider.received_requests[0]
+        assert request.system_prompt.strip()
+
+    async def test_search_failure_does_not_crash_execute(self) -> None:
+        """§14.8: сбой поиска (эмбеддинги/Qdrant недоступны) — «ответ формируется без RAG», не ошибка."""
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, knowledge_search=FakeKnowledgeSearchService(fail=True))
+
+        result = await use_case.execute(_make_command())
+
+        assert result.response_text == "Здравствуйте!"
