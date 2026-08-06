@@ -46,7 +46,11 @@ services:
     restart: unless-stopped
 
   qdrant:
-    image: qdrant/qdrant:v1.12.5
+    # v1.19.0 — совпадает по major.minor с зависимостью qdrant-client в
+    # pyproject.toml (S6-11: клиент 1.19.0 ругался предупреждением о
+    # несовместимости версий с более старым сервером, обнаружено при
+    # проверке собственной сборкой образа).
+    image: qdrant/qdrant:v1.19.0
     restart: unless-stopped
     ports:
       - "6333:6333"

@@ -30,6 +30,13 @@ RUN pip install --no-cache-dir .
 COPY alembic.ini ./
 COPY alembic ./alembic
 
+# `scripts/index_document.py` (Sprint 6, задача S6-09/S6-11) — не часть
+# устанавливаемого пакета `dekoder` (`pip install .` его не подхватывает,
+# как и alembic.ini/alembic/ выше по той же причине, найденной в S3-09):
+# без явного COPY `python scripts/index_document.py` внутри контейнера
+# падал бы `No such file or directory`.
+COPY scripts ./scripts
+
 # Непривилегированный пользователь — процесс не должен работать от root.
 # `/app/data` создаётся и передаётся во владение `dekoder` уже здесь, при
 # сборке образа: `bootstrap/database.py::_ensure_sqlite_directory_exists`

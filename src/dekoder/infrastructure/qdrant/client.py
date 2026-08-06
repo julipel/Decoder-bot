@@ -44,6 +44,12 @@ async def ensure_collection(client: AsyncQdrantClient, settings: QdrantSettings)
     try:
         exists = await client.collection_exists(settings.collection_name)
         if exists:
+            # Обнаружено при собственном запуске docker compose (задача
+            # S6-11): без этой строки второй процесс (api и telegram-bot
+            # проверяют коллекцию независимо и почти одновременно при
+            # старте) молча завершает `ensure_collection` без единого
+            # лога — со стороны выглядит неотличимо от зависшего вызова.
+            _logger.info("qdrant_collection_already_exists", collection_name=settings.collection_name)
             return
         await client.create_collection(
             collection_name=settings.collection_name,
