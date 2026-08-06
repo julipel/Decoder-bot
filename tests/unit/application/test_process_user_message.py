@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 import pytest
 from tests.support.fake_conversation_repositories import (
     FakeMemoryRepository,
+    FakeModelSelectionRepository,
     FakeProfileRepository,
     make_default_profile,
 )
@@ -197,14 +198,21 @@ def _make_repositories_factory(
     messages: FakeMessageRepository,
     profiles: FakeProfileRepository | None = None,
     memory: FakeMemoryRepository | None = None,
+    model_selection: FakeModelSelectionRepository | None = None,
 ) -> ConversationRepositoriesFactory:
     profiles = profiles if profiles is not None else FakeProfileRepository()
     memory = memory if memory is not None else FakeMemoryRepository()
+    model_selection = model_selection if model_selection is not None else FakeModelSelectionRepository()
 
     @asynccontextmanager
     async def _factory() -> AsyncIterator[ConversationRepositories]:
         yield ConversationRepositories(
-            users=users, conversations=conversations, messages=messages, profiles=profiles, memory=memory
+            users=users,
+            conversations=conversations,
+            messages=messages,
+            profiles=profiles,
+            memory=memory,
+            model_selection=model_selection,
         )
 
     return _factory

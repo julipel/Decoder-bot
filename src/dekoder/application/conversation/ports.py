@@ -42,6 +42,7 @@ from uuid import UUID
 
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
 from dekoder.application.memory.ports import MemoryRepository
+from dekoder.application.model_catalog.ports import ModelSelectionRepository
 from dekoder.application.profile.ports import ProfileRepository
 from dekoder.application.user.ports import UserRepository
 from dekoder.domain.conversation.entities import Conversation, Message
@@ -187,7 +188,8 @@ class ConversationRepositories:
     Группа репозиториев, нужных `ProcessUserMessage` внутри ОДНОЙ
     короткоживущей транзакции (Sprint 2, задача S2-06; поле `profiles`
     добавлено в Sprint 3, задача S3-05, ADR-3.3; поле `memory` добавлено
-    в Sprint 5, задача S5-03, ADR-5.5).
+    в Sprint 5, задача S5-03, ADR-5.5; поле `model_selection` добавлено в
+    Sprint 7, задача S7-04, ADR-7.5).
 
     Это не Generic Repository и не самостоятельный Unit of Work —
     абстрактный Unit of Work из backlog_2.md §15 (инвариант 14) явно
@@ -210,6 +212,14 @@ class ConversationRepositories:
     `memory` встроен тем же приёмом (ADR-5.5, backlog_5.md §3) — use
     case'ы памяти (`application/memory/use_cases/*`) читают только это
     поле, `ProcessUserMessage` читает его наравне с `profiles`.
+    `model_selection` встроен тем же приёмом (ADR-7.5, backlog_7.md §3:
+    «не вводить вторую фабрику репозиториев параллельно
+    `ConversationRepositoriesFactory`») — `ProcessUserMessage` читает
+    `repositories.model_selection.get_selected(user.id)` внутри той же
+    транзакции 1, где уже читаются `profiles`/`memory` (ADR-7.7); use
+    case'ы каталога моделей (`application/model_catalog/use_cases/*`)
+    читают это поле через собственную короткую транзакцию, не
+    `ModelCatalogRepository` (тот внедряется отдельно, ADR-7.4).
     """
 
     users: UserRepository
@@ -217,6 +227,7 @@ class ConversationRepositories:
     messages: MessageRepository
     profiles: ProfileRepository
     memory: MemoryRepository
+    model_selection: ModelSelectionRepository
 
 
 ConversationRepositoriesFactory = Callable[[], AbstractAsyncContextManager[ConversationRepositories]]

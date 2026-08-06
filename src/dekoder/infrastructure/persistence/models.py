@@ -17,6 +17,7 @@ from dekoder.infrastructure.persistence.knowledge_document_orm import KnowledgeD
 from dekoder.infrastructure.persistence.memory_record_orm import MemoryRecordORM
 from dekoder.infrastructure.persistence.message_orm import MessageORM
 from dekoder.infrastructure.persistence.profile_orm import ProfileORM
+from dekoder.infrastructure.persistence.user_active_model_orm import UserActiveModelORM
 from dekoder.infrastructure.persistence.user_active_profile_orm import UserActiveProfileORM
 from dekoder.infrastructure.persistence.user_orm import UserORM
 
@@ -26,6 +27,7 @@ __all__ = [
     "MemoryRecordORM",
     "MessageORM",
     "ProfileORM",
+    "UserActiveModelORM",
     "UserActiveProfileORM",
     "UserORM",
 ]

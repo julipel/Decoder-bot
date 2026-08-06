@@ -1,9 +1,10 @@
 """
-Доменная сущность `AIModel` (Sprint 7, задача S7-02, ADR-7.2/ADR-7.3) —
-запись статичного каталога AI-моделей, реализующая Этап 9 «Плана
-реализации.md» (выбор AI-модели пользователем).
+Доменные сущности каталога AI-моделей (Sprint 7, задачи S7-02/S7-04,
+ADR-7.2/ADR-7.3/ADR-7.5) — `AIModel` (запись статичного каталога) и
+`ModelSelection` (персональный выбор пользователя), реализующие Этап 9
+«Плана реализации.md» (выбор AI-модели пользователем).
 
-Один плоский `frozen`-датакласс, стиль `domain/profile/entities.py::
+Плоские `frozen`-датаклассы, стиль `domain/profile/entities.py::
 UserProfile`/`domain/memory/entities.py::MemoryRecord`.
 
 `model_id: ModelId` — переиспользует живой `domain/conversation/
@@ -21,6 +22,14 @@ HTTP-интерфейсом, поэтому дополнительный сло�
 `default_generation_settings` — единственное поле, реально используемое
 `ProcessUserMessage` (ADR-7.7).
 
+`ModelSelection` (ADR-7.5) — персональный выбор модели одним
+пользователем; `user_id`/`selected_at` — плоские `UUID`/`datetime`, без
+обёрток, по конвенции `MemoryRecord.user_id`. `ModelSelectionRepository`
+(`application/model_catalog/ports.py`) оперирует напрямую `ModelId` (не
+этой сущностью) в своих сигнатурах — по тому же прецеденту, что и
+`user_active_profiles` (ADR-3.1): у связи «пользователь → выбор» нет
+собственного поведения, только атомарная замена значения.
+
 Ноль зависимостей от SQLAlchemy/Telegram/FastAPI/JSON — чистый Python, как
 `domain/profile/entities.py`. Ошибки — обычный `ValueError`, отдельная
 доменная ошибка не оправдана (claude.md §20, по прецеденту `UserProfile`/
@@ -30,6 +39,8 @@ HTTP-интерфейсом, поэтому дополнительный сло�
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+from uuid import UUID
 
 from dekoder.domain.conversation.value_objects import ModelId
 from dekoder.domain.model_catalog.enums import (
@@ -60,3 +71,12 @@ class AIModel:
             raise ValueError("display_name не может быть пустым")
         if self.context_window <= 0:
             raise ValueError("context_window должен быть положительным")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelSelection:
+    """Персональный выбор AI-модели одним пользователем — запись `user_active_models` (ADR-7.5)."""
+
+    user_id: UUID
+    model_id: ModelId
+    selected_at: datetime

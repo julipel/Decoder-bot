@@ -1,15 +1,19 @@
 """
 In-memory fake-реализации `UserRepository`/`ConversationRepository`/
-`MessageRepository`/`ProfileRepository`/`MemoryRepository`
-(`application/user/ports.py`, `application/conversation/ports.py`,
-`application/profile/ports.py`, `application/memory/ports.py`) — общий
-тестовый helper для всех unit-тестов, использующих `ProcessUserMessage`
-(Sprint 2, задача S2-06; `FakeProfileRepository` добавлен в Sprint 3,
-задача S3-05 — требуется сразу же, поскольку `ConversationRepositories`
-(S3-05, ADR-3.3) получает обязательное поле `profiles`, без которого
-существующие вызовы `make_in_memory_repositories_factory` перестали бы
-собираться; `FakeMemoryRepository` добавлен в Sprint 5, задача S5-03/
-S5-04, ADR-5.5, по той же причине — новое обязательное поле `memory`):
+`MessageRepository`/`ProfileRepository`/`MemoryRepository`/
+`ModelSelectionRepository` (`application/user/ports.py`,
+`application/conversation/ports.py`, `application/profile/ports.py`,
+`application/memory/ports.py`, `application/model_catalog/ports.py`) —
+общий тестовый helper для всех unit-тестов, использующих
+`ProcessUserMessage` (Sprint 2, задача S2-06; `FakeProfileRepository`
+добавлен в Sprint 3, задача S3-05 — требуется сразу же, поскольку
+`ConversationRepositories` (S3-05, ADR-3.3) получает обязательное поле
+`profiles`, без которого существующие вызовы
+`make_in_memory_repositories_factory` перестали бы собираться;
+`FakeMemoryRepository` добавлен в Sprint 5, задача S5-03/S5-04, ADR-5.5,
+по той же причине — новое обязательное поле `memory`;
+`FakeModelSelectionRepository` добавлен в Sprint 7, задача S7-04,
+ADR-7.5, по той же причине — новое обязательное поле `model_selection`):
 `tests/unit/application/test_process_user_message.py`,
 `tests/unit/presentation/telegram/test_messages_handler.py`,
 `tests/e2e/test_conversation_scenario.py`.
@@ -29,6 +33,7 @@ from uuid import UUID, uuid4
 
 from dekoder.application.conversation.ports import ConversationRepositories, ConversationRepositoriesFactory
 from dekoder.domain.conversation.entities import Conversation, Message
+from dekoder.domain.conversation.value_objects import ModelId
 from dekoder.domain.memory.entities import MemoryRecord
 from dekoder.domain.memory.value_objects import MemoryStatus
 from dekoder.domain.profile.entities import UserProfile
@@ -252,12 +257,32 @@ class FakeMemoryRepository:
             del self._by_id[record_id]
 
 
+class FakeModelSelectionRepository:
+    """
+    In-memory fake порта `ModelSelectionRepository` (Sprint 7, задача
+    S7-04, ADR-7.5).
+
+    `select` — upsert по `user_id`, тем же приёмом, что и реальный
+    `SQLAlchemyModelSelectionRepository`/`user_active_models`.
+    """
+
+    def __init__(self, selections: dict[UUID, ModelId] | None = None) -> None:
+        self._by_user: dict[UUID, ModelId] = dict(selections) if selections is not None else {}
+
+    async def get_selected(self, user_id: UUID) -> ModelId | None:
+        return self._by_user.get(user_id)
+
+    async def select(self, user_id: UUID, model_id: ModelId) -> None:
+        self._by_user[user_id] = model_id
+
+
 def make_in_memory_repositories_factory(
     users: FakeUserRepository | None = None,
     conversations: FakeConversationRepository | None = None,
     messages: FakeMessageRepository | None = None,
     profiles: FakeProfileRepository | None = None,
     memory: FakeMemoryRepository | None = None,
+    model_selection: FakeModelSelectionRepository | None = None,
 ) -> ConversationRepositoriesFactory:
     """
     Собирает `ConversationRepositoriesFactory` поверх in-memory fake-реализаций.
@@ -269,11 +294,17 @@ def make_in_memory_repositories_factory(
     messages = messages if messages is not None else FakeMessageRepository()
     profiles = profiles if profiles is not None else FakeProfileRepository()
     memory = memory if memory is not None else FakeMemoryRepository()
+    model_selection = model_selection if model_selection is not None else FakeModelSelectionRepository()
 
     @asynccontextmanager
     async def _factory() -> AsyncIterator[ConversationRepositories]:
         yield ConversationRepositories(
-            users=users, conversations=conversations, messages=messages, profiles=profiles, memory=memory
+            users=users,
+            conversations=conversations,
+            messages=messages,
+            profiles=profiles,
+            memory=memory,
+            model_selection=model_selection,
         )
 
     return _factory

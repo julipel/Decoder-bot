@@ -333,9 +333,12 @@ class TestKnowledgeDocumentsSchemaMigration:
         table_names_before = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
         assert "knowledge_documents" in table_names_before
 
-        # knowledge_documents — текущий head (82d9884e32a2): "-1" здесь
-        # безопасен ровно до следующей миграции поверх него.
-        command.downgrade(config, "-1")
+        # knowledge_documents больше не head после S7-04
+        # (ed5701d2f683_create_user_active_models.py) — целимся явно в
+        # ревизию перед knowledge_documents (161899ea36c0), не в
+        # относительный "-1" от head, чтобы тест оставался верным
+        # независимо от того, сколько миграций накопится поверх него.
+        command.downgrade(config, "161899ea36c0")
 
         table_names_after = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
         assert "knowledge_documents" not in table_names_after
@@ -351,3 +354,60 @@ class TestKnowledgeDocumentsSchemaMigration:
 
         table_names = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
         assert "knowledge_documents" in table_names
+
+
+class TestUserActiveModelsSchemaMigration:
+    """
+    Тесты схемной миграции `user_active_models` (Sprint 7, задача S7-04,
+    ADR-7.5) — без сид-данных, прямой прецедент
+    `TestKnowledgeDocumentsSchemaMigration` выше.
+    """
+
+    def test_upgrade_head_creates_user_active_models_without_seed_rows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = tmp_path / "model-selection-upgrade.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+
+        objects = _schema_objects(db_path)
+        table_names = {name for type_, name, _ in objects if type_ == "table"}
+        assert "user_active_models" in table_names
+
+        connection = sqlite3.connect(db_path)
+        try:
+            row_count = connection.execute("SELECT COUNT(*) FROM user_active_models").fetchone()[0]
+        finally:
+            connection.close()
+        assert row_count == 0
+
+    def test_downgrade_minus_one_removes_only_user_active_models_table(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = tmp_path / "model-selection-downgrade.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+        table_names_before = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
+        assert "user_active_models" in table_names_before
+
+        # user_active_models — текущий head (ed5701d2f683): "-1" здесь
+        # безопасен ровно до следующей миграции поверх него (как и было
+        # ранее для knowledge_documents, см. класс выше).
+        command.downgrade(config, "-1")
+
+        table_names_after = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
+        assert "user_active_models" not in table_names_after
+        assert {"memory_records", "profiles", "user_active_profiles", "knowledge_documents"} <= table_names_after
+
+    def test_upgrade_head_after_downgrade_succeeds(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        db_path = tmp_path / "model-selection-cycle.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+        command.downgrade(config, "-1")
+        command.upgrade(config, "head")
+
+        table_names = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
+        assert "user_active_models" in table_names

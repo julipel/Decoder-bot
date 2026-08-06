@@ -67,6 +67,7 @@ from dekoder.bootstrap.repositories import (
     build_conversation_repository,
     build_memory_repository,
     build_message_repository,
+    build_model_selection_repository,
     build_profile_repository,
     build_user_repository,
 )
@@ -611,6 +612,7 @@ def _make_faulty_repositories_factory(
                 messages=_FaultyMessageRepository(),
                 profiles=build_profile_repository(session),
                 memory=build_memory_repository(session),
+                model_selection=build_model_selection_repository(session),
             )
 
     return _open_repositories
