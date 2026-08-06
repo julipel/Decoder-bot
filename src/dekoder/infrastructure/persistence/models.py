@@ -13,6 +13,7 @@ Alembic autogenerate (`alembic/env.py`, `target_metadata = Base.metadata`)
 from __future__ import annotations
 
 from dekoder.infrastructure.persistence.conversation_orm import ConversationORM
+from dekoder.infrastructure.persistence.knowledge_document_orm import KnowledgeDocumentORM
 from dekoder.infrastructure.persistence.memory_record_orm import MemoryRecordORM
 from dekoder.infrastructure.persistence.message_orm import MessageORM
 from dekoder.infrastructure.persistence.profile_orm import ProfileORM
@@ -21,6 +22,7 @@ from dekoder.infrastructure.persistence.user_orm import UserORM
 
 __all__ = [
     "ConversationORM",
+    "KnowledgeDocumentORM",
     "MemoryRecordORM",
     "MessageORM",
     "ProfileORM",

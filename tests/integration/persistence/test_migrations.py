@@ -76,6 +76,7 @@ class TestInitialMigrationCycle:
             "profiles",
             "user_active_profiles",
             "memory_records",
+            "knowledge_documents",
         } <= table_names
         assert {
             "ix_conversations_user_id",
@@ -83,6 +84,7 @@ class TestInitialMigrationCycle:
             "ix_messages_conversation_created",
             "uq_profiles_is_default",
             "ix_memory_records_user_status",
+            "ix_knowledge_documents_checksum",
         } <= index_names
 
         users_sql = next(sql for type_, name, sql in objects if type_ == "table" and name == "users")
@@ -140,6 +142,7 @@ class TestInitialMigrationCycle:
             "profiles",
             "user_active_profiles",
             "memory_records",
+            "knowledge_documents",
         } <= table_names
 
     def test_downgrade_to_pre_profile_schema_removes_only_profile_tables(
@@ -251,7 +254,7 @@ class TestMemoryRecordsSchemaMigration:
         # ADR-5.7: только схемная миграция, никакого сид-инсерта, в отличие от profiles.
         assert row_count == 0
 
-    def test_downgrade_minus_one_removes_only_memory_records_table(
+    def test_downgrade_to_pre_memory_schema_removes_only_memory_records_table(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         db_path = tmp_path / "memory-downgrade.db"
@@ -261,7 +264,13 @@ class TestMemoryRecordsSchemaMigration:
         table_names_before = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
         assert "memory_records" in table_names_before
 
-        command.downgrade(config, "-1")
+        # Явный целевой ревижн "27c4e9f2a103" (до миграции memory_records
+        # 161899ea36c0), а не относительный "-1": с задачи S6-04 head — уже
+        # 82d9884e32a2 (knowledge_documents), поэтому "-1" откатывал бы
+        # только её, не memory_records (тот же урок, что и в комментарии
+        # `test_downgrade_to_pre_seed_removes_only_seed_rows_not_schema`
+        # выше про сдвиг head в Sprint 5).
+        command.downgrade(config, "27c4e9f2a103")
 
         table_names_after = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
         assert "memory_records" not in table_names_after
@@ -274,8 +283,71 @@ class TestMemoryRecordsSchemaMigration:
         config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
 
         command.upgrade(config, "head")
-        command.downgrade(config, "-1")
+        command.downgrade(config, "27c4e9f2a103")
         command.upgrade(config, "head")
 
         table_names = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
         assert "memory_records" in table_names
+
+
+class TestKnowledgeDocumentsSchemaMigration:
+    """Тесты схемной миграции knowledge_documents (Sprint 6, задача S6-04, ADR-6.1/6.2) — без сид-данных."""
+
+    def test_upgrade_head_creates_knowledge_documents_without_seed_rows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = tmp_path / "knowledge-upgrade.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+
+        objects = _schema_objects(db_path)
+        table_names = {name for type_, name, _ in objects if type_ == "table"}
+        assert "knowledge_documents" in table_names
+
+        knowledge_sql = next(sql for type_, name, sql in objects if type_ == "table" and name == "knowledge_documents")
+        assert "ck_knowledge_documents_document_type" in knowledge_sql
+        assert "ck_knowledge_documents_status" in knowledge_sql
+
+        index_names = {name for type_, name, _ in objects if type_ == "index"}
+        assert "ix_knowledge_documents_checksum" in index_names
+        checksum_index_sql = next(
+            sql for type_, name, sql in objects if type_ == "index" and name == "ix_knowledge_documents_checksum"
+        )
+        assert "UNIQUE" in checksum_index_sql
+
+        connection = sqlite3.connect(db_path)
+        try:
+            row_count = connection.execute("SELECT COUNT(*) FROM knowledge_documents").fetchone()[0]
+        finally:
+            connection.close()
+        assert row_count == 0
+
+    def test_downgrade_minus_one_removes_only_knowledge_documents_table(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = tmp_path / "knowledge-downgrade.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+        table_names_before = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
+        assert "knowledge_documents" in table_names_before
+
+        # knowledge_documents — текущий head (82d9884e32a2): "-1" здесь
+        # безопасен ровно до следующей миграции поверх него.
+        command.downgrade(config, "-1")
+
+        table_names_after = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
+        assert "knowledge_documents" not in table_names_after
+        assert {"memory_records", "profiles", "user_active_profiles"} <= table_names_after
+
+    def test_upgrade_head_after_downgrade_succeeds(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        db_path = tmp_path / "knowledge-cycle.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+        command.downgrade(config, "-1")
+        command.upgrade(config, "head")
+
+        table_names = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
+        assert "knowledge_documents" in table_names

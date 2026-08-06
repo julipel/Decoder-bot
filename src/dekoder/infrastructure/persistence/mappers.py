@@ -31,6 +31,8 @@ from datetime import UTC, datetime
 
 from dekoder.domain.conversation.entities import Conversation, Message, MessageRole
 from dekoder.domain.conversation.value_objects import ModelId
+from dekoder.domain.knowledge.entities import KnowledgeDocument
+from dekoder.domain.knowledge.value_objects import DocumentStatus, DocumentType
 from dekoder.domain.memory.entities import MemoryRecord
 from dekoder.domain.memory.value_objects import (
     MemoryCategory,
@@ -42,6 +44,7 @@ from dekoder.domain.profile.entities import UserProfile
 from dekoder.domain.profile.value_objects import ProfileStatus
 from dekoder.domain.user.entities import User
 from dekoder.infrastructure.persistence.conversation_orm import ConversationORM
+from dekoder.infrastructure.persistence.knowledge_document_orm import KnowledgeDocumentORM
 from dekoder.infrastructure.persistence.memory_record_orm import MemoryRecordORM
 from dekoder.infrastructure.persistence.message_orm import MessageORM
 from dekoder.infrastructure.persistence.profile_orm import ProfileORM
@@ -205,4 +208,42 @@ def memory_record_to_domain(orm_record: MemoryRecordORM) -> MemoryRecord:
         updated_by=orm_record.updated_by,
         created_at=_to_aware_utc(orm_record.created_at),
         updated_at=_to_aware_utc(orm_record.updated_at),
+    )
+
+
+def knowledge_document_to_orm(document: KnowledgeDocument) -> KnowledgeDocumentORM:
+    """Domain `KnowledgeDocument` -> `KnowledgeDocumentORM`."""
+    return KnowledgeDocumentORM(
+        id=document.id,
+        title=document.title,
+        document_type=document.document_type.value,
+        source_filename=document.source_filename,
+        checksum=document.checksum,
+        status=document.status.value,
+        tags=list(document.tags),
+        description=document.description,
+        chunk_count=document.chunk_count,
+        error_message=document.error_message,
+        created_at=_to_naive_utc(document.created_at),
+        updated_at=_to_naive_utc(document.updated_at),
+        indexed_at=_to_naive_utc(document.indexed_at) if document.indexed_at is not None else None,
+    )
+
+
+def knowledge_document_to_domain(orm_document: KnowledgeDocumentORM) -> KnowledgeDocument:
+    """`KnowledgeDocumentORM` -> Domain `KnowledgeDocument`."""
+    return KnowledgeDocument(
+        id=orm_document.id,
+        title=orm_document.title,
+        document_type=DocumentType(orm_document.document_type),
+        source_filename=orm_document.source_filename,
+        checksum=orm_document.checksum,
+        status=DocumentStatus(orm_document.status),
+        tags=tuple(orm_document.tags),
+        description=orm_document.description,
+        chunk_count=orm_document.chunk_count,
+        error_message=orm_document.error_message,
+        created_at=_to_aware_utc(orm_document.created_at),
+        updated_at=_to_aware_utc(orm_document.updated_at),
+        indexed_at=_to_aware_utc(orm_document.indexed_at) if orm_document.indexed_at is not None else None,
     )
