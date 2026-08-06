@@ -16,8 +16,6 @@ from dekoder.application.admin.use_cases.authenticate_admin import AuthenticateA
 from dekoder.application.ai_core.use_cases.generate_content import GenerateContentUseCase
 from dekoder.application.ai_core.use_cases.regenerate import RegenerateUseCase
 from dekoder.application.ai_core.use_cases.route_command import RouteCommandUseCase
-from dekoder.application.model_catalog.ports import ModelCatalogRepository
-from dekoder.application.model_gateway.ports import ModelGateway
 from dekoder.application.session.ports import SessionRepository
 from dekoder.application.skills.ports import ContentSkillRepository
 from dekoder.shared.config import Settings
@@ -35,9 +33,7 @@ class Container:
 
     # Репозитории и внешние порты
     content_skill_repository: ContentSkillRepository
-    model_catalog_repository: ModelCatalogRepository
     session_repository: SessionRepository
-    model_gateway: ModelGateway
     admin_auth: AdminAuthPort
     clock: Clock
     correlation_id_generator: CorrelationIdGenerator
