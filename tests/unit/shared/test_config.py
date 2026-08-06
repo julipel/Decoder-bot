@@ -203,6 +203,7 @@ class TestSettingsAggregation:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
         monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "webhook-secret")
         monkeypatch.setenv("OPENROUTER_API_KEY", "api-key")
+        monkeypatch.setenv("OPENAI_API_KEY", "embedding-api-key")
         monkeypatch.setenv("APP_PORT", "8080")
         monkeypatch.setenv("LLM_TEMPERATURE", "0.3")
 

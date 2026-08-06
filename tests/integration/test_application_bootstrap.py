@@ -33,6 +33,7 @@ def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Settings:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "test-webhook-secret")
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-api-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-embedding-api-key")
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'test-app.db'}")
     return Settings()
 

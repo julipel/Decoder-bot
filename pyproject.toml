@@ -18,6 +18,9 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.22.1",
     "alembic>=1.18.5",
+    "qdrant-client>=1.19.0",
+    "python-docx>=1.2.0",
+    "pypdf>=6.15.0",
 ]
 
 [project.optional-dependencies]
@@ -85,7 +88,16 @@ known-first-party = ["dekoder"]
 quote-style = "double"
 
 [tool.mypy]
-python_version = "3.11"
+# 3.12, а не рантайм-цель проекта (`requires-python = ">=3.11"`, Dockerfile
+# — 3.11): numpy (транзитивная зависимость qdrant-client, Sprint 6, задача
+# S6-02) поставляет .pyi с PEP 695 `type X = ...` (синтаксис Python 3.12+)
+# — mypy отказывается их парсить при python_version="3.11" даже с
+# `follow_imports = "skip"` для numpy.* ниже (skip не спасает от ошибки
+# синтаксиса при парсинге, только от проверки содержимого). Поднимает
+# планку принимаемого mypy синтаксиса — не запрещает написать в src/
+# 3.12-only конструкцию, которая не запустится на рантайме 3.11 (это не
+# проверяется автоматически, остаётся ответственностью код-ревью).
+python_version = "3.12"
 mypy_path = "src"
 packages = ["dekoder"]
 warn_unused_configs = true
@@ -101,6 +113,17 @@ no_implicit_optional = true
 [[tool.mypy.overrides]]
 module = "telegram.*"
 ignore_missing_imports = true
+
+# numpy — транзитивная зависимость qdrant-client (Sprint 6, задача S6-02),
+# не импортируется напрямую нигде в src/. Её собственные .pyi используют
+# PEP 695 `type X = ...` (синтаксис Python 3.12+), который mypy не может
+# разобрать при общепроектном `python_version = "3.11"` (задача S1-02,
+# осознанно не меняется ради одной транзитивной зависимости) — `follow_imports
+# = "skip"` останавливает мypy на границе пакета, не отключая проверку типов
+# в qdrant_client/нашем коде, использующем его.
+[[tool.mypy.overrides]]
+module = "numpy.*"
+follow_imports = "skip"
 
 [tool.pytest.ini_options]
 minversion = "7.0"

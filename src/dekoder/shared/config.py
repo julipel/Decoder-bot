@@ -127,6 +127,59 @@ class MemorySettings(BaseSettings):
     max_relevant_records: int = Field(default=5, gt=0)
 
 
+class OpenAiSettings(BaseSettings):
+    """
+    Настройки провайдера эмбеддингов (Sprint 6, задача S6-02, ADR-6.3).
+
+    Отдельная группа от `OpenRouterSettings` — OpenRouter (основной
+    чат-провайдер) не отдаёт embeddings API; эмбеддинги считаются через
+    OpenAI напрямую, независимо от того, какая модель выбрана для чата.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="OPENAI_", env_file=_ENV_FILES, env_file_encoding="utf-8", extra="ignore"
+    )
+
+    api_key: SecretStr
+    base_url: str = "https://api.openai.com/v1"
+    embedding_model: str = "text-embedding-3-small"
+
+
+class QdrantSettings(BaseSettings):
+    """Настройки подключения к Qdrant (Sprint 6, задача S6-02, Этап 8 «Плана реализации.md»)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="QDRANT_", env_file=_ENV_FILES, env_file_encoding="utf-8", extra="ignore"
+    )
+
+    host: str = "localhost"
+    port: int = Field(default=6333, ge=1, le=65535)
+    collection_name: str = "dekoder_knowledge"
+    # Размерность вектора OpenAI `text-embedding-3-small` — 1536. Вынесено
+    # в настройки (не хардкод внутри QdrantVectorRepository), чтобы смена
+    # embedding_model в OpenAiSettings была видна рядом с тем, что должно
+    # измениться синхронно — иначе upsert молча упадёт на несовпадении
+    # размерности вектора с уже созданной коллекцией.
+    vector_size: int = Field(default=1536, gt=0)
+
+
+class KnowledgeSettings(BaseSettings):
+    """Настройки конвейера индексации и поиска базы знаний (Sprint 6, задача S6-02, §14 «Плана реализации.md»)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="KNOWLEDGE_", env_file=_ENV_FILES, env_file_encoding="utf-8", extra="ignore"
+    )
+
+    max_file_size_bytes: int = Field(default=20_000_000, gt=0)
+    # Символы, не токены модели — та же эвристика, что и у
+    # `PromptSettings.token_budget` (ADR-4.4): точный расчёт токенов не
+    # нужен на этапе разбиения текста на фрагменты.
+    chunk_size: int = Field(default=1500, gt=0)
+    chunk_overlap: int = Field(default=200, ge=0)
+    search_limit: int = Field(default=5, gt=0)
+    min_relevance_score: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
 class Settings(BaseSettings):
     """
     Корневой объект конфигурации — группирует настройки по областям.
@@ -146,3 +199,6 @@ class Settings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     prompt: PromptSettings = Field(default_factory=PromptSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
+    openai: OpenAiSettings = Field(default_factory=OpenAiSettings)  # type: ignore[arg-type]
+    qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
+    knowledge: KnowledgeSettings = Field(default_factory=KnowledgeSettings)

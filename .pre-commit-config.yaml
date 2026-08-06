@@ -32,6 +32,9 @@ repos:
           - python-telegram-bot
           - structlog
           - sqlalchemy[asyncio]
+          - qdrant-client
+          - python-docx
+          - pypdf
         args: [--config-file=pyproject.toml]
         pass_filenames: false
         files: ^src/

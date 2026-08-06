@@ -7,6 +7,14 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    # QDRANT_HOST в .env по умолчанию — "localhost" (для запуска вне
+    # Docker, S6-02); внутри compose-сети Qdrant доступен по имени
+    # сервиса — переопределяем здесь, а не меняем значение по умолчанию
+    # в shared/config.py.
+    environment:
+      QDRANT_HOST: qdrant
+    depends_on:
+      - qdrant
     volumes:
       - dekoder_data:/app/data
     restart: unless-stopped
@@ -29,9 +37,21 @@ services:
     command: ["python", "-m", "dekoder.telegram_main"]
     env_file:
       - .env
+    environment:
+      QDRANT_HOST: qdrant
+    depends_on:
+      - qdrant
     volumes:
       - dekoder_data:/app/data
     restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.5
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    volumes:
+      - dekoder_qdrant_data:/qdrant/storage
 
 # Именованный volume для SQLite-файла (Sprint 2, S2-01: DATABASE_URL по
 # умолчанию — относительный путь `./data/app.db`, внутри контейнера это
@@ -45,5 +65,11 @@ services:
 # через `/health`; SQLite поддерживает одновременный доступ нескольких
 # процессов к одному файлу штатно (файловые блокировки), второй, отдельный
 # volume создал бы два независимых, расходящихся файла БД без всякой пользы.
+#
+# dekoder_qdrant_data (Sprint 6, S6-02) — отдельный volume для хранилища
+# Qdrant (`/qdrant/storage`): без него `docker compose down && up`/
+# пересборка стирали бы весь проиндексированный корпус базы знаний,
+# требуя повторной индексации всех документов.
 volumes:
   dekoder_data:
+  dekoder_qdrant_data:
