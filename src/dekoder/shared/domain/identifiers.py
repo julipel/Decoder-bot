@@ -22,8 +22,4 @@ DialogueEntryId = NewType("DialogueEntryId", str)
 DraftId = NewType("DraftId", str)
 FactId = NewType("FactId", str)
 
-DocumentId = NewType("DocumentId", str)
-CaseId = NewType("CaseId", str)
-FragmentId = NewType("FragmentId", str)
-
 AuditRecordId = NewType("AuditRecordId", str)

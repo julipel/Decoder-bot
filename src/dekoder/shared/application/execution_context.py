@@ -5,16 +5,15 @@ ExecutionContext (docs/versions/02, §7; docs/versions/04, §11) — не Entity
 
 Как и v1 ConversationContext, это документированное исключение из
 изоляции shared/application/: DTO по своей природе объединяет сущности
-нескольких модулей (profile/skills/session/memory/rag), поэтому вынесен
-из ai_core — иначе потребители импортировали бы его из modules/ai_core
-напрямую (docs/versions/03, §4).
+нескольких модулей (profile/skills/session), поэтому вынесен из ai_core —
+иначе потребители импортировали бы его из modules/ai_core напрямую
+(docs/versions/03, §4).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from dekoder.domain.rag.fragment import KnowledgeFragment
 from dekoder.domain.session.session import GenerationSession
 from dekoder.domain.skills.skill import ContentSkill
 from dekoder.shared.domain.identifiers import CorrelationId
@@ -29,4 +28,3 @@ class ExecutionContext:
     content_type: ContentType | None
     session: GenerationSession
     user_input: dict[str, str]
-    knowledge_fragments: list[KnowledgeFragment] = field(default_factory=list)

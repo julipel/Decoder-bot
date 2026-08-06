@@ -8,9 +8,6 @@ from __future__ import annotations
 
 import telegram
 
-from dekoder.application.ai_core.use_cases.answer_knowledge_question import (
-    AnswerKnowledgeQuestionUseCase,
-)
 from dekoder.application.ai_core.use_cases.generate_content import GenerateContentUseCase
 from dekoder.application.ai_core.use_cases.regenerate import RegenerateUseCase
 from dekoder.application.ai_core.use_cases.route_command import RouteCommandUseCase
@@ -20,12 +17,10 @@ class TelegramUpdateHandler:
     def __init__(
         self,
         generate_content: GenerateContentUseCase,
-        answer_knowledge_question: AnswerKnowledgeQuestionUseCase,
         regenerate: RegenerateUseCase,
         route_command: RouteCommandUseCase,
     ) -> None:
         self._generate_content = generate_content
-        self._answer_knowledge_question = answer_knowledge_question
         self._regenerate = regenerate
         self._route_command = route_command
 

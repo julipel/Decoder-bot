@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dekoder.domain.rag.fragment import KnowledgeFragment
 from dekoder.domain.session.session import GenerationSession
 from dekoder.domain.skills.skill import ContentSkill
 from dekoder.shared.application.execution_context import ExecutionContext
@@ -19,6 +18,5 @@ class ExecutionContextBuilder:
         content_type: ContentType | None,
         session: GenerationSession,
         user_input: dict[str, str],
-        knowledge_fragments: list[KnowledgeFragment],
     ) -> ExecutionContext:
         raise NotImplementedError

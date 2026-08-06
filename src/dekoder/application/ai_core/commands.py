@@ -14,12 +14,6 @@ class GenerateContentCommand:
 
 
 @dataclass(frozen=True)
-class AnswerKnowledgeQuestionCommand:
-    user_id: UserId
-    question_text: str
-
-
-@dataclass(frozen=True)
 class RegenerateCommand:
     user_id: UserId
     session_id: SessionId

@@ -17,13 +17,3 @@ class GenerationResult:
     model_used: str | None
     duration: float | None
     error: str | None
-
-
-@dataclass(frozen=True)
-class KnowledgeAnswerResult:
-    status: str
-    answer_text: str | None
-    used_rag: bool
-    provider_used: str | None
-    model_used: str | None
-    error: str | None
