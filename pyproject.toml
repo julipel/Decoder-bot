@@ -46,6 +46,12 @@ where = ["src"]
 # падал бы при старте внутри контейнера, работая только при локальном
 # запуске из исходников.
 "dekoder.infrastructure.prompts" = ["templates/*.txt", "templates/*.json"]
+# Sprint 7, задача S7-03 (ADR-7.4): статичный сид-каталог AI-моделей —
+# тот же класс проблемы, что и сид-шаблоны Prompt Engine выше: без этой
+# записи `pip install .` (используется в `Dockerfile`) собрал бы пакет
+# без `infrastructure/model_catalog/catalog.json`, и
+# `ConfigModelCatalogRepository` падал бы при старте внутри контейнера.
+"dekoder.infrastructure.model_catalog" = ["catalog.json"]
 
 [tool.ruff]
 target-version = "py311"

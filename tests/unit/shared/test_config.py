@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -17,6 +19,7 @@ from dekoder.shared.config import (
     ApplicationSettings,
     DatabaseSettings,
     LLMSettings,
+    ModelCatalogSettings,
     OpenRouterSettings,
     PromptSettings,
     Settings,
@@ -162,6 +165,24 @@ class TestPromptSettingsDefaults:
 
         with pytest.raises(ValidationError):
             PromptSettings(_env_file=None)
+
+
+class TestModelCatalogSettingsDefaults:
+    """Sprint 7, задача S7-03, ADR-7.4: путь к каталогу моделей — из `Settings`, не хардкод."""
+
+    def test_default_catalog_path_points_at_seed_file_inside_package(self) -> None:
+        settings = ModelCatalogSettings(_env_file=None)
+
+        assert settings.catalog_path.name == "catalog.json"
+        assert settings.catalog_path.exists()
+
+    def test_loaded_from_environment(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        custom_path = tmp_path / "custom_catalog.json"
+        monkeypatch.setenv("MODEL_CATALOG_CATALOG_PATH", str(custom_path))
+
+        settings = ModelCatalogSettings(_env_file=None)
+
+        assert settings.catalog_path == custom_path
 
 
 class TestSecretsHaveNoDefaults:

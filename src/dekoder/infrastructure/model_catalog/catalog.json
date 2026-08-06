@@ -1,0 +1,86 @@
+[
+  {
+    "model_id": "openai/gpt-4o-mini",
+    "display_name": "GPT-4o mini",
+    "provider": "openai",
+    "context_window": 128000,
+    "capabilities": ["text", "vision", "function_calling"],
+    "price_tier": "low",
+    "availability": "available",
+    "recommended_for": ["общие задачи", "быстрые ответы"],
+    "default_generation_settings": {
+      "temperature": 0.7,
+      "max_tokens": 1024
+    }
+  },
+  {
+    "model_id": "openai/gpt-4o",
+    "display_name": "GPT-4o",
+    "provider": "openai",
+    "context_window": 128000,
+    "capabilities": ["text", "vision", "function_calling"],
+    "price_tier": "high",
+    "availability": "available",
+    "recommended_for": ["сложные задачи", "код"],
+    "default_generation_settings": {
+      "temperature": 0.7,
+      "max_tokens": 2048
+    }
+  },
+  {
+    "model_id": "anthropic/claude-3.5-sonnet",
+    "display_name": "Claude 3.5 Sonnet",
+    "provider": "anthropic",
+    "context_window": 200000,
+    "capabilities": ["text", "vision", "function_calling"],
+    "price_tier": "high",
+    "availability": "available",
+    "recommended_for": ["код", "анализ", "длинные тексты"],
+    "default_generation_settings": {
+      "temperature": 0.7,
+      "max_tokens": 4096
+    }
+  },
+  {
+    "model_id": "anthropic/claude-3-haiku",
+    "display_name": "Claude 3 Haiku",
+    "provider": "anthropic",
+    "context_window": 200000,
+    "capabilities": ["text"],
+    "price_tier": "low",
+    "availability": "unavailable",
+    "recommended_for": ["быстрые ответы"],
+    "default_generation_settings": {
+      "temperature": 0.7,
+      "max_tokens": 1024
+    }
+  },
+  {
+    "model_id": "google/gemini-1.5-pro",
+    "display_name": "Gemini 1.5 Pro",
+    "provider": "google",
+    "context_window": 1000000,
+    "capabilities": ["text", "vision"],
+    "price_tier": "medium",
+    "availability": "available",
+    "recommended_for": ["длинный контекст", "документы"],
+    "default_generation_settings": {
+      "temperature": 0.7,
+      "max_tokens": 2048
+    }
+  },
+  {
+    "model_id": "meta-llama/llama-3.1-70b-instruct",
+    "display_name": "Llama 3.1 70B Instruct",
+    "provider": "meta",
+    "context_window": 128000,
+    "capabilities": ["text"],
+    "price_tier": "low",
+    "availability": "available",
+    "recommended_for": ["экономичные задачи"],
+    "default_generation_settings": {
+      "temperature": 0.7,
+      "max_tokens": 1024
+    }
+  }
+]

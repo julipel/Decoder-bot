@@ -20,6 +20,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -27,6 +29,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # соглашение для локальных значений разработчика (docs/versions/06, §6).
 # Более поздний файл в списке переопределяет более ранний.
 _ENV_FILES = (".env", ".env.local")
+
+# Путь к сид-каталогу моделей внутри пакета (`infrastructure/model_catalog/
+# catalog.json`) — вычисляется относительно расположения этого модуля
+# (`shared/config.py`), а не через импорт `infrastructure.model_catalog`
+# (не создаёт зависимости `shared/` от `infrastructure/`, только
+# файловый путь). Работает и при запуске из исходников, и из
+# установленного пакета — `catalog.json` включён в package-data
+# (`pyproject.toml`), рядом с модулем, чей `__file__` здесь не участвует.
+_DEFAULT_MODEL_CATALOG_PATH = (
+    Path(__file__).resolve().parent.parent / "infrastructure" / "model_catalog" / "catalog.json"
+)
 
 
 class ApplicationSettings(BaseSettings):
@@ -185,6 +198,26 @@ class KnowledgeSettings(BaseSettings):
     min_relevance_score: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
+class ModelCatalogSettings(BaseSettings):
+    """
+    Настройки статичного файлового каталога AI-моделей (Sprint 7, задача
+    S7-03, ADR-7.4).
+
+    `catalog_path` — путь к JSON-файлу каталога, прочитанному
+    `ConfigModelCatalogRepository` один раз при построении (не на каждый
+    вызов). Значение по умолчанию указывает на сид-файл внутри пакета
+    (`infrastructure/model_catalog/catalog.json`) — переопределяется
+    переменной окружения `MODEL_CATALOG_CATALOG_PATH` (в т.ч. в тестах,
+    на изолированный fixture-файл).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="MODEL_CATALOG_", env_file=_ENV_FILES, env_file_encoding="utf-8", extra="ignore"
+    )
+
+    catalog_path: Path = _DEFAULT_MODEL_CATALOG_PATH
+
+
 class Settings(BaseSettings):
     """
     Корневой объект конфигурации — группирует настройки по областям.
@@ -207,3 +240,4 @@ class Settings(BaseSettings):
     openai: OpenAiSettings = Field(default_factory=OpenAiSettings)  # type: ignore[arg-type]
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
     knowledge: KnowledgeSettings = Field(default_factory=KnowledgeSettings)
+    model_catalog: ModelCatalogSettings = Field(default_factory=ModelCatalogSettings)
