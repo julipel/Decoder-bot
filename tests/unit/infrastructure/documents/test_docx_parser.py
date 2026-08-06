@@ -33,6 +33,31 @@ class TestDocxParser:
         assert pages[0].number is None
         assert pages[0].text == "# Заголовок раздела\n\nПервый абзац.\n\n## Подраздел\n\nВторой абзац."
 
+    def test_title_style_becomes_a_level_one_heading(self) -> None:
+        document = docx.Document()
+        document.add_heading("Заголовок документа", level=0)  # python-docx: level=0 -> стиль "Title"
+        document.add_paragraph("Текст.")
+        buffer = io.BytesIO()
+        document.save(buffer)
+        parser = DocxParser()
+
+        pages = parser.parse(buffer.getvalue())
+
+        assert pages[0].text == "# Заголовок документа\n\nТекст."
+
+    def test_blank_paragraphs_are_skipped(self) -> None:
+        document = docx.Document()
+        document.add_paragraph("Первый абзац.")
+        document.add_paragraph("")
+        document.add_paragraph("Второй абзац.")
+        buffer = io.BytesIO()
+        document.save(buffer)
+        parser = DocxParser()
+
+        pages = parser.parse(buffer.getvalue())
+
+        assert pages[0].text == "Первый абзац.\n\nВторой абзац."
+
     def test_empty_document_raises_validation_error(self) -> None:
         parser = DocxParser()
 

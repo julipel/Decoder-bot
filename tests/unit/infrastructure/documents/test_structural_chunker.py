@@ -29,6 +29,15 @@ class TestStructuralChunker:
         # Последний увиденный заголовок (Раздел B) — секция для всего оставшегося буфера.
         assert chunks[0].section_title == "Раздел B"
 
+    def test_multiline_paragraph_starting_with_hash_is_not_a_heading(self) -> None:
+        chunker = StructuralChunker(chunk_size=1000, chunk_overlap=0)
+
+        chunks = chunker.chunk([ParsedPage(number=None, text="# Не заголовок\nвторая строка того же абзаца")])
+
+        assert len(chunks) == 1
+        assert "# Не заголовок" in chunks[0].text
+        assert chunks[0].section_title is None
+
     def test_exceeding_chunk_size_starts_new_chunk(self) -> None:
         chunker = StructuralChunker(chunk_size=20, chunk_overlap=0)
         paragraphs = "Первый абзац текста.\n\nВторой абзац текста.\n\nТретий абзац текста."
