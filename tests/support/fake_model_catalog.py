@@ -62,3 +62,19 @@ class FakeModelCatalogRepository:
 
     def list_all(self) -> Sequence[AIModel]:
         return list(self._by_id.values())
+
+
+def default_test_catalog(
+    model_id: str = "openai/gpt-4o-mini", *, temperature: float = 0.7, max_tokens: int = 512
+) -> FakeModelCatalogRepository:
+    """
+    Каталог по умолчанию для тестов `ProcessUserMessage`, не проверяющих
+    Sprint 7 model-catalog поведение напрямую (Sprint 2-6 регрессионные
+    сценарии): содержит ровно один `AVAILABLE` `model_id` с указанными
+    `temperature`/`max_tokens` — теми же значениями, что уже хардкожены в
+    конструкторах этих тестов, так, чтобы `ProcessUserMessage.
+    _resolve_model_id`/`_resolve_generation_settings` не меняли ни
+    `model_id`, ни `temperature`/`max_tokens`, ни не логировали
+    неожиданный откат.
+    """
+    return FakeModelCatalogRepository([make_ai_model(model_id, temperature=temperature, max_tokens=max_tokens)])

@@ -11,6 +11,7 @@ LLM-контекст из истории — тесты используют fak
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -24,6 +25,7 @@ from tests.support.fake_conversation_repositories import (
     make_default_profile,
 )
 from tests.support.fake_knowledge_repositories import FakeKnowledgeSearchService
+from tests.support.fake_model_catalog import FakeModelCatalogRepository, default_test_catalog, make_ai_model
 from tests.support.prompt_engine import make_test_prompt_builder
 
 from dekoder.application.conversation.dto import (
@@ -34,6 +36,7 @@ from dekoder.application.conversation.dto import (
 from dekoder.application.conversation.ports import ConversationRepositories, ConversationRepositoriesFactory
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.application.knowledge.ports import KnowledgeSearchService
+from dekoder.application.model_catalog.ports import ModelCatalogRepository
 from dekoder.application.prompt.ports import PromptBuilder
 from dekoder.domain.conversation.entities import Conversation, Message, MessageRole
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
@@ -45,9 +48,11 @@ from dekoder.domain.memory.value_objects import (
     MemorySource,
     MemoryStatus,
 )
+from dekoder.domain.model_catalog.enums import ModelAvailability
 from dekoder.domain.user.entities import User
 from dekoder.shared.domain.identifiers import CorrelationId
 from dekoder.shared.errors import InfrastructureError, LLMProviderError, ValidationError
+from dekoder.shared.logging import clear_request_context, configure_logging
 
 
 def _make_memory_record(user_id: UUID, **overrides: object) -> MemoryRecord:
@@ -241,7 +246,7 @@ def _make_command(
 
 
 class _Repos:
-    __slots__ = ("users", "conversations", "messages", "profiles", "memory")
+    __slots__ = ("users", "conversations", "messages", "profiles", "memory", "model_selection")
 
     def __init__(
         self,
@@ -250,12 +255,14 @@ class _Repos:
         messages: FakeMessageRepository,
         profiles: FakeProfileRepository,
         memory: FakeMemoryRepository,
+        model_selection: FakeModelSelectionRepository,
     ) -> None:
         self.users = users
         self.conversations = conversations
         self.messages = messages
         self.profiles = profiles
         self.memory = memory
+        self.model_selection = model_selection
 
 
 def _make_use_case(
@@ -267,26 +274,31 @@ def _make_use_case(
     messages: FakeMessageRepository | None = None,
     profiles: FakeProfileRepository | None = None,
     memory: FakeMemoryRepository | None = None,
+    model_selection: FakeModelSelectionRepository | None = None,
     knowledge_search: KnowledgeSearchService | None = None,
+    model_catalog: ModelCatalogRepository | None = None,
 ) -> tuple[ProcessUserMessage, _Repos]:
     users = users if users is not None else FakeUserRepository()
     conversations = conversations if conversations is not None else FakeConversationRepository()
     messages = messages if messages is not None else FakeMessageRepository()
     profiles = profiles if profiles is not None else FakeProfileRepository()
     memory = memory if memory is not None else FakeMemoryRepository()
+    model_selection = model_selection if model_selection is not None else FakeModelSelectionRepository()
     knowledge_search = knowledge_search if knowledge_search is not None else FakeKnowledgeSearchService()
-    factory = _make_repositories_factory(users, conversations, messages, profiles, memory)
+    model_catalog = model_catalog if model_catalog is not None else default_test_catalog(default_model)
+    factory = _make_repositories_factory(users, conversations, messages, profiles, memory, model_selection)
     use_case = ProcessUserMessage(
         llm_provider=provider,
         repositories=factory,
         prompt_builder=prompt_builder if prompt_builder is not None else make_test_prompt_builder(),
         knowledge_search=knowledge_search,
+        model_catalog=model_catalog,
         default_model=ModelId(default_model),
         temperature=0.7,
         max_tokens=512,
         max_relevant_memory=5,
     )
-    return use_case, _Repos(users, conversations, messages, profiles, memory)
+    return use_case, _Repos(users, conversations, messages, profiles, memory, model_selection)
 
 
 class TestNewUser:
@@ -473,7 +485,14 @@ class TestEmptyText:
 
 
 class TestModelResolution:
+    """
+    Sprint 7, задача S7-06 (ADR-7.7): разрешение активной модели по
+    приоритету `command.model_id` → персональный выбор → умолчание, с
+    молчаливым логируемым откатом при недоступности выбранной модели.
+    """
+
     async def test_uses_default_model_when_command_has_none(self) -> None:
+        """Регрессия поведения Sprint 1-6: нет ни override, ни персонального выбора → `self._default_model`."""
         provider = FakeLLMProvider(response=_make_response())
         use_case, _ = _make_use_case(provider, default_model="openai/gpt-4o-mini")
 
@@ -488,6 +507,98 @@ class TestModelResolution:
         await use_case.execute(_make_command(model_id=ModelId("anthropic/claude-3-haiku")))
 
         assert provider.received_requests[0].model_id == ModelId("anthropic/claude-3-haiku")
+
+    async def test_personal_selection_is_used_when_command_has_none(self) -> None:
+        """AC-1 (S7-06): персональный выбор доступной модели применяется, когда нет `command.model_id`."""
+        selected_model = make_ai_model(
+            "anthropic/claude-3.5-sonnet",
+            availability=ModelAvailability.AVAILABLE,
+            temperature=0.3,
+            max_tokens=4096,
+        )
+        catalog = FakeModelCatalogRepository([make_ai_model("openai/gpt-4o-mini"), selected_model])
+        users = FakeUserRepository()
+        user = await users.get_or_create_by_telegram_user_id(1001)
+        model_selection = FakeModelSelectionRepository({user.id: selected_model.model_id})
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, users=users, model_selection=model_selection, model_catalog=catalog)
+
+        await use_case.execute(_make_command(telegram_user_id=1001, model_id=None))
+
+        request = provider.received_requests[0]
+        assert request.model_id == selected_model.model_id
+        assert request.temperature == 0.3
+        assert request.max_tokens == 4096
+
+    async def test_explicit_override_wins_over_personal_selection(self) -> None:
+        """AC-2 (S7-06): явный `command.model_id` побеждает персональный выбор; override не проверяется каталогом."""
+        selected_model = make_ai_model("anthropic/claude-3.5-sonnet", availability=ModelAvailability.AVAILABLE)
+        # Каталог не содержит override-модель — override не проверяется
+        # через каталог (ADR-7.7), поэтому это не должно приводить к
+        # откату/ошибке.
+        catalog = FakeModelCatalogRepository([make_ai_model("openai/gpt-4o-mini"), selected_model])
+        users = FakeUserRepository()
+        user = await users.get_or_create_by_telegram_user_id(1002)
+        model_selection = FakeModelSelectionRepository({user.id: selected_model.model_id})
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, users=users, model_selection=model_selection, model_catalog=catalog)
+
+        override_model_id = ModelId("does-not-exist-in-catalog/override-model")
+        await use_case.execute(_make_command(telegram_user_id=1002, model_id=override_model_id))
+
+        assert provider.received_requests[0].model_id == override_model_id
+
+    async def test_unavailable_personal_selection_falls_back_to_default_and_logs_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """AC-3 (S7-06): персональный выбор указывает на UNAVAILABLE-модель → откат на `self._default_model`, лог."""
+        clear_request_context()
+        configure_logging(environment="test")
+        unavailable_model = make_ai_model("anthropic/claude-3-haiku", availability=ModelAvailability.UNAVAILABLE)
+        catalog = FakeModelCatalogRepository([make_ai_model("openai/gpt-4o-mini"), unavailable_model])
+        users = FakeUserRepository()
+        user = await users.get_or_create_by_telegram_user_id(1003)
+        model_selection = FakeModelSelectionRepository({user.id: unavailable_model.model_id})
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(
+            provider,
+            default_model="openai/gpt-4o-mini",
+            users=users,
+            model_selection=model_selection,
+            model_catalog=catalog,
+        )
+
+        await use_case.execute(_make_command(telegram_user_id=1003, model_id=None))
+
+        assert provider.received_requests[0].model_id == ModelId("openai/gpt-4o-mini")
+
+        log_lines = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        fallback_entries = [line for line in log_lines if line.get("event") == "model_selection_fallback"]
+        assert len(fallback_entries) == 1
+        assert fallback_entries[0]["requested_model_id"] == "anthropic/claude-3-haiku"
+        assert fallback_entries[0]["fallback_model_id"] == "openai/gpt-4o-mini"
+        assert fallback_entries[0]["user_id"] == str(user.id)
+        assert fallback_entries[0]["level"] == "warning"
+        clear_request_context()
+
+    async def test_unknown_model_in_catalog_also_falls_back_to_default(self) -> None:
+        """Откат применяется и когда персональный выбор указывает на `model_id`, которого больше нет в каталоге."""
+        catalog = FakeModelCatalogRepository([make_ai_model("openai/gpt-4o-mini")])
+        users = FakeUserRepository()
+        user = await users.get_or_create_by_telegram_user_id(1004)
+        model_selection = FakeModelSelectionRepository({user.id: ModelId("removed/model")})
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(
+            provider,
+            default_model="openai/gpt-4o-mini",
+            users=users,
+            model_selection=model_selection,
+            model_catalog=catalog,
+        )
+
+        await use_case.execute(_make_command(telegram_user_id=1004, model_id=None))
+
+        assert provider.received_requests[0].model_id == ModelId("openai/gpt-4o-mini")
 
 
 class TestLLMError:
@@ -782,6 +893,7 @@ class TestMemoryIntegration:
             repositories=_counting_factory,
             prompt_builder=make_test_prompt_builder(),
             knowledge_search=FakeKnowledgeSearchService(),
+            model_catalog=default_test_catalog("openai/gpt-4o-mini"),
             default_model=ModelId("openai/gpt-4o-mini"),
             temperature=0.7,
             max_tokens=512,

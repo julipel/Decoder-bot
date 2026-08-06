@@ -43,6 +43,7 @@ from tests.support.fake_conversation_repositories import (
     make_in_memory_repositories_factory,
 )
 from tests.support.fake_knowledge_repositories import FakeKnowledgeSearchService
+from tests.support.fake_model_catalog import default_test_catalog
 from tests.support.prompt_engine import make_test_prompt_builder
 
 from dekoder.application.conversation.dto import (
@@ -91,6 +92,7 @@ def _make_process_user_message(provider: FakeLLMProvider) -> ProcessUserMessage:
         repositories=make_in_memory_repositories_factory(),
         prompt_builder=make_test_prompt_builder(),
         knowledge_search=FakeKnowledgeSearchService(),
+        model_catalog=default_test_catalog(),
         default_model=ModelId("openai/gpt-4o-mini"),
         temperature=0.7,
         max_tokens=512,
@@ -271,6 +273,7 @@ class TestClearCommandRouting:
             repositories=factory,
             prompt_builder=make_test_prompt_builder(),
             knowledge_search=FakeKnowledgeSearchService(),
+            model_catalog=default_test_catalog(),
             default_model=ModelId("openai/gpt-4o-mini"),
             temperature=0.7,
             max_tokens=512,

@@ -85,6 +85,15 @@ semantic_search_service.py`) — композицию `OpenAiEmbeddingProvider`
 `DeleteKnowledgeDocumentUseCase` здесь НЕ собираются — индексация не
 часть диалогового контейнера (ADR-6.4/ADR-6.6), её собирает отдельно
 `scripts/index_document.py` (задача S6-09), не `api`/`telegram-bot`.
+
+С задачи S7-06 (Sprint 7, ADR-7.4/7.7) контейнер также собирает
+`ConfigModelCatalogRepository` (`infrastructure/model_catalog/
+config_repository.py`, парсит `catalog.json` один раз при построении,
+путь — `settings.model_catalog.catalog_path`, не хардкод) и внедряет её
+в `ProcessUserMessage` как `model_catalog`, тем же приёмом, что и
+`knowledge_search` (отдельный конструкторный параметр, не через
+`ConversationRepositoriesFactory` — каталог не пользовательские, не
+транзакционные данные, ADR-7.4).
 """
 
 from __future__ import annotations
@@ -112,6 +121,7 @@ from dekoder.domain.conversation.value_objects import ModelId
 from dekoder.domain.prompt.policies import TokenBudgetPolicy
 from dekoder.infrastructure.embeddings.openai_embedding_provider import OpenAiEmbeddingProvider
 from dekoder.infrastructure.llm.openrouter_adapter import OpenRouterLLMAdapter
+from dekoder.infrastructure.model_catalog.config_repository import ConfigModelCatalogRepository
 from dekoder.infrastructure.prompts.file_template_repository import FileTemplateRepository
 from dekoder.infrastructure.qdrant.vector_repository import QdrantVectorRepository
 from dekoder.shared.config import Settings
@@ -178,11 +188,13 @@ def build_container(
         limit=settings.knowledge.search_limit,
         min_relevance_score=settings.knowledge.min_relevance_score,
     )
+    model_catalog = ConfigModelCatalogRepository(catalog_path=settings.model_catalog.catalog_path)
     process_user_message = ProcessUserMessage(
         llm_provider=llm_provider,
         repositories=repositories_factory,
         prompt_builder=prompt_builder,
         knowledge_search=knowledge_search,
+        model_catalog=model_catalog,
         default_model=ModelId(settings.openrouter.default_model),
         temperature=settings.llm.temperature,
         max_tokens=settings.llm.max_tokens,

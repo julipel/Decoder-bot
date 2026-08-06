@@ -100,6 +100,32 @@ Sprint 6) сразу следовал вызов `PromptBuilder.build()`. Най
 `PromptContext.knowledge_fragments` в этом случае пуст, как и при
 отсутствии релевантных результатов (§14.8: «ответ формируется без RAG»).
 
+Выбор AI-модели (Sprint 7, задача S7-06, ADR-7.7): `_save_user_message`
+(транзакция 1) дополнительно разрешает активную модель по приоритету
+`command.model_id` (явный override, шаг 1) → `repositories.model_selection.
+get_selected(user.id)` (персональный выбор, шаг 2, тем же вызовом
+`self._repositories()`, что и `profiles`/`memory`) → `self._default_model`
+(умолчание, шаг 3). Для кандидатов шагов 2/3 (не для явного override)
+проверяется доступность через `self._model_catalog.get(...)`
+(`ModelCatalogRepository`, внедрён отдельным конструкторным параметром —
+как `knowledge_search`, не через `ConversationRepositoriesFactory`,
+ADR-7.4: каталог — не пользовательские, не транзакционные данные) —
+`None`/`ModelAvailability.UNAVAILABLE` приводят к тихому логируемому
+откату на `self._default_model` (`logger.warning`, поля
+`requested_model_id`/`fallback_model_id`/`user_id`). `GenerationSettings`
+разрешённой модели (если найдена в каталоге) используется для
+`temperature`/`max_tokens` при построении `LLMRequest` вместо
+`self._temperature`/`self._max_tokens`; если модель не найдена в каталоге
+(например, использован `self._default_model`, отсутствующий в каталоге
+отдельной записью) — используются прежние `self._temperature`/
+`self._max_tokens`. `ValidateModelAvailability` из §15.4 не выделяется в
+отдельный use-case класс — проверка инкапсулирована в `_resolve_model_id`
+ниже (ADR-7.7). Ни один файл `domain/prompt/`/`application/prompt/`/
+`infrastructure/prompts/` этой задачей не меняется (ADR-7.8) —
+`PromptContext`/`PromptBuildResult` не содержат и не получают поля,
+связанного с моделью; `model_id` прикрепляется к `LLMRequest` напрямую,
+независимо от сборки промпта, как и раньше (docstring ADR-7.8).
+
 Команды `/new`/`/clear` не входят — отдельные use case
 (`StartNewConversation`/`ClearConversation`).
 
@@ -125,13 +151,19 @@ from dekoder.application.conversation.dto import (
     ProcessUserMessageResult,
     TokenUsage,
 )
-from dekoder.application.conversation.ports import ConversationRepositoriesFactory, LLMProvider
+from dekoder.application.conversation.ports import (
+    ConversationRepositories,
+    ConversationRepositoriesFactory,
+    LLMProvider,
+)
 from dekoder.application.knowledge.ports import KnowledgeSearchService
+from dekoder.application.model_catalog.ports import ModelCatalogRepository
 from dekoder.application.prompt.ports import PromptBuilder
 from dekoder.domain.conversation.entities import Message, MessageRole
 from dekoder.domain.conversation.value_objects import MessageText, ModelId
 from dekoder.domain.knowledge.search import SearchResult
 from dekoder.domain.memory.entities import MemoryRecord
+from dekoder.domain.model_catalog.enums import ModelAvailability
 from dekoder.domain.profile.entities import UserProfile
 from dekoder.domain.prompt.value_objects import PromptContext
 from dekoder.shared.errors import ValidationError
@@ -147,6 +179,7 @@ class ProcessUserMessage:
         repositories: ConversationRepositoriesFactory,
         prompt_builder: PromptBuilder,
         knowledge_search: KnowledgeSearchService,
+        model_catalog: ModelCatalogRepository,
         default_model: ModelId,
         temperature: float,
         max_tokens: int,
@@ -156,6 +189,7 @@ class ProcessUserMessage:
         self._repositories = repositories
         self._prompt_builder = prompt_builder
         self._knowledge_search = knowledge_search
+        self._model_catalog = model_catalog
         self._default_model = default_model
         self._temperature = temperature
         self._max_tokens = max_tokens
@@ -179,9 +213,10 @@ class ProcessUserMessage:
 
     async def execute(self, command: ProcessUserMessageCommand) -> ProcessUserMessageResult:
         message_text = self._validate_message_text(command.message_text)
-        model_id = command.model_id if command.model_id is not None else self._default_model
 
-        conversation_id, profile, memory_records = await self._save_user_message(command.telegram_user_id, message_text)
+        conversation_id, profile, memory_records, model_id = await self._save_user_message(
+            command.telegram_user_id, message_text, command.model_id
+        )
         history = await self._load_history(conversation_id)
         knowledge_results = await self._search_knowledge(message_text.value)
 
@@ -193,12 +228,13 @@ class ProcessUserMessage:
         )
         build_result = self._prompt_builder.build(context)
 
+        temperature, max_tokens = self._resolve_generation_settings(model_id)
         request = LLMRequest(
             system_prompt=build_result.system_prompt,
             messages=build_result.messages,
             model_id=model_id,
-            temperature=self._temperature,
-            max_tokens=self._max_tokens,
+            temperature=temperature,
+            max_tokens=max_tokens,
             correlation_id=command.correlation_id,
         )
         response = await self._llm_provider.generate(request)
@@ -217,39 +253,97 @@ class ProcessUserMessage:
         )
 
     async def _save_user_message(
-        self, telegram_user_id: int, message_text: MessageText
-    ) -> tuple[UUID, UserProfile, Sequence[MemoryRecord]]:
+        self, telegram_user_id: int, message_text: MessageText, override_model_id: ModelId | None
+    ) -> tuple[UUID, UserProfile, Sequence[MemoryRecord], ModelId]:
         """
         Транзакция 1 (backlog_2.md §9): получить/создать пользователя,
         получить/создать его активный диалог, прочитать его активный
         профиль (Sprint 3, задача S3-07, ADR-3.3 — тем же вызовом
         `self._repositories()`, не отдельной транзакцией), прочитать
         релевантную память (Sprint 5, задача S5-06, ADR-5.4/5.6 — тем же
-        приёмом, сразу после чтения профиля), сохранить сообщение
-        пользователя — всё поверх ОДНОЙ короткоживущей транзакции,
-        завершаемой commit'ом при выходе из `async with` (или rollback'ом
-        при любой ошибке, включая ошибку сохранения сообщения — LLM в
-        этом случае не вызывается, см. докстринг модуля).
+        приёмом, сразу после чтения профиля), разрешить активную модель
+        (Sprint 7, задача S7-06, ADR-7.7 — тем же приёмом, сразу после
+        чтения памяти), сохранить сообщение пользователя — всё поверх
+        ОДНОЙ короткоживущей транзакции, завершаемой commit'ом при выходе
+        из `async with` (или rollback'ом при любой ошибке, включая ошибку
+        сохранения сообщения — LLM в этом случае не вызывается, см.
+        докстринг модуля).
 
-        Возвращает `(conversation_id, profile, memory_records)` (Sprint 4,
-        задача S4-07, ADR-4.8; Sprint 5, задача S5-06, ADR-5.6) — раньше
-        (Sprint 2/3) возвращался уже вычисленный `system_instruction: str`
-        с fallback-логикой внутри этого use case; теперь этот use case
-        передаёт весь `UserProfile` и уже отфильтрованные/отсортированные
-        `MemoryRecord` (`MemoryRepository.find_relevant`, единственная
-        точка бизнес-правила «неподтверждённая память не входит в
-        контекст», ADR-5.6) как есть — построение системной инструкции и
-        рендер секции 4 промпта — ответственность `PromptBuilder`, не
-        здесь.
+        Возвращает `(conversation_id, profile, memory_records, model_id)`
+        (Sprint 4, задача S4-07, ADR-4.8; Sprint 5, задача S5-06, ADR-5.6;
+        Sprint 7, задача S7-06, ADR-7.7) — раньше (Sprint 2/3) возвращался
+        уже вычисленный `system_instruction: str` с fallback-логикой
+        внутри этого use case; теперь этот use case передаёт весь
+        `UserProfile` и уже отфильтрованные/отсортированные `MemoryRecord`
+        (`MemoryRepository.find_relevant`, единственная точка бизнес-
+        правила «неподтверждённая память не входит в контекст», ADR-5.6)
+        как есть — построение системной инструкции и рендер секции 4
+        промпта — ответственность `PromptBuilder`, не здесь; `model_id`
+        уже полностью разрешён (приоритет + откат при недоступности,
+        ADR-7.7) — `execute()` использует его как есть.
         """
         async with self._repositories() as repositories:
             user = await repositories.users.get_or_create_by_telegram_user_id(telegram_user_id)
             conversation = await repositories.conversations.get_or_create_active(user.id)
             profile = await repositories.profiles.get_active_profile(user.id)
             memory_records = await repositories.memory.find_relevant(user.id, limit=self._max_relevant_memory)
+            model_id = await self._resolve_model_id(repositories, user.id, override_model_id)
             user_message = self._build_message(conversation.id, MessageRole.USER, message_text.value)
             await repositories.messages.save(user_message)
-            return conversation.id, profile, memory_records
+            return conversation.id, profile, memory_records, model_id
+
+    async def _resolve_model_id(
+        self, repositories: ConversationRepositories, user_id: UUID, override_model_id: ModelId | None
+    ) -> ModelId:
+        """
+        Разрешает активную модель по приоритету (ADR-7.7): явный
+        `override_model_id` (шаг 1, если задан — используется как есть,
+        без проверки через каталог: override предполагает осознанный
+        вызывающий код, не пользовательский ввод) → персональный выбор
+        пользователя (шаг 2, `repositories.model_selection.get_selected`,
+        тем же приёмом, что `repositories.profiles.get_active_profile`) →
+        `self._default_model` (шаг 3). Кандидат шагов 2/3 проверяется
+        через `self._model_catalog.get(...)` — `None`/`UNAVAILABLE`
+        приводят к тихому логируемому откату на `self._default_model`, без
+        диалога с пользователем (заранее заданная политика §15.5).
+
+        Не выделено в отдельный use-case класс `ValidateModelAvailability`
+        (§15.4) — вся проверка инкапсулирована здесь, тем же приёмом, что
+        и остальные точечные проверки этого use case (ADR-7.7).
+        """
+        if override_model_id is not None:
+            return override_model_id
+
+        selected_model_id = await repositories.model_selection.get_selected(user_id)
+        candidate_model_id = selected_model_id if selected_model_id is not None else self._default_model
+
+        catalog_model = self._model_catalog.get(candidate_model_id)
+        if catalog_model is None or catalog_model.availability is ModelAvailability.UNAVAILABLE:
+            _logger.warning(
+                "model_selection_fallback",
+                requested_model_id=candidate_model_id.value,
+                fallback_model_id=self._default_model.value,
+                user_id=str(user_id),
+            )
+            return self._default_model
+
+        return candidate_model_id
+
+    def _resolve_generation_settings(self, model_id: ModelId) -> tuple[float, int]:
+        """
+        `GenerationSettings` разрешённой модели, если она найдена в
+        каталоге (ADR-7.7/ADR-7.3) — иначе прежние `Settings.llm.
+        temperature`/`Settings.llm.max_tokens` (например, `self.
+        _default_model` может не иметь отдельной записи в каталоге).
+        Применяется к ЛЮБОМУ уже разрешённому `model_id` (после отката
+        при недоступности, если он случился) — не только к персональному
+        выбору.
+        """
+        catalog_model = self._model_catalog.get(model_id)
+        if catalog_model is None:
+            return self._temperature, self._max_tokens
+        settings = catalog_model.default_generation_settings
+        return settings.temperature, settings.max_tokens
 
     async def _load_history(self, conversation_id: UUID) -> list[Message]:
         """
