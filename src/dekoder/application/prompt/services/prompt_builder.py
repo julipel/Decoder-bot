@@ -110,7 +110,7 @@ class DeterministicPromptBuilder:
         безусловно играет секция 1, ADR-4.7).
 
         `preferred_model` намеренно не используется — выбор модели вне
-        объёма Sprint 4 (Этап 10, ADR-4.7).
+        объёма Sprint 4 (Этап 9, ADR-4.7).
         """
         profile = context.profile
         variables = {

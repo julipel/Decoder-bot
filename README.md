@@ -1,50 +1,60 @@
 # Декодер
 
 Персональный AI-ассистент «Декодер». Целевая архитектура и полный
-состав возможностей (профили автора, Content Skills, каталог моделей,
-Prompt Engine, база знаний с RAG, память диалога, админ-панель) описаны
-в [`CLAUDE.md`](claude.md) и в `docs/versions/` — это проектные
-документы, а не описание того, что уже запускается.
+состав возможностей (профили автора, Content Skills, административная
+панель) описаны в [`CLAUDE.md`](claude.md) и в `docs/versions/` — это
+проектные документы, а не описание того, что уже запускается.
 
 **Что реально работает сейчас** — Sprint 1 (Walking Skeleton), Sprint 2
 (постоянное хранилище, диалоги, история), Sprint 3 (пользовательские
-профили), Sprint 4 (Prompt Engine — централизованная сборка промпта) и
-Sprint 5 (долговременная память) полностью завершены:
+профили), Sprint 4 (Prompt Engine — централизованная сборка промпта),
+Sprint 5 (долговременная память), Sprint 6 (база знаний и RAG через
+Qdrant) и Sprint 7 (выбор AI-модели пользователем) полностью завершены:
 
 ```text
-Telegram → ProcessUserMessage → (профиль + память + история) → PromptContext → PromptBuilder → PromptBuildResult
-                 │                                                                                   │
-                 ├── User/Conversation/Message сохраняются в SQLite                                  │
-                 └───────────────────────────────────────────────────── LLMProvider → OpenRouterLLMAdapter → ответ
+Telegram → ProcessUserMessage → (модель + профиль + память + история + RAG) → PromptContext → PromptBuilder → PromptBuildResult
+                 │                                                                                                    │
+                 ├── User/Conversation/Message/выбор модели сохраняются в SQLite                                     │
+                 └──────────────────────────────────────────────────────────────── LLMRequest.model_id → LLMProvider → OpenRouterLLMAdapter → ответ
 
 Telegram /new      → StartNewConversation → закрывает текущий диалог, создаёт новый (память не трогает)
 Telegram /clear    → ClearConversation    → удаляет историю, диалог остаётся активным (память не трогает)
 Telegram /profile  → ListProfiles/GetActiveProfile/SelectProfile → выбор профиля через inline-клавиатуру
 Telegram /remember → CreateMemoryRecordUseCase → сохраняет факт сразу подтверждённым (status=CONFIRMED)
 Telegram /memory   → ListMemoryRecordsUseCase → список подтверждённых фактов с inline-удалением (🗑)
+Telegram /model    → ListAvailableModels/GetSelectedModel/SelectModel → выбор AI-модели через inline-клавиатуру
 ```
 
 Пользователь пишет боту в Telegram → сообщение уходит в use case
 `ProcessUserMessage` → пользователь и его активный диалог находятся или
-создаются в SQLite, читается его активный профиль (`ProfileRepository`) и
+создаются в SQLite, читается его активный профиль (`ProfileRepository`),
 до `MemorySettings.max_relevant_records` (по умолчанию 5) подтверждённых
 записей памяти (`MemoryRepository.find_relevant` — только `CONFIRMED`, не
-истёкшие, отсортированные по значимости и свежести, Sprint 5), сообщение
-пользователя сохраняется → история диалога читается из базы →
-`ProcessUserMessage` собирает `PromptContext` (профиль + подтверждённая
-память + история) и передаёт его `PromptBuilder` (Prompt Engine, Sprint 4)
-— тот детерминированно собирает системную инструкцию из 8 фиксированных
-секций (базовая инструкция, правила безопасности, параметры активного
-профиля — используются ВСЕ описательные поля профиля, не только
-`system_instruction`, — подтверждённая память (заполнена реальными
-данными с Sprint 5; пустой плейсхолдер RAG), история диалога, текущий
-запрос, требования к формату ответа), исключая пустые секции и
+истёкшие, отсортированные по значимости и свежести, Sprint 5) и
+разрешается активная AI-модель (Sprint 7: явный override →
+персональный выбор пользователя, `ModelSelectionRepository.get_selected` →
+`OPENROUTER_DEFAULT_MODEL`; недоступная/отсутствующая в каталоге модель
+— тихий логируемый откат на умолчание, без диалога с пользователем),
+сообщение пользователя сохраняется → история диалога читается из базы →
+выполняется семантический поиск по базе знаний (Sprint 6: эмбеддинг
+запроса → поиск в Qdrant → найденные фрагменты с указанием источника;
+сбой поиска не обрушивает ответ — просто нет RAG-контекста в этом
+ответе) → `ProcessUserMessage` собирает `PromptContext` (профиль +
+подтверждённая память + история + фрагменты базы знаний) и передаёт его
+`PromptBuilder` (Prompt Engine, Sprint 4) — тот детерминированно собирает
+системную инструкцию из 8 фиксированных секций (базовая инструкция,
+правила безопасности, параметры активного профиля — используются ВСЕ
+описательные поля профиля, не только `system_instruction`, —
+подтверждённая память, найденные источники базы знаний, история диалога,
+текущий запрос, требования к формату ответа), исключая пустые секции и
 ограничивая суммарный объём эвристическим `TokenBudgetPolicy` (обрезает
 старую историю первой, если она есть; текущий запрос и системные секции
-неприкосновенны) → адаптер `OpenRouterLLMAdapter` обращается к
-OpenRouter → ответ модели сохраняется как сообщение ассистента и
-возвращается пользователю в Telegram; версии использованных шаблонов
-промпта доступны в `ProcessUserMessageResult.prompt_template_versions`.
+неприкосновенны) → адаптер `OpenRouterLLMAdapter` вызывается с
+разрешённой моделью и её `temperature`/`max_tokens` из каталога (если
+модель в нём есть — иначе `LLM_TEMPERATURE`/`LLM_MAX_TOKENS`) → ответ
+модели сохраняется как сообщение ассистента и возвращается пользователю
+в Telegram; версии использованных шаблонов промпта доступны в
+`ProcessUserMessageResult.prompt_template_versions`.
 Команда `/new` закрывает текущий диалог и начинает новый (старая история
 не удаляется, просто перестаёт быть активной; подтверждённая память не
 удаляется — память не равна истории сообщений, §13.5 «Плана
@@ -58,12 +68,18 @@ OpenRouter → ответ модели сохраняется как сообщ�
 только подтверждённые факты с кнопкой 🗑 на каждой записи — удаление
 только через inline-кнопку, команды `/forget` нет (ADR-5.10); один
 пользователь никогда не видит и не может удалить факты другого
-(`user_id`-изоляция на уровне `MemoryRepository`, не только Telegram-слоя).
+(`user_id`-изоляция на уровне `MemoryRepository`, не только Telegram-слоя);
+`/model` показывает статичный каталог AI-моделей (`infrastructure/
+model_catalog/catalog.json`, 6 моделей OpenRouter из 4 семейств
+поставщиков) с отметкой текущей выбранной и явной пометкой «(недоступна)»
+у моделей, помеченных в каталоге неактивными — выбор такой модели
+отклоняется на уровне use case, не только UI; переключение влияет только
+на будущие сообщения и не затрагивает других пользователей.
 Персональных (не каталожных) профилей, `CreateProfile`/`UpdateProfile`/
-`DeactivateProfile`, RAG и выбора модели ещё нет — они добавляются по
-следующим спринтам/этапам (`claude.md`, §33); секция 5 (RAG) Prompt
-Engine уже структурно готова, но всегда пуста до соответствующего
-спринта. Автоматическое извлечение фактов AI из диалога не реализовано и
+`DeactivateProfile`, реальных прямых (не через OpenRouter) адаптеров
+провайдеров и интеллектуальной авто-маршрутизации между моделями ещё
+нет — они добавляются по следующим спринтам/этапам (`claude.md`, §33).
+Автоматическое извлечение фактов AI из диалога не реализовано и
 не планируется в MVP (§13.2 «Плана реализации.md») — память растёт
 только через явную команду `/remember`.
 
@@ -88,7 +104,10 @@ src/dekoder/
 │   ├── profile/                     # UserProfile, ProfileStatus (Sprint 3, S3-02)
 │   ├── prompt/                      # PromptTemplate/PromptTemplateStatus, PromptSection/PromptContext/
 │   │                                 #   PromptBuildResult, TokenBudgetPolicy (Sprint 4, S4-02)
-│   └── memory/                      # MemoryRecord, MemoryCategory/MemorySource/MemoryStatus/MemoryConfidence (Sprint 5, S5-02)
+│   ├── memory/                      # MemoryRecord, MemoryCategory/MemorySource/MemoryStatus/MemoryConfidence (Sprint 5, S5-02)
+│   ├── knowledge/                   # KnowledgeDocument, SearchResult/SourceReference (Sprint 6, S6-03)
+│   └── model_catalog/               # AIModel, ModelSelection, AIProvider/ModelCapability/ModelAvailability/
+│                                     #   ModelPriceTier, GenerationSettings (Sprint 7, S7-02/S7-04)
 ├── application/
 │   ├── conversation/                # DTO, LLMProvider/ConversationRepository/MessageRepository/ConversationRepositories (порты),
 │   │                                 #   ProcessUserMessage, StartNewConversation, ClearConversation
@@ -97,34 +116,51 @@ src/dekoder/
 │   ├── prompt/                      # PromptBuilder/PromptTemplateRepository (порты, S4-03);
 │   │                                 #   services/prompt_builder.py::DeterministicPromptBuilder (S4-05),
 │   │                                 #   services/token_budget.py::estimate_size (S4-06)
-│   └── memory/                      # MemoryRepository (порт, S5-03), DTO, use_cases/ — CreateMemoryRecord/
-│                                     #   ConfirmMemoryRecord/RejectMemoryRecord/ListMemoryRecords/DeleteMemoryRecord (S5-05)
+│   ├── memory/                      # MemoryRepository (порт, S5-03), DTO, use_cases/ — CreateMemoryRecord/
+│   │                                 #   ConfirmMemoryRecord/RejectMemoryRecord/ListMemoryRecords/DeleteMemoryRecord (S5-05)
+│   ├── knowledge/                   # KnowledgeDocumentRepository/KnowledgeSearchService (порты, S6-03/S6-04),
+│   │                                 #   services/semantic_search_service.py::SemanticSearchService (S6-07),
+│   │                                 #   use_cases/{index_document,delete_document}.py (S6-06)
+│   └── model_catalog/               # ModelCatalogRepository/ModelSelectionRepository (порты, S7-03/S7-04), DTO,
+│                                     #   use_cases/{list_models,get_selected_model,select_model}.py (S7-05)
 ├── infrastructure/
 │   ├── llm/                         # OpenRouterLLMAdapter
 │   ├── persistence/                 # base.py/engine.py/session.py (SQLAlchemy async, S2-01) +
 │   │                                 #   user_orm.py/conversation_orm.py/message_orm.py + mappers.py (S2-02) +
 │   │                                 #   user_repository.py/conversation_repository.py/message_repository.py (S2-03..S2-05) +
 │   │                                 #   profile_orm.py/user_active_profile_orm.py/profile_repository.py (Sprint 3, S3-03/S3-05) +
-│   │                                 #   memory_record_orm.py/memory_repository.py::SQLAlchemyMemoryRepository (Sprint 5, S5-04)
-│   └── prompts/                     # file_template_repository.py::FileTemplateRepository +
-│                                     #   templates/{manifest.json, *.txt} — 6 сид-шаблонов (Sprint 4, S4-04)
-├── presentation/telegram/           # /start, /new, /clear, /profile, /remember, /memory (S5-07),
+│   │                                 #   memory_record_orm.py/memory_repository.py::SQLAlchemyMemoryRepository (Sprint 5, S5-04) +
+│   │                                 #   knowledge_document_orm.py/knowledge_document_repository.py (Sprint 6, S6-04) +
+│   │                                 #   user_active_model_orm.py/sqlalchemy_model_selection_repository.py (Sprint 7, S7-04)
+│   ├── prompts/                     # file_template_repository.py::FileTemplateRepository +
+│   │                                 #   templates/{manifest.json, *.txt} — 6 сид-шаблонов (Sprint 4, S4-04)
+│   ├── documents/                   # parsers/{txt,markdown,docx,pdf}_parser.py, chunking/structural_chunker.py (Sprint 6, S6-05)
+│   ├── embeddings/                  # openai_embedding_provider.py::OpenAiEmbeddingProvider (Sprint 6, S6-05)
+│   ├── qdrant/                      # client.py, vector_repository.py::QdrantVectorRepository (Sprint 6, S6-02/S6-05)
+│   ├── filesystem/                  # local_document_storage.py — хранилище исходных файлов документов (Sprint 6, S6-05)
+│   └── model_catalog/               # catalog.json (сид, 6 моделей OpenRouter/4 поставщика) +
+│                                     #   config_repository.py::ConfigModelCatalogRepository (Sprint 7, S7-03)
+├── presentation/telegram/           # /start, /new, /clear, /profile, /remember, /memory (S5-07), /model (S7-07),
 │                                     #   обработчик текстовых сообщений, mapper.py, bot.py
 ├── bootstrap/                       # container.py, application.py, database.py, repositories.py — единственное место сборки
 └── shared/                          # config.py, logging.py, errors.py
 
 alembic/                             # users/conversations/messages (S2-02) + profiles/user_active_profiles (S3-03) +
-                                      #   сид-каталог из 4 профилей (S3-04) + memory_records, схема без сид-данных
-                                      #   (Sprint 5, S5-04, ADR-5.7) — Sprint 4 не добавляет миграций
-                                      #   (шаблоны промпта — файловое хранилище, не БД, ADR-4.2)
+                                      #   сид-каталог из 4 профилей (S3-04) + memory_records (S5-04) +
+                                      #   knowledge_documents (Sprint 6, S6-04) + user_active_models
+                                      #   (Sprint 7, S7-04, ADR-7.5) — все схемные миграции после сид-каталога
+                                      #   профилей без сид-данных; Sprint 4 не добавляет миграций (шаблоны
+                                      #   промпта — файловое хранилище, не БД, ADR-4.2); каталог моделей —
+                                      #   тоже файловое хранилище (catalog.json), не БД (ADR-7.4)
+
+scripts/index_document.py            # CLI-скрипт индексации/удаления документов базы знаний (Sprint 6, S6-09)
 ```
 
 > В репозитории также существует более крупное, отдельное от этого
 > среза дерево-заглушка — `composition/`, `interfaces/`, а также модули
-> `ai_core`, `admin`, `memory`, `knowledge_base`, `rag`, `model_catalog`
-> под `domain/`/`application/`, и `infrastructure/model_gateway/`. Это
-> результат более ранней миграции по документам
-> `docs/versions/*_v2.0.md`, построенной по другой архитектуре
+> `ai_core`, `admin`, `session`, `skills`, `knowledge_base`, `rag` под
+> `domain/`/`application/`. Это результат более ранней миграции по
+> документам `docs/versions/*_v2.0.md`, построенной по другой архитектуре
 > (`interfaces/`+`composition/` вместо `presentation/`+`bootstrap/`).
 > Реально запускаемое приложение (`main.py`, `telegram_main.py`) его не
 > использует — почти весь код там оканчивается `raise
@@ -144,14 +180,26 @@ alembic/                             # users/conversations/messages (S2-02) + pr
 > (`application/memory/*` со старой формой `DialogueEntry`/`MemoryFact`/
 > `MemoryFactDraft`, `domain/memory/*`, `infrastructure/persistence/
 > sqlite_memory_repository.py`, `application/ai_core/internal_services/
-> memory_collector.py`) был удалён в Sprint 5 (задача S5-01) по той же
-> логике — прямой риск путаницы именно в момент, когда строилась
-> настоящая долговременная память (`domain/memory/`, `application/
-> memory/`, реальная форма `MemoryRecord`). Остальной v2.0-скелет
-> (`admin`, `rag`, `session`, `skills`, `model_catalog`, `knowledge_base`,
-> `model_gateway`, `infrastructure/vector_storage`, `interfaces/`,
-> `composition/`) по-прежнему не тронут — признан нежизнеспособным, но
-> его зачистка вынесена в отдельную будущую задачу (ADR-4.10/ADR-5.1).
+> memory_collector.py`) был удалён в Sprint 5 (задача S5-01), мёртвый
+> узел базы знаний/RAG (`domain/knowledge_base/`, `application/
+> knowledge_base/`, `domain/rag/`, `application/rag/`,
+> `infrastructure/vector_storage/`, `interfaces/admin_http/`) — в
+> Sprint 6 (задача S6-01), а мёртвый узел каталога моделей
+> (`domain/model_catalog/model_definition.py` — плоский `ModelDefinition`,
+> `application/model_catalog/*` со старой формой `list_compatible(...)`,
+> `application/model_gateway/`, `infrastructure/model_gateway/`,
+> `infrastructure/persistence/sqlite_model_catalog_repository.py`) — в
+> Sprint 7 (задача S7-01, ADR-7.1) — той же логикой: прямой риск
+> путаницы именно в момент, когда строилась настоящая версия каждой
+> подсистемы (реальная память — `domain/memory/`; реальная база знаний —
+> `domain/knowledge/`; реальный каталог моделей — `domain/model_catalog/`
+> с формой `AIModel`/`AIProvider`/`ModelCapability`/`ModelAvailability`/
+> `GenerationSettings`, использующий живой `ModelId` из
+> `domain/conversation/value_objects.py`, а не мёртвый из
+> `shared/domain/identifiers.py`). Остальной v2.0-скелет (`admin`, `rag`,
+> `session`, `skills`, `interfaces/`, `composition/`) по-прежнему не
+> тронут — признан нежизнеспособным, но его зачистка вынесена в
+> отдельную будущую задачу (ADR-4.10/5.1/6.x/7.1).
 
 ## Технологический стек
 
@@ -159,15 +207,26 @@ Python 3.11+, FastAPI, uvicorn, python-telegram-bot, httpx,
 pydantic / pydantic-settings, structlog. С Sprint 2 подключены и
 полностью используются SQLAlchemy 2.x (async, `AsyncEngine`/`AsyncSession`),
 `aiosqlite` и Alembic — постоянное хранилище `users`/`conversations`/
-`messages` (ORM-модели, репозитории, единственная миграция схемы
-`alembic/versions/`), с `PRAGMA foreign_keys=ON` для каждого SQLite-
-соединения (`infrastructure/persistence/engine.py`).
+`messages`/`profiles`/`user_active_profiles`/`memory_records`/
+`knowledge_documents`/`user_active_models` (ORM-модели, репозитории,
+шесть миграций схемы + одна data migration в `alembic/versions/`), с
+`PRAGMA foreign_keys=ON` для каждого SQLite-соединения
+(`infrastructure/persistence/engine.py`).
 Prompt Engine (Sprint 4) не добавляет ни одной новой зависимости —
 подстановка переменных в шаблоны промпта использует только стандартную
 библиотеку (`string.Template`), не Jinja2 и не другой шаблонизатор;
 шаблоны хранятся в текстовых файлах за портом, не в БД (ADR-4.2).
-Qdrant и остальной стек из `docs/versions/01_requirements_analysis_v2.0.md`
-по-прежнему относятся к будущим спринтам и в этом срезе не подключены.
+С Sprint 6 подключены `qdrant-client` (векторное хранилище для RAG,
+отдельный сервис `qdrant` в `docker-compose.yml`), `python-docx`/`pypdf`
+(парсинг документов `.docx`/`.pdf` базы знаний) — эмбеддинги считаются
+через OpenAI напрямую (`OPENAI_API_KEY`, отдельно от `OPENROUTER_*` —
+OpenRouter не отдаёт embeddings API), а не через OpenRouter.
+Каталог AI-моделей (Sprint 7) не добавляет ни одной новой зависимости —
+статичный JSON-файл (`infrastructure/model_catalog/catalog.json`),
+парсится через уже используемый `pydantic` (ADR-7.4); OpenRouter
+остаётся единственным реальным LLM-провайдером — выбор модели меняет
+только значение `LLMRequest.model_id`, отправляемое тому же
+`OpenRouterLLMAdapter`, не добавляет второй HTTP-клиент/адаптер.
 
 ## Быстрый старт (локальная разработка)
 
@@ -202,8 +261,7 @@ uv run python -m dekoder.telegram_main
 ```
 
 **Перед первым запуском примените миграции** (создают `./data/app.db` со
-схемой `users`/`conversations`/`messages` — см. раздел «База данных и
-миграции» ниже):
+всей текущей схемой — см. раздел «База данных и миграции» ниже):
 
 ```powershell
 uv run alembic upgrade head
@@ -228,7 +286,21 @@ uv run alembic upgrade head
   «Креативный») с inline-клавиатурой, текущий активный отмечен в тексте
   кнопки; выбор профиля меняет системную инструкцию, которую видит LLM
   при каждом следующем ответе — переключение не затрагивает уже
-  отправленные сообщения и не влияет на других пользователей.
+  отправленные сообщения и не влияет на других пользователей;
+- `/remember <текст>`/`/memory` — сохраняет и показывает долговременные
+  факты о пользователе (Sprint 5), учитываются в ответах через секцию 4
+  промпта;
+- документы базы знаний индексируются офлайн через `python -m
+  scripts.index_document` (Sprint 6, не Telegram-команда) — после
+  индексации релевантные фрагменты автоматически подмешиваются в ответ
+  через RAG, без явного действия пользователя в чате;
+- `/model` — показывает статичный каталог AI-моделей с inline-клавиатурой,
+  текущая выбранная отмечена в тексте кнопки, недоступные — пометкой
+  «(недоступна)» (выбрать такую модель нельзя — use case отклоняет
+  попытку, не только UI); выбор влияет на модель, которой генерируются
+  ответы этого пользователя при каждом следующем сообщении, не
+  затрагивает других пользователей; без выбора используется
+  `OPENROUTER_DEFAULT_MODEL`.
 
 `.env` и `.env.local` поддерживаются оба, `.env.local` имеет приоритет
 (см. `src/dekoder/shared/config.py`); ни один из них не коммитится.
@@ -240,7 +312,7 @@ uv run alembic upgrade head
 умолчанию `sqlite+aiosqlite:///./data/app.db`). Схема базы данных
 создаётся и изменяется **только** через Alembic — `Base.metadata.
 create_all()` нигде не вызывается в рабочем коде (только в тестовых
-фикстурах). Четыре ревизии:
+фикстурах). Шесть ревизий:
 
 - `alembic/versions/a96ab72bfa8a_create_users_conversations_messages.py`
   (Sprint 2) — создаёт таблицы `users` → `conversations` → `messages` с
@@ -262,7 +334,18 @@ create_all()` нигде не вызывается в рабочем коде (�
   `(user_id, status)`, ускоряющим `MemoryRepository.find_relevant`/
   `list_confirmed_by_user`; **без** сид-данных (ADR-5.7) — в отличие от
   `profiles`, память исключительно пользовательские данные, растущие
-  только через `/remember`.
+  только через `/remember`;
+- `alembic/versions/82d9884e32a2_create_knowledge_documents.py` (Sprint 6,
+  S6-04) — создаёт таблицу `knowledge_documents` (только метаданные
+  документа — заголовок, тип, checksum, статус, теги; текст/векторы
+  фрагментов не персистятся в SQLite, единственный источник истины —
+  Qdrant) с уникальным индексом по `checksum` (дедупликация); **без**
+  сид-данных — заполняется только через `scripts/index_document.py`;
+- `alembic/versions/ed5701d2f683_create_user_active_models.py` (Sprint 7,
+  S7-04, ADR-7.5) — создаёт таблицу `user_active_models` (`user_id` —
+  одновременно первичный и внешний ключ, `model_id`, `selected_at`) —
+  прямой аналог `user_active_profiles`; **без** сид-данных (ADR-7.4:
+  сам каталог моделей — статичный файл `catalog.json`, не БД).
 
 ```powershell
 # Применить все миграции (создаёт/обновляет схему БД) — идемпотентно,
@@ -310,6 +393,10 @@ upgrade head` перед первым стартом приложения — с
 | `DatabaseSettings` | `DATABASE_` | — | `DATABASE_URL` |
 | `PromptSettings` | `PROMPT_` | — | `PROMPT_TOKEN_BUDGET` (эвристический бюджет `TokenBudgetPolicy`, ADR-4.4) |
 | `MemorySettings` | `MEMORY_` | — | `MEMORY_MAX_RELEVANT_RECORDS` (лимит `MemoryRepository.find_relevant`, по умолчанию 5, ADR-5.6) |
+| `OpenAiSettings` | `OPENAI_` | `OPENAI_API_KEY` | `OPENAI_BASE_URL`, `OPENAI_EMBEDDING_MODEL` (провайдер эмбеддингов RAG, Sprint 6, ADR-6.3) |
+| `QdrantSettings` | `QDRANT_` | — | `QDRANT_HOST`, `QDRANT_PORT`, `QDRANT_COLLECTION_NAME`, `QDRANT_VECTOR_SIZE` |
+| `KnowledgeSettings` | `KNOWLEDGE_` | — | `KNOWLEDGE_MAX_FILE_SIZE_BYTES`, `KNOWLEDGE_CHUNK_SIZE`, `KNOWLEDGE_CHUNK_OVERLAP`, `KNOWLEDGE_SEARCH_LIMIT`, `KNOWLEDGE_MIN_RELEVANCE_SCORE`, `KNOWLEDGE_STORAGE_PATH` |
+| `ModelCatalogSettings` | `MODEL_CATALOG_` | — | `MODEL_CATALOG_CATALOG_PATH` (путь к `catalog.json`, по умолчанию сид-файл внутри пакета, Sprint 7, ADR-7.4) |
 
 Отсутствие обязательного секрета в окружении останавливает процесс при
 создании `Settings()` (fail-fast), а не на первом запросе.
@@ -344,7 +431,9 @@ tests/
 ├── unit/            # domain, application use cases, presentation-мапперы, shared
 ├── integration/     # OpenRouter adapter через respx, /health endpoint, Alembic-миграции,
 │                    #   репозитории/persistence-потоки ProcessUserMessage/StartNewConversation/
-│                    #   ClearConversation/ProfileRepository поверх временной SQLite (без сети)
+│                    #   ClearConversation/ProfileRepository/MemoryRepository/
+│                    #   KnowledgeDocumentRepository/ModelSelectionRepository/ConfigModelCatalogRepository
+│                    #   поверх временной SQLite (без сети)
 └── e2e/             # test_conversation_scenario.py — сквозной сценарий диалога поверх реального
                      #   telegram.ext.Application (in-memory fake-репозитории);
                      # test_conversation_persistence_scenario.py — те же сценарии (первое/второе
@@ -368,19 +457,36 @@ tests/
                      #   собранный system_prompt содержит факт; изоляция памяти между
                      #   пользователями; /clear и /new не удаляют memory_records; редакция
                      #   чувствительных записей в логах поверх РЕАЛЬНОГО
-                     #   SQLAlchemyMemoryRepository (не fake) — поверх РЕАЛЬНОЙ временной SQLite
+                     #   SQLAlchemyMemoryRepository (не fake) — поверх РЕАЛЬНОЙ временной SQLite;
+                     # test_model_selection_scenario.py (Sprint 7, S7-08) — /model → выбор модели →
+                     #   LLMRequest.model_id/temperature/max_tokens соответствуют выбору и
+                     #   default_generation_settings боевой модели каталога; откат на умолчание при
+                     #   выборе, впоследствии помеченном UNAVAILABLE (лог отката подтверждён через
+                     #   capsys+JSON-парсинг, не только «не упало»); изоляция между пользователями;
+                     #   полный цикл /model → клавиатура с пометкой «(недоступна)» → выбор через
+                     #   реальный CallbackQueryHandler → подтверждение с обновлённой клавиатурой;
+                     #   попытка выбрать UNAVAILABLE-модель отклонена и видна пользователю — поверх
+                     #   РЕАЛЬНОЙ временной SQLite и реального боевого catalog.json (не fixture)
 ```
 
-Ни один тест не обращается к реальному Telegram API или реальному
-сетевому LLM — единственная подмена всюду `FakeLLMProvider`/`respx`.
+Ни один тест не обращается к реальному Telegram API, реальному сетевому
+LLM или реальному Qdrant/OpenAI — единственные подмены всюду
+`FakeLLMProvider`/`respx`/fake `KnowledgeSearchService`.
 
 ## Docker
 
-Один образ (`Python 3.11 slim`, непривилегированный пользователь) —
-два сервиса, каждый со своей командой запуска:
+Один образ приложения (`Python 3.11 slim`, непривилегированный
+пользователь) — два сервиса, каждый со своей командой запуска, плюс
+отдельный сервис Qdrant (Sprint 6):
 
 - **`api`** — `uvicorn dekoder.main:app`, порт `8000`, healthcheck на `/health`;
-- **`telegram-bot`** — `python -m dekoder.telegram_main` (long polling), без открытого порта.
+- **`telegram-bot`** — `python -m dekoder.telegram_main` (long polling), без открытого порта;
+- **`qdrant`** — `qdrant/qdrant:v1.19.0`, порт `6333`, хранилище векторов базы знаний
+  (`dekoder_qdrant_data`, отдельный именованный volume от `dekoder_data`).
+
+`catalog.json` (статичный каталог AI-моделей, Sprint 7) устанавливается
+вместе с пакетом (`pip install .`, `pyproject.toml::package-data`) — не
+требует отдельного volume/`COPY`, как и Alembic-миграции/`scripts/`.
 
 Секреты не хранятся в `docker-compose.yml` и не копируются в образ —
 только через `env_file: .env` (создать из `.env.example`, сам `.env` не коммитится).

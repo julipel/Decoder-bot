@@ -2081,6 +2081,302 @@ Telegram
   добавлена — Sprint 5 (S5-01…S5-08) полностью завершён, 565 тестов,
   ruff/ruff format/mypy проходят — см. §36 для подробностей.
 
+**Примечание об отсутствующей записи Sprint 6.** Между этой записью и
+следующей нет отдельной записи «Спринт 6» — процессное упущение
+предыдущей сессии, не потеря функциональности: Sprint 6 (Этап 8, база
+знаний и RAG, S6-01…S6-11) реально завершён и работает в кодовой базе
+(`domain/knowledge`, `application/knowledge`, `infrastructure/{documents,
+embeddings,qdrant}`, `SemanticSearchService`, интеграция в
+`ProcessUserMessage`, `scripts/index_document.py`), что и подтверждено
+задачей S7-08 (полный `pytest`/Docker-аудит ниже видит эту функциональность
+работающей без регрессий) — коротко, по коммитам ветки `feature/sprint-6`:
+S6-01 — удаление мёртвого v2.0-скелета `knowledge_base`/`rag`/`admin`
+узла базы знаний; S6-02 — `QdrantSettings`/`KnowledgeSettings`,
+Qdrant-инфраструктура; S6-03/S6-04 — доменный слой знаний, порты,
+`KnowledgeDocumentRepository`; S6-05 — парсеры документов (txt/markdown/
+docx/pdf), chunking, `OpenAiEmbeddingProvider`, файловое хранилище;
+S6-06 — `IndexKnowledgeDocumentUseCase`/`DeleteKnowledgeDocumentUseCase`;
+S6-07 — `SemanticSearchService`; S6-08 — интеграция RAG в
+`ProcessUserMessage` (`_search_knowledge`, вне DB-транзакций, сбой не
+обрушивает ответ); S6-09 — `scripts/index_document.py`; S6-10 — добивка
+покрытия тестами; S6-11 — финальная интеграция, Docker/Qdrant-фиксы. Эта
+запись восстановлена задним числом по заголовкам коммитов при работе над
+Sprint 7 — не заменяет полноценную запись §32, если она когда-либо
+понадобится в исходной глубине (ADR/девиации Sprint 6 нужно поднимать из
+`backlog_6.md`/истории коммитов отдельно).
+
+## Текущий спринт (обновление 5)
+
+**Спринт 7: выбор AI-модели пользователем — статичный файловый каталог
+моделей, персональный выбор через Telegram-команду `/model`, интеграция
+в `ProcessUserMessage` с молчаливым логируемым откатом при недоступности
+выбранной модели — завершён (S7-01…S7-08).**
+
+Цель и полный состав спринта — внешняя архитектурная спецификация
+`backlog_7.md` (9 ADR, не входит в этот репозиторий) и §33 ниже.
+Реализует Этап 9 «Плана реализации.md». Прогресс по задачам:
+
+* [x] S7-01 — удаление мёртвого v2.0-скелета каталога моделей:
+  `domain/model_catalog/model_definition.py` (`ModelDefinition` — плоский
+  dataclass, `ModelAvailabilityStatus`), `application/model_catalog/*`
+  (`ports.py::ModelCatalogRepository` со старой формой `get`/`list_all`/
+  `list_compatible(skill_id, generation_type)`, `queries.py`,
+  `use_cases/get_available_models.py` — `raise NotImplementedError`),
+  `application/model_gateway/ports.py::ModelGateway`,
+  `infrastructure/model_gateway/{llm/openai_llm_adapter.py,
+  llm/yandexgpt_llm_adapter.py,image_model/__init__.py}`,
+  `infrastructure/persistence/sqlite_model_catalog_repository.py` — та же
+  логика, что ADR-4.10/5.1/6.x: структурно другая, отменённая модель
+  предметной области (плоский `ModelDefinition`, не
+  `AIModel`/`AIProvider`/`ModelCapability`/`ModelAvailability`/
+  `GenerationSettings`), использующая мёртвый `ModelId` из
+  `shared/domain/identifiers.py`, а не живой `domain/conversation/
+  value_objects.ModelId`; ноль тестового покрытия, ноль реальных
+  импортов из `bootstrap`/`presentation`. Точечно зачищен импорт/поле
+  `ModelCatalogRepository`/`ModelGateway` в `composition/container.py`.
+  Отклонение от буквального текста задачи (та ограничивала точечную
+  зачистку только `composition/container.py`) — тем же прецедентом, что
+  и S5-01/S6-01: dangling-импорты удаляемого узла транзитивно
+  затрагивали ещё четыре файла мёртвого `application/ai_core/*`
+  (`internal_services/{model_selector,response_formatter}.py`,
+  `use_cases/{generate_content,route_command}.py`) — без точечной
+  зачистки там `mypy src` не проходил бы целиком;
+  `model_selector.py`/`response_formatter.py` (целиком построенные
+  вокруг удаляемых типов) удалены полностью — тот же приём, что
+  `knowledge_collector.py` в S6-01; `generate_content.py`/
+  `route_command.py` лишились только относящихся к каталогу
+  параметров/методов, поведение (`raise NotImplementedError`) не
+  изменилось. Остальной v2.0-скелет (`admin`, `rag`, `session`, `skills`,
+  `knowledge_base`, `interfaces/`, `shared/domain/identifiers.py`,
+  `composition/` за пределами точечной правки) и живой `domain/user`/
+  `application/user` не тронуты — см. §36 для подробностей.
+* [x] S7-02 — доменный слой каталога моделей
+  (`domain/model_catalog/{entities,enums,value_objects}.py`), стиль
+  `domain/profile/entities.py::UserProfile`: `AIModel` (`frozen=True,
+  slots=True`, `__post_init__`: непустой `display_name`,
+  `context_window > 0`) с полями `model_id: ModelId` (импорт
+  исключительно из `domain.conversation.value_objects` — ADR-7.2, не
+  создан третий тип `ModelId`), `display_name`, `provider`,
+  `context_window`, `capabilities: frozenset[ModelCapability]`,
+  `price_tier`, `availability`, `recommended_for: tuple[str, ...]`,
+  `default_generation_settings: GenerationSettings`; никакого отдельного
+  поля «внешний идентификатор»/`technical_id` (ADR-7.3: `model_id.value`
+  — одновременно и каталожный ключ, и значение для
+  `LLMRequest.model_id`, OpenRouter уже сам федерирует поставщиков).
+  Четыре plain `Enum` (не `str, Enum` — стиль `ProfileStatus`):
+  `AIProvider` (`OPENAI`/`ANTHROPIC`/`GOOGLE`/`YANDEX`/`META`/`OTHER`),
+  `ModelCapability` (`TEXT`/`VISION`/`FUNCTION_CALLING`),
+  `ModelAvailability` (`AVAILABLE`/`UNAVAILABLE`), `ModelPriceTier`
+  (`LOW`/`MEDIUM`/`HIGH`). `GenerationSettings` (`frozen=True,
+  slots=True`, `__post_init__`: `0.0 <= temperature <= 2.0`,
+  `max_tokens > 0`) — единственное поле каталога, реально влияющее на
+  генерацию (не информационное, ADR-7.3/7.7). Ноль I/O-зависимостей.
+  Юнит-тесты — валидация + подтверждение plain-`Enum` стиля + отсутствие
+  поля «внешний идентификатор» — см. §36 для подробностей.
+* [x] S7-03 — порт `ModelCatalogRepository` (`application/model_catalog/
+  ports.py`, `Protocol`, синхронные `get`/`list_all` — каталог грузится в
+  память один раз, не на каждый вызов) и файловая реализация
+  `ConfigModelCatalogRepository` (`infrastructure/model_catalog/
+  config_repository.py`), прямой прецедент `FileTemplateRepository`
+  (Sprint 4, ADR-4.2): парсит `infrastructure/model_catalog/catalog.json`
+  через pydantic wire-схему (`infrastructure/model_catalog/schemas.py`,
+  стиль `infrastructure/llm/schemas.py`) → маппинг в доменный `AIModel`;
+  ошибка при отсутствующем/повреждённом файле или невалидной записи —
+  `InfrastructureError`, поднимается при построении (fail-fast), не при
+  первом `get()`/`list_all()`. Сид-каталог — 6 реальных моделей
+  OpenRouter, 4 поставщика (openai/anthropic/google/meta), одна модель
+  (`anthropic/claude-3-haiku`) намеренно `UNAVAILABLE` — для содержательной
+  проверки пометки «(недоступна)» в `/model` и отката в `ProcessUserMessage`
+  без необходимости отдельного fixture-каталога в part of e2e-тестов.
+  `shared/config.py::ModelCatalogSettings` (`env_prefix="MODEL_CATALOG_"`,
+  `catalog_path: Path`, значение по умолчанию вычисляется относительно
+  расположения `shared/config.py`, не импортом `infrastructure/` — не
+  создаёт зависимости `shared/` от `infrastructure/`) добавлена в
+  `Settings` тем же приёмом, что `KnowledgeSettings`.
+  `pyproject.toml::[tool.setuptools.package-data]` дополнен записью для
+  `infrastructure/model_catalog/catalog.json` — тот же класс правки, что
+  и сид-шаблоны Prompt Engine (S4-04): без неё `pip install .`
+  (используется в `Dockerfile`) собрал бы пакет без `catalog.json`.
+  Юнит-тесты на изолированном `tmp_path`-каталоге (не боевом
+  `catalog.json`) + отдельные тесты на реальный сид — см. §36 для
+  подробностей.
+* [x] S7-04 — персональный выбор модели: `ModelSelection`
+  (`domain/model_catalog/entities.py`, `frozen=True, slots=True`:
+  `user_id: UUID`, `model_id: ModelId`, `selected_at: datetime`) и порт
+  `ModelSelectionRepository` (`application/model_catalog/ports.py`,
+  `get_selected(user_id) -> ModelId | None`/`select(user_id, model_id) ->
+  None`) — `SQLAlchemyModelSelectionRepository` +
+  `UserActiveModelORM`/таблица `user_active_models`
+  (`infrastructure/persistence/{sqlalchemy_model_selection_repository.py,
+  user_active_model_orm.py}`) — прямой прецедент
+  `SQLAlchemyProfileRepository.select_profile`/`user_active_profiles`
+  (ADR-3.1): `user_id` одновременно первичный и внешний ключ,
+  `select()` — атомарный `INSERT ... ON CONFLICT(user_id) DO UPDATE`
+  upsert, свой `commit()` (не «сначала SELECT, потом INSERT» без защиты
+  от гонки); `model_id` — обычная строка, без FK на каталог (каталог
+  статичный файловый, ADR-7.4, ссылочную целостность обеспечивать
+  нечем — проверка «модель существует и доступна» на уровне
+  `SelectModel`, не БД). Схемная Alembic-миграция
+  `ed5701d2f683_create_user_active_models.py` (сгенерирована `alembic
+  revision --autogenerate`, без сид-данных, как `memory_records`/
+  `knowledge_documents`), проверена локально `upgrade head → downgrade
+  -1 → upgrade head`. `ConversationRepositories.model_selection` —
+  новое поле, встроено тем же приёмом, что `profiles`/`memory`
+  (ADR-3.3/5.5) — никакой второй фабрики репозиториев (ADR-7.5).
+  Каждая существующая точка прямой сборки `ConversationRepositories(...)`
+  в тестах (`tests/support/fake_conversation_repositories.py`,
+  `tests/unit/application/test_process_user_message.py`,
+  `tests/e2e/test_conversation_persistence_scenario.py`) обновлена под
+  новое обязательное поле — тот же прецедент, что и добавление
+  `profiles`/`memory` в Sprint 3/5. Интеграционные тесты — upsert
+  (повторный выбор заменяет, не дублирует строку), изоляция между
+  пользователями, `get_selected` без выбора → `None` — см. §36 для
+  подробностей.
+* [x] S7-05 — use cases каталога моделей (`application/model_catalog/
+  use_cases/{list_models,get_selected_model,select_model}.py`):
+  `ListAvailableModels` (композиция `ModelCatalogRepository.list_all()` +
+  `ModelSelectionRepository.get_selected(user_id)`, не создаёт
+  пользователя автоматически — просмотр каталога не требует
+  предварительного `User`), `GetSelectedModel` (`model is None`, если
+  пользователь неизвестен, выбор не сделан, или выбор указывает на
+  `model_id`, которого больше нет в каталоге — устойчивость к изменению
+  каталога после того, как выбор был сделан), `SelectModel` (проверяет
+  наличие в каталоге и `availability = AVAILABLE`, при нарушении —
+  `ApplicationError` с `code = MODEL_NOT_FOUND`/`MODEL_UNAVAILABLE`, ДО
+  входа в транзакцию — `ModelSelectionRepository.select` не вызывается
+  ни разу; при успехе создаёт пользователя автоматически, как
+  `CreateMemoryRecord` — запись в `user_active_models` требует реального
+  `user_id`). `ValidateModelAvailability` из §15.4 не выделен в отдельный
+  use-case класс (ADR-7.7) — проверка инкапсулирована прямо в
+  `SelectModel`. Отклонение от обычного для проекта паттерна
+  «status-enum результата» (`SelectProfileStatus` и т.п.): по прямому
+  требованию `backlog_7_tasks.md` S7-05 отказ `SelectModel` — «доменная
+  ошибка, не молчаливый no-op», не статус-результат. Юнит-тесты с
+  fake-репозиториями (`tests/support/fake_model_catalog.py`) — оба
+  случая отказа `SelectModel`, устойчивость `GetSelectedModel` к
+  устаревшему выбору, пометка активной модели `ListAvailableModels` —
+  см. §36 для подробностей.
+* [x] S7-06 — интеграция в `ProcessUserMessage` (ADR-7.7/7.8):
+  `_save_user_message` (транзакция 1) дополнительно разрешает модель
+  через новый `_resolve_model_id` по приоритету `command.model_id`
+  (явный override, каталог не проверяется) → `repositories.
+  model_selection.get_selected(user.id)` (тем же вызовом
+  `self._repositories()`, что и `profiles`/`memory`) →
+  `self._default_model`; кандидат шагов 2/3 проверяется через новый
+  конструкторный параметр `model_catalog: ModelCatalogRepository`
+  (внедрён отдельно, как `knowledge_search`, не через
+  `ConversationRepositoriesFactory` — ADR-7.4) — `None`/`UNAVAILABLE` →
+  тихий откат на `self._default_model` с `logger.warning(
+  requested_model_id, fallback_model_id, user_id)`.
+  `_resolve_generation_settings` берёт `temperature`/`max_tokens` из
+  `default_generation_settings` разрешённой (после отката, если он
+  случился) модели, если она есть в каталоге — иначе прежние
+  `self._temperature`/`self._max_tokens`. `ValidateModelAvailability` не
+  выделена в отдельный класс — та же логика, что и S7-05. `git diff
+  --stat feature/sprint-6..HEAD -- src/dekoder/domain/prompt
+  src/dekoder/application/prompt src/dekoder/infrastructure/prompts` —
+  пусто: ноль изменений в Prompt Engine (ADR-7.8), подтверждено
+  командой. `bootstrap/container.py` собирает
+  `ConfigModelCatalogRepository` из `settings.model_catalog.catalog_path`
+  и внедряет как `model_catalog`. Каждая существующая точка сборки
+  `ProcessUserMessage(...)` в тестах (7 файлов —
+  `tests/unit/application/test_process_user_message.py`,
+  `tests/unit/presentation/telegram/test_messages_handler.py`, пять
+  `tests/e2e/*_scenario.py`, `tests/integration/
+  test_process_user_message_persistence.py`) получила `model_catalog`
+  через новый `tests/support/fake_model_catalog.py::default_test_catalog()`
+  helper, заполненный ТЕМИ ЖЕ `model_id`/`temperature`/`max_tokens`, что
+  уже были захардкожены в каждом тесте — наблюдаемое поведение всех
+  Sprint 2-6 тестов не изменилось ни на бит. Четыре целевых теста ADR-7.7
+  (персональный выбор применяется; explicit override побеждает и не
+  проверяется каталогом; недоступный персональный выбор → откат на
+  умолчание с проверкой полей лога; устаревшая/удалённая из каталога
+  модель тоже откатывается) — см. §36 для подробностей.
+* [x] S7-07 — Telegram `/model`
+  (`presentation/telegram/handlers/model.py`): `ModelCommandHandler`
+  (вызывает `GetSelectedModel` — единственный вызывающий код по ADR-7.7,
+  для строки «Текущая модель: …» — и `ListAvailableModels` для самой
+  клавиатуры; в отличие от `ProfileCommandHandler` НЕ гейтится на «нет
+  предыдущего взаимодействия» — просмотр каталога не требует
+  существования `User`, ADR-7.9), `ModelSelectionCallbackHandler`
+  (`callback_data = f"model:{model_id.value}"`, парсинг —
+  `_parse_model_callback_data`, тот же `str.startswith`-паттерн, что
+  `profile.py`; отказ `SelectModel` — `query.answer(error.user_message,
+  show_alert=True)`, БЕЗ `edit_message_text` — список не портится,
+  ADR-7.9 «список не портится»; успех — `edit_message_text` с
+  подтверждением И обновлённой клавиатурой, в отличие от `profile.py`,
+  который заменяет текст без клавиатуры; ровно один `query.answer(...)`
+  на путь выполнения — черновик с безусловным `answer()` вначале плюс
+  ещё одним `answer(..., show_alert=True)` в ветке ошибки был найден и
+  исправлен при написании тестов, Telegram не принимает двойной ответ на
+  один callback). Клавиатура помечает активную модель текстовым
+  суффиксом «(текущая)» и недоступную — «(недоступна)» (кнопка всё ещё
+  показывается, `SelectModel` отклонит попытку выбрать). Префикс
+  `model:` дизъюнктен с `profile:`/`memory_delete:`. `telegram_user_id`
+  для callback — из `update.callback_query.from_user`
+  (`mapper.py::to_select_model_command`), не `update.effective_user`
+  (ADR-7.9); значение переиспользуется напрямую для обновления списка
+  после выбора, не выводится второй раз через `Update`.
+  `bootstrap/container.py` собирает `list_available_models`/
+  `get_selected_model`/`select_model` поверх той же `repositories_factory`
+  и того же `model_catalog`, что и `ProcessUserMessage`;
+  `bot.py::register_model_handlers`/`telegram_main.py` регистрируют оба
+  хендлера внутри `post_init`, после `/remember`/`/memory`. Юнит-тесты
+  (`tests/unit/presentation/telegram/test_model_handler.py`, 19 тестов) —
+  известный/неизвестный пользователь, пометка активной/недоступной
+  модели, форма `callback_data`, успешный выбор с обновлением клавиатуры,
+  оба случая отказа `SelectModel` (alert, сообщение не редактируется,
+  выбор не меняется), некорректный `callback_data`,
+  `callback_query.from_user` vs `effective_user`, обработка
+  `DekoderError`/непредвиденных ошибок на обоих хендлерах, отсутствие
+  прямого импорта SQLAlchemy/`infrastructure/` в presentation-слое — см.
+  §36 для подробностей.
+* [x] S7-08 — финальная интеграция и E2E-проверка Sprint 7: полный аудит
+  `bootstrap/container.py` не выявил дефектов — DI каталога моделей и
+  персонального выбора (S7-06/S7-07) уже были корректно подключены.
+  Добавлен `tests/e2e/test_model_selection_scenario.py` (7 тестов, реальный
+  `telegram.ext.Application` + реальная временная SQLite + реальный
+  `ConfigModelCatalogRepository()` на боевом `catalog.json`, единственная
+  подмена — `FakeLLMProvider`): выбор модели через `/model` реально
+  меняет `LLMRequest.model_id`/`temperature`/`max_tokens` (сверено с
+  `default_generation_settings` боевой модели `anthropic/claude-3.5-sonnet`,
+  отличающимися от `Settings.llm`, переданных конструктору, — не
+  случайное совпадение); откат при недоступности (персональный выбор
+  указывает на боевую `anthropic/claude-3-haiku`, `UNAVAILABLE` в
+  сид-каталоге — записан напрямую через
+  `SQLAlchemyModelSelectionRepository.select()`, в обход `SelectModel`,
+  симулируя «каталог обновился уже после выбора») — ответ всё равно
+  генерируется моделью по умолчанию, лог отката (`model_selection_fallback`,
+  `level=warning`) эмпирически подтверждён через `capsys`+JSON-парсинг
+  строки лога, не только «не упало»; изоляция между двумя пользователями;
+  полный цикл `/model` → клавиатура с пометкой «(недоступна)» на боевой
+  `anthropic/claude-3-haiku` → выбор доступной модели через реальный
+  `CallbackQueryHandler` → подтверждение с обновлённой клавиатурой;
+  попытка выбрать `UNAVAILABLE`-модель через callback отклонена, видна
+  пользователю (`show_alert=True`), список не редактируется. Точечно
+  исправлен докстринг `application/prompt/services/prompt_builder.py`
+  (строка про `preferred_model`: «Этап 10» → «Этап 9» — единственное
+  разрешённое отклонение от «не трогать Prompt Engine», backlog_7.md §3;
+  `git diff` подтверждает ровно одну изменённую строку, без изменения
+  логики). Собран реальный Docker-образ (`docker compose build`) —
+  подтверждено прямым импортом внутри образа, что `catalog.json`
+  установлен пакетом (`pip install .`, `pyproject.toml::package-data`) и
+  `ConfigModelCatalogRepository()` реально читает 6 моделей из
+  `/usr/local/lib/python3.11/site-packages/dekoder/infrastructure/
+  model_catalog/catalog.json`; `alembic upgrade head → downgrade -1 →
+  upgrade head` внутри контейнера проходит дважды — на чистой временной
+  БД и на РЕАЛЬНОМ персистентном volume, оставшемся от предыдущих
+  сессий тестирования Sprint 1-6 (ревизия `82d9884e32a2` до, `ed5701d2f683`
+  после, таблица `user_active_models` подтверждена прямым запросом к
+  `sqlite_master`); полный `docker compose up -d` (api + telegram-bot +
+  qdrant) — `/health` отвечает `200`, оба сервиса стартуют и логируют
+  штатно (`database_engine_initialized`, `database_connection_verified`,
+  `qdrant_collection_already_exists`), ни одной ошибки/traceback в логах
+  ни одного сервиса. Полный набор тестов (741), Ruff, Ruff format, MyPy
+  проходят. `README.md` обновлён (см. ниже). Новая бизнес-функциональность
+  не добавлена — Sprint 7 (S7-01…S7-08) полностью завершён — см. §36 для
+  подробностей.
+
 ---
 
 # 33. План следующих спринтов
@@ -3175,19 +3471,20 @@ e2e), ruff/ruff format/mypy проходят.
 
 ## В разработке
 
-Ничего — Sprint 5 полностью завершён (S5-01…S5-08). Следующий шаг —
-Этап 8, база знаний и RAG (§33).
+Ничего — Sprint 7 полностью завершён (S7-01…S7-08, см. запись выше;
+Sprint 6, Этап 8 «база знаний и RAG», тоже фактически завершён —
+см. примечание об отсутствующей записи Sprint 6 выше). Следующий шаг —
+Этап 10, административные функции (§33).
 
 ## Не реализовано
 
 * персональные (не каталожные) профили пользователя, `CreateProfile`/
-  `UpdateProfile`/`DeactivateProfile`, RAG, каталог моделей,
-  административные функции — по плану, следующие спринты/этапы (§33).
-  Prompt Engine (Этап 6) реализован в Sprint 4 — секция 5 (RAG) уже
-  структурно готова (`domain/prompt/value_objects.py`), но всегда пуста
-  до соответствующего спринта. Долговременная память (Этап 7) реализована
-  в Sprint 5 — секция 4 больше не относится к «не реализовано»: заполняется
-  реальными данными `MemoryRepository.find_relevant`.
+  `UpdateProfile`/`DeactivateProfile`, административные функции (Этап
+  10) — по плану, следующие спринты/этапы (§33). Prompt Engine (Этап 6)
+  реализован в Sprint 4; долговременная память (Этап 7) — в Sprint 5;
+  база знаний и RAG (Этап 8) — в Sprint 6; выбор AI-модели (Этап 9) — в
+  Sprint 7 (см. запись выше) — ни одна из этих секций/возможностей
+  больше не относится к «не реализовано».
 * `UpdateMemoryRecord` (§13.6 «Плана реализации.md») — сознательно не
   реализован в Sprint 5 (ADR-5.9, S5-05): нет вызывающего сценария без
   административного интерфейса (Этап 10). `ConfirmMemoryRecord`/
@@ -3198,6 +3495,20 @@ e2e), ruff/ruff format/mypy проходят.
 * векторный поиск по памяти (§13.7 «Плана реализации.md»: «может быть
   добавлен позднее») — Sprint 5 использует только простой SQL-фильтр
   (ADR-5.6).
+* реальные прямые (не через OpenRouter) адаптеры провайдеров
+  (`OpenAIAdapter`/`YandexGPTAdapter`/`AnthropicAdapter`/`GeminiAdapter`/
+  `OllamaAdapter`, §15.6) и интеллектуальная авто-маршрутизация между
+  моделями (§15.5) — явно отложены Sprint 7 (backlog_7.md §1, «В Sprint 7
+  не входят») до стабилизации интерфейса; каталог моделей и персональный
+  выбор (Этап 9) полностью реализованы и не входят в этот список.
+* редактирование каталога моделей через Telegram/HTTP, CRUD каталога —
+  Этап 10 (административная панель), сознательно не реализовано в
+  Sprint 7 (ADR-7.4): каталог — статичный файл, правится передеплоем.
+* `UserProfile.preferred_model` — по-прежнему не читается/не пишется
+  (ADR-7.6, третий спринт подряд): персональный выбор модели моделируется
+  исключительно через `ModelSelection`/`user_active_models`, не через это
+  поле — сознательно не «реализовано» в терминах Sprint 7, задел на
+  гипотетическую будущую семантику «эта персона рекомендует эту модель».
 
 ## Известные расхождения
 
@@ -3271,6 +3582,53 @@ execution_context.py`, транзитивно импортировавших у�
 (ADR-4.10/ADR-5.1), не в Sprint 5. `shared/domain/identifiers.py`
 по-прежнему не тронут — его `DialogueEntryId` остаётся единственным
 ожидаемым grep-хитом старой формы имён в `src`/`tests`.
+
+**Обновление Sprint 6 (не задокументировано отдельно в момент
+выполнения):** судя по коммитам `feature/sprint-6` (S6-01), узел
+`knowledge_base`/`rag`/`admin` старого дерева, релевантный базе знаний,
+тоже удалён той же логикой (ADR-6.x) — не проверено этой сессией
+детально (Sprint 7 не трогает базу знаний/RAG), см. примечание об
+отсутствующей записи Sprint 6 в §32 выше.
+
+**Обновление Sprint 7 (S7-01, ADR-7.1):** узел каталога моделей
+старого дерева, релевантный Sprint 7, удалён —
+`domain/model_catalog/model_definition.py` (`ModelDefinition` — плоский
+dataclass), `application/model_catalog/*` (`ModelCatalogRepository` со
+старой формой `list_compatible(skill_id, generation_type)`, use case
+`GetAvailableModelsUseCase`), `application/model_gateway/ports.py::
+ModelGateway`, `infrastructure/model_gateway/*`,
+`infrastructure/persistence/sqlite_model_catalog_repository.py` — та же
+логика, что ADR-4.10/5.1/6.x: правдоподобно выглядящий «каталог
+моделей» ровно в момент, когда строился настоящий (структурно другая
+модель — плоский `ModelDefinition`, не `AIModel`/`AIProvider`/
+`ModelCapability`/`ModelAvailability`/`GenerationSettings`; использует
+мёртвый `ModelId` из `shared/domain/identifiers.py`, не живой
+`domain/conversation/value_objects.ModelId`). Точечная зачистка
+dangling-импортов затронула не только `composition/container.py`
+(буквально названный в тексте задачи), но и четыре файла мёртвого
+`application/ai_core/` (`internal_services/{model_selector,
+response_formatter}.py` удалены целиком — та же логика, что
+`knowledge_collector.py` в S6-01 — и `use_cases/{generate_content,
+route_command}.py`, лишившиеся только относящихся к каталогу
+параметров/методов) — задокументировано как отклонение от буквального
+текста задачи в §32 (S7-01) и в сообщении коммита. Остальной
+v2.0-скелет (`admin`, `rag`, `session`, `skills`, `knowledge_base`,
+`interfaces/`, `composition/` за пределами точечной правки) и живой
+`domain/user`/`application/user` не тронуты — зачистка остального
+скелета осознанно вынесена в отдельную будущую задачу (ADR-4.10/5.1/
+6.x/7.1), не в Sprint 7. `shared/domain/identifiers.py` по-прежнему не
+тронут.
+
+**Новая, актуальная после Sprint 7 запись про два несовместимых
+`ModelId`** (см. абзац «Конкретное дублирование…» выше, писавшийся ещё
+в Sprint 1): `application/model_gateway/ports.py::ModelGateway` и
+дублирующий `ModelId` из `shared/domain/identifiers.py`, упомянутые там
+как часть старого дерева — теперь оба физически удалены (S7-01,
+ADR-7.1/7.2, узел `model_gateway` целиком, узел `model_catalog`
+целиком). Абзац оставлен как есть (не переписан) — он верно описывает
+состояние на момент Sprint 1 и объясняет ИСТОРИЮ дублирования; удаление
+конкретных файлов, о которых он предупреждал, зафиксировано здесь, а не
+через правку задним числом более раннего текста.
 
 ## Последнее принятое решение
 
@@ -3521,3 +3879,50 @@ Sprint 5 (диаграмма сценария включает память в �
 мёртвый v2.0-скелет — про удаление узла памяти в S5-01); `.env.example`
 дополнен `MemorySettings`. Следующий шаг — Этап 8, база знаний и RAG
 (§33), не начат.
+
+(Между этой записью и следующей нет отдельной записи «S6-11 завершена»
+— тот же пробел в процессе, что и в §32/«Известные расхождения» выше:
+Sprint 6, Этап 8, реально завершён по коммитам `feature/sprint-6`, этот
+файл просто не был обновлён в момент его завершения.)
+
+S7-08 завершена — Sprint 7 (S7-01…S7-08) полностью завершён. Полный
+аудит `bootstrap/container.py` (DI-сборка `ConfigModelCatalogRepository`
+из `settings.model_catalog.catalog_path`, внедрение `model_catalog` в
+`ProcessUserMessage`, сборка `list_available_models`/`get_selected_model`/
+`select_model` поверх той же `repositories_factory` и того же
+`model_catalog`) не выявил ни одного дефекта — вся сборка уже была
+корректно подключена задачами S7-06/S7-07; как и S4-08/S5-08 (и в
+отличие от S2-11/S3-09, каждая из которых нашла и точечно исправила
+один-два реальных интеграционных дефекта), S7-08 не нашла новых
+интеграционных дефектов в коде — единственная правка этой задачи была
+запланированной точечной правкой докстринга (`prompt_builder.py`,
+«Этап 10» → «Этап 9»), не найденным дефектом. Эмпирически подтверждено:
+`tests/e2e/test_model_selection_scenario.py` доказывает, что выбор
+модели через `/model` реально меняет `LLMRequest.model_id`/
+`temperature`/`max_tokens` (сверено со значениями `default_generation_
+settings` боевой модели каталога, отличающимися от `Settings.llm`,
+переданных в конструктор — совпадение результата с каталожными
+значениями исключает случайное совпадение); откат при недоступности
+подтверждён и по значению `model_id`, и по факту записи в лог
+(`model_selection_fallback`, `level=warning`, поля `requested_model_id`/
+`fallback_model_id`/`user_id`) через `capsys`+JSON-парсинг строки, не
+только «ответ пришёл»; выбор одного пользователя не виден другому;
+полный цикл `/model` → клавиатура (с пометкой «(недоступна)» на боевой
+`anthropic/claude-3-haiku`) → выбор через реальный `CallbackQueryHandler`
+→ обновлённая клавиатура; попытка выбрать `UNAVAILABLE`-модель
+отклонена и видна пользователю (`show_alert=True`), список не
+редактируется. Реальный Docker-образ собран и запущен: `/health`
+отвечает `200`; `catalog.json` подтверждён установленным пакетом
+(`pip install .`, прямой импорт `ConfigModelCatalogRepository()` внутри
+образа — 6 моделей, путь внутри `site-packages`, не подхватывался бы
+без правки `pyproject.toml::package-data`, тот же класс проверки, что
+шаблоны Prompt Engine в S4-04 и `scripts/` в S6-11); `alembic upgrade
+head → downgrade -1 → upgrade head` внутри контейнера проходит дважды —
+на чистой временной БД И на реальном персистентном volume, оставшемся
+от предыдущих сессий тестирования Sprint 1-6 (миграция с `82d9884e32a2`
+на `ed5701d2f683`, таблица `user_active_models` подтверждена прямым
+запросом к `sqlite_master`); `docker compose up -d` (все три сервиса —
+api/telegram-bot/qdrant) — оба процесса приложения стартуют и логируют
+штатно, без единой ошибки/traceback. 741 тест, ruff/ruff format/mypy
+проходят. `README.md` обновлён под фактическое состояние Sprint 7.
+Следующий шаг — Этап 10, административные функции (§33), не начат.
