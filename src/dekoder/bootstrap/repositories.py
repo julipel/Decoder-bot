@@ -28,6 +28,14 @@ message_repository.py, profile_repository.py, memory_repository.py}`) —
 собранные тремя функциями выше поверх этой сессии. `ProcessUserMessage`
 сам не создаёт и не закрывает `AsyncSession` и не импортирует
 SQLAlchemy — этим по-прежнему занимается только bootstrap.
+
+`build_knowledge_document_repository` (Sprint 6, задача S6-09) собирает
+`KnowledgeDocumentRepository` тем же приёмом, что и функции выше — но не
+входит в `ConversationRepositories`/`build_conversation_repositories_factory`
+(ADR-6.4/6.6): база знаний не участвует в транзакции `ProcessUserMessage`,
+у неё свой вызывающий код — `bootstrap/knowledge_container.py`, поверх
+собственной, отдельной `session_scope()`, открываемой
+`scripts/index_document.py`.
 """
 
 from __future__ import annotations
@@ -43,10 +51,12 @@ from dekoder.application.conversation.ports import (
     ConversationRepository,
     MessageRepository,
 )
+from dekoder.application.knowledge.ports import KnowledgeDocumentRepository
 from dekoder.application.memory.ports import MemoryRepository
 from dekoder.application.profile.ports import ProfileRepository
 from dekoder.application.user.ports import UserRepository
 from dekoder.infrastructure.persistence.conversation_repository import SQLAlchemyConversationRepository
+from dekoder.infrastructure.persistence.knowledge_document_repository import SQLAlchemyKnowledgeDocumentRepository
 from dekoder.infrastructure.persistence.memory_repository import SQLAlchemyMemoryRepository
 from dekoder.infrastructure.persistence.message_repository import SQLAlchemyMessageRepository
 from dekoder.infrastructure.persistence.profile_repository import SQLAlchemyProfileRepository
@@ -77,6 +87,11 @@ def build_profile_repository(session: AsyncSession) -> ProfileRepository:
 def build_memory_repository(session: AsyncSession) -> MemoryRepository:
     """Собирает `MemoryRepository` поверх переданной `AsyncSession` (Sprint 5, задача S5-04)."""
     return SQLAlchemyMemoryRepository(session)
+
+
+def build_knowledge_document_repository(session: AsyncSession) -> KnowledgeDocumentRepository:
+    """Собирает `KnowledgeDocumentRepository` поверх переданной `AsyncSession` (Sprint 6, задача S6-09)."""
+    return SQLAlchemyKnowledgeDocumentRepository(session)
 
 
 def build_conversation_repositories_factory(
