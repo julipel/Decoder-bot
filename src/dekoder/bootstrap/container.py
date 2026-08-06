@@ -94,6 +94,15 @@ config_repository.py`, парсит `catalog.json` один раз при пос
 `knowledge_search` (отдельный конструкторный параметр, не через
 `ConversationRepositoriesFactory` — каталог не пользовательские, не
 транзакционные данные, ADR-7.4).
+
+С задачи S7-07 (Sprint 7, ADR-7.9) контейнер также собирает
+`ListAvailableModels`/`GetSelectedModel`/`SelectModel`
+(`application/model_catalog/use_cases/*`) поверх той же
+`repositories_factory` (ни один не требует `LLMProvider`, никакой второй
+фабрики репозиториев не вводится, ADR-7.5) и уже собранного
+`model_catalog` (та же единственная загруженная копия каталога, что и у
+`ProcessUserMessage`) — по тем же причинам, что и `ListProfiles`/
+`GetActiveProfile`/`SelectProfile`.
 """
 
 from __future__ import annotations
@@ -111,6 +120,9 @@ from dekoder.application.knowledge.services.semantic_search_service import Seman
 from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.application.memory.use_cases.delete_memory_record import DeleteMemoryRecordUseCase
 from dekoder.application.memory.use_cases.list_memory_records import ListMemoryRecordsUseCase
+from dekoder.application.model_catalog.use_cases.get_selected_model import GetSelectedModel
+from dekoder.application.model_catalog.use_cases.list_models import ListAvailableModels
+from dekoder.application.model_catalog.use_cases.select_model import SelectModel
 from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
 from dekoder.application.profile.use_cases.list_profiles import ListProfiles
 from dekoder.application.profile.use_cases.select_profile import SelectProfile
@@ -139,6 +151,9 @@ class ApplicationContainer:
     create_memory_record: CreateMemoryRecordUseCase
     list_memory_records: ListMemoryRecordsUseCase
     delete_memory_record: DeleteMemoryRecordUseCase
+    list_available_models: ListAvailableModels
+    get_selected_model: GetSelectedModel
+    select_model: SelectModel
 
 
 def build_container(
@@ -208,6 +223,9 @@ def build_container(
     create_memory_record = CreateMemoryRecordUseCase(repositories=repositories_factory)
     list_memory_records = ListMemoryRecordsUseCase(repositories=repositories_factory)
     delete_memory_record = DeleteMemoryRecordUseCase(repositories=repositories_factory)
+    list_available_models = ListAvailableModels(repositories=repositories_factory, model_catalog=model_catalog)
+    get_selected_model = GetSelectedModel(repositories=repositories_factory, model_catalog=model_catalog)
+    select_model = SelectModel(repositories=repositories_factory, model_catalog=model_catalog)
     return ApplicationContainer(
         settings=settings,
         process_user_message=process_user_message,
@@ -219,4 +237,7 @@ def build_container(
         create_memory_record=create_memory_record,
         list_memory_records=list_memory_records,
         delete_memory_record=delete_memory_record,
+        list_available_models=list_available_models,
+        get_selected_model=get_selected_model,
+        select_model=select_model,
     )

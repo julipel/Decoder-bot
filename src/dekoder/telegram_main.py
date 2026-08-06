@@ -63,6 +63,12 @@ register_memory_handlers`) регистрируются тоже внутри `p
 fail-fast (см. `bootstrap/application.py` — тот же принцип для обоих
 процессов): RAG — дополнение к диалогу, недоступность Qdrant при старте
 логируется, не останавливает polling.
+
+С задачи S7-07 (Sprint 7) по той же причине обработчики команды `/model`
+(`presentation/telegram/bot.py::register_model_handlers`) регистрируются
+тоже внутри `post_init`, сразу после обработчиков `/remember`/`/memory`,
+поверх уже собранных `container.list_available_models`/
+`container.get_selected_model`/`container.select_model`.
 """
 
 from __future__ import annotations
@@ -79,6 +85,7 @@ from dekoder.presentation.telegram.bot import (
     register_clear_conversation_handler,
     register_memory_handlers,
     register_message_handler,
+    register_model_handlers,
     register_new_conversation_handler,
     register_profile_handlers,
 )
@@ -136,6 +143,12 @@ def main() -> None:
             container.create_memory_record,
             container.list_memory_records,
             container.delete_memory_record,
+        )
+        register_model_handlers(
+            app,
+            container.list_available_models,
+            container.get_selected_model,
+            container.select_model,
         )
 
     async def _shutdown(_: Application) -> None:

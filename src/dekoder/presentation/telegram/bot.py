@@ -49,6 +49,13 @@ Sprint 5 (задача S5-07): по той же причине команды `/
 `pattern=r"^memory_delete:"` — по тому же принципу, что и
 `pattern=r"^profile:"`, не перехватывает callback выбора профиля и
 наоборот.
+
+Sprint 7 (задача S7-07, ADR-7.9): по той же причине команда `/model`
+(+ callback выбора модели) регистрируется отдельной функцией
+`register_model_handlers`, тоже вызываемой внутри `post_init`, поверх
+уже собранных `ListAvailableModels`/`GetSelectedModel`/`SelectModel`.
+Callback выбора модели регистрируется с `pattern=r"^model:"` — дизъюнктен
+с уже занятыми `pattern=r"^profile:"`/`pattern=r"^memory_delete:"`.
 """
 
 from __future__ import annotations
@@ -68,6 +75,9 @@ from dekoder.application.conversation.use_cases.start_new_conversation import St
 from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.application.memory.use_cases.delete_memory_record import DeleteMemoryRecordUseCase
 from dekoder.application.memory.use_cases.list_memory_records import ListMemoryRecordsUseCase
+from dekoder.application.model_catalog.use_cases.get_selected_model import GetSelectedModel
+from dekoder.application.model_catalog.use_cases.list_models import ListAvailableModels
+from dekoder.application.model_catalog.use_cases.select_model import SelectModel
 from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
 from dekoder.application.profile.use_cases.list_profiles import ListProfiles
 from dekoder.application.profile.use_cases.select_profile import SelectProfile
@@ -78,6 +88,7 @@ from dekoder.presentation.telegram.handlers.memory import (
     RememberCommandHandler,
 )
 from dekoder.presentation.telegram.handlers.messages import TextMessageHandler
+from dekoder.presentation.telegram.handlers.model import ModelCommandHandler, ModelSelectionCallbackHandler
 from dekoder.presentation.telegram.handlers.new_conversation import NewConversationHandler
 from dekoder.presentation.telegram.handlers.profile import ProfileCommandHandler, ProfileSelectionCallbackHandler
 from dekoder.presentation.telegram.handlers.start import handle_start
@@ -134,4 +145,17 @@ def register_memory_handlers(
             MemoryDeleteCallbackHandler(delete_memory_record, list_memory_records),
             pattern=r"^memory_delete:",
         )
+    )
+
+
+def register_model_handlers(
+    application: Application,
+    list_available_models: ListAvailableModels,
+    get_selected_model: GetSelectedModel,
+    select_model: SelectModel,
+) -> None:
+    """Регистрирует команду `/model` и callback выбора модели поверх уже собранных use case'ов (ADR-7.9)."""
+    application.add_handler(CommandHandler("model", ModelCommandHandler(list_available_models, get_selected_model)))
+    application.add_handler(
+        CallbackQueryHandler(ModelSelectionCallbackHandler(select_model, list_available_models), pattern=r"^model:")
     )

@@ -34,6 +34,15 @@ Telegram `Update` ↔ внутренние DTO — единственное ме
 `to_delete_memory_record_command()` (Sprint 5, задача S5-07, ADR-5.10) —
 тот же принцип, что и `to_select_profile_command()`: `telegram_user_id`
 из `update.callback_query.from_user`, не `update.effective_user`.
+
+`to_list_available_models_command()`/`to_get_selected_model_command()`
+(Sprint 7, задача S7-07) — тот же принцип, для обработчика команды
+`/model` (`presentation/telegram/handlers/model.py`), по образцу
+`to_get_active_profile_command()`.
+
+`to_select_model_command()` (Sprint 7, задача S7-07, ADR-7.9) — тот же
+принцип, что и `to_select_profile_command()`: `telegram_user_id` из
+`update.callback_query.from_user`, не `update.effective_user`.
 """
 
 from __future__ import annotations
@@ -53,7 +62,13 @@ from dekoder.application.memory.dto import (
     DeleteMemoryRecordCommand,
     ListMemoryRecordsCommand,
 )
+from dekoder.application.model_catalog.dto import (
+    GetSelectedModelCommand,
+    ListAvailableModelsCommand,
+    SelectModelCommand,
+)
 from dekoder.application.profile.dto import GetActiveProfileCommand, SelectProfileCommand
+from dekoder.domain.conversation.value_objects import ModelId
 from dekoder.domain.memory.value_objects import MemorySource, MemoryStatus
 from dekoder.shared.domain.identifiers import CorrelationId
 
@@ -183,6 +198,47 @@ def to_delete_memory_record_command(update: Update, record_id: UUID) -> DeleteMe
         raise ValueError("Update does not contain a callback query from a known user")
 
     return DeleteMemoryRecordCommand(telegram_user_id=query.from_user.id, record_id=record_id)
+
+
+def to_list_available_models_command(update: Update) -> ListAvailableModelsCommand:
+    """
+    Строит команду для обработчика `/model` из входящего `Update`.
+    `telegram_user_id` извлекается тем же способом, что и в
+    `to_get_active_profile_command()` — `update.effective_user.id`.
+    """
+    user = update.effective_user
+    if user is None:
+        raise ValueError("Update does not contain a known user")
+
+    return ListAvailableModelsCommand(telegram_user_id=user.id)
+
+
+def to_get_selected_model_command(update: Update) -> GetSelectedModelCommand:
+    """
+    Строит команду для обработчика `/model` из входящего `Update` —
+    используется для отображения текущего выбора (ADR-7.7) перед
+    построением клавиатуры `to_list_available_models_command()`.
+    """
+    user = update.effective_user
+    if user is None:
+        raise ValueError("Update does not contain a known user")
+
+    return GetSelectedModelCommand(telegram_user_id=user.id)
+
+
+def to_select_model_command(update: Update, model_id: ModelId) -> SelectModelCommand:
+    """
+    Строит команду для callback'а выбора модели из входящего `Update`.
+    `telegram_user_id` извлекается из `update.callback_query.from_user`
+    (не `update.effective_user`) — тот же принцип, что и
+    `to_select_profile_command()`/`to_delete_memory_record_command()`
+    (ADR-7.9).
+    """
+    query = update.callback_query
+    if query is None or query.from_user is None:
+        raise ValueError("Update does not contain a callback query from a known user")
+
+    return SelectModelCommand(telegram_user_id=query.from_user.id, model_id=model_id)
 
 
 def split_message(text: str, limit: int = TELEGRAM_SAFE_MESSAGE_LIMIT) -> list[str]:
