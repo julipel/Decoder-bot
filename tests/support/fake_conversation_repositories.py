@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -192,6 +193,33 @@ class FakeProfileRepository:
             return None
         self._selected[user_id] = profile_id
         return profile
+
+    async def get_by_id(self, profile_id: UUID) -> UserProfile | None:
+        """Sprint 8, S8-06/S8-07 — профиль по `id` независимо от `status`."""
+        return self._by_id.get(profile_id)
+
+    async def create(self, profile: UserProfile) -> UserProfile:
+        """Sprint 8, S8-06/S8-07."""
+        self._by_id[profile.id] = profile
+        return profile
+
+    async def update(self, profile: UserProfile) -> UserProfile:
+        """Sprint 8, S8-06/S8-07."""
+        self._by_id[profile.id] = profile
+        return profile
+
+    async def archive(self, profile_id: UUID) -> UserProfile | None:
+        """Sprint 8, S8-06/S8-07 — идемпотентна; `None` — `profile_id` не существует."""
+        profile = self._by_id.get(profile_id)
+        if profile is None:
+            return None
+        archived = replace(profile, status=ProfileStatus.ARCHIVED, updated_at=datetime.now(UTC))
+        self._by_id[profile_id] = archived
+        return archived
+
+    async def list_all(self) -> list[UserProfile]:
+        """Sprint 8, S8-06/S8-07 — все профили независимо от `status`."""
+        return list(self._by_id.values())
 
 
 class FakeMemoryRepository:

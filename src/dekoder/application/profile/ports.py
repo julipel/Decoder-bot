@@ -61,3 +61,43 @@ class ProfileRepository(Protocol):
         изменяется, если `profile_id` неизвестен/неактивен.
         """
         ...
+
+    async def get_by_id(self, profile_id: UUID) -> UserProfile | None:
+        """
+        Профиль по `id` независимо от `status` (Sprint 8, задача S8-06,
+        ADR-8.7) — в отличие от `get_active_profile`/`select_profile`,
+        которым нужен именно `ACTIVE`, admin-обзор должен видеть и
+        архивные профили. `None` — штатный отрицательный исход
+        («не существует»), не исключение.
+        """
+        ...
+
+    async def create(self, profile: UserProfile) -> UserProfile:
+        """
+        Сохраняет НОВУЮ запись профиля (Sprint 8, задача S8-06, ADR-8.7).
+        Инвариант `is_default`/`is_system` защищается не здесь, а на
+        уровне use case'а `CreateProfile` (ADR-8.7/8.8) — порт лишь
+        сохраняет то, что ему передали.
+        """
+        ...
+
+    async def update(self, profile: UserProfile) -> UserProfile:
+        """Обновляет существующую запись профиля целиком по `profile.id` (Sprint 8, задача S8-06, ADR-8.7)."""
+        ...
+
+    async def archive(self, profile_id: UUID) -> UserProfile | None:
+        """
+        Переводит профиль в `ProfileStatus.ARCHIVED` (Sprint 8, задача
+        S8-06, ADR-8.7). Идемпотентна относительно уже `ARCHIVED`-профиля
+        — повторный вызов не поднимает исключение. `None` — `profile_id`
+        не существует (штатный отрицательный исход).
+        """
+        ...
+
+    async def list_all(self) -> list[UserProfile]:
+        """
+        Все профили каталога независимо от `status` (Sprint 8, задача
+        S8-06, ADR-8.7) — в отличие от `list_active()`. Без пагинации/
+        фильтров (YAGNI для MVP-объёма).
+        """
+        ...

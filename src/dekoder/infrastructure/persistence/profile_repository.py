@@ -13,6 +13,15 @@ S3-05, ADR-3.1) поверх `ProfileORM`/`UserActiveProfileORM`/`mappers.py`
 `user_active_profiles` используется ТОЛЬКО здесь (ADR-3.1, «Архитектурные
 заметки для Claude Code»); никакой другой код проекта не обращается к
 этой таблице напрямую.
+
+С задачи S8-06 (Sprint 8, ADR-8.7) класс дополнен методами `get_by_id`/
+`create`/`update`/`archive`/`list_all` — admin CRUD каталога профилей.
+Новая Alembic-миграция не потребовалась: схема `profiles` уже содержит
+все поля `UserProfile` и разрешает `status = 'archived'` схемным
+`CHECK`-ограничением с момента создания таблицы (S3-03). Новые методы НЕ
+копируют `select_profile()`'s собственный `await self._session.commit()`
+— это единичная особенность upsert-метода S3-06, не общий стиль класса;
+момент фиксации решает вызывающий код через `session_scope()`.
 """
 
 from __future__ import annotations
@@ -22,16 +31,22 @@ from uuid import UUID
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dekoder.domain.profile.entities import UserProfile
-from dekoder.infrastructure.persistence.mappers import profile_to_domain
+from dekoder.domain.profile.value_objects import ProfileStatus
+from dekoder.infrastructure.persistence.mappers import profile_to_domain, profile_to_orm
 from dekoder.infrastructure.persistence.profile_orm import ProfileORM
 from dekoder.infrastructure.persistence.user_active_profile_orm import UserActiveProfileORM
 from dekoder.shared.errors import InfrastructureError
 from dekoder.shared.logging import get_logger
 
 _logger = get_logger(__name__)
+
+
+def _now_naive_utc() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class SQLAlchemyProfileRepository:
@@ -131,3 +146,82 @@ class SQLAlchemyProfileRepository:
         await self._session.execute(upsert_statement)
         await self._session.commit()
         return profile_to_domain(target_profile)
+
+    async def get_by_id(self, profile_id: UUID) -> UserProfile | None:
+        """Sprint 8, S8-06, ADR-8.7 — профиль по `id` независимо от `status` (в отличие от `get_active_profile`)."""
+        orm_profile = await self._session.get(ProfileORM, profile_id)
+        return profile_to_domain(orm_profile) if orm_profile is not None else None
+
+    async def create(self, profile: UserProfile) -> UserProfile:
+        """
+        Sprint 8, S8-06, ADR-8.7 — сохраняет НОВУЮ запись профиля
+        (`add()` + `flush()`, без явного `commit()` — момент фиксации
+        решает вызывающий код через `session_scope()`, тот же стиль, что
+        `SQLAlchemyKnowledgeDocumentRepository.save()`; НЕ копирует
+        `select_profile()`'s собственный `session.commit()`).
+        """
+        self._session.add(profile_to_orm(profile))
+        try:
+            await self._session.flush()
+        except IntegrityError as exc:
+            await self._session.rollback()
+            _logger.error("profile_create_integrity_violation", error=str(exc))
+            raise InfrastructureError(
+                message=f"Не удалось создать профиль из-за нарушения целостности: {exc}",
+                user_message="Не удалось создать профиль, попробуйте позже.",
+                code="PROFILE_CREATE_INTEGRITY_VIOLATION",
+                cause=exc,
+            ) from exc
+        return profile
+
+    async def update(self, profile: UserProfile) -> UserProfile:
+        """Sprint 8, S8-06, ADR-8.7 — обновляет существующую запись профиля целиком по `profile.id`."""
+        orm_profile = await self._session.get(ProfileORM, profile.id)
+        if orm_profile is None:
+            _logger.error("profile_update_not_found", profile_id=str(profile.id))
+            raise InfrastructureError(
+                message=f"Не удалось обновить профиль {profile.id}: запись не найдена в БД",
+                user_message="Не удалось обновить профиль, попробуйте позже.",
+                code="PROFILE_UPDATE_NOT_FOUND",
+            )
+
+        orm_profile.name = profile.name
+        orm_profile.description = profile.description
+        orm_profile.system_instruction = profile.system_instruction
+        orm_profile.response_style = profile.response_style
+        orm_profile.target_audience = profile.target_audience
+        orm_profile.formality_level = profile.formality_level
+        orm_profile.preferred_structure = profile.preferred_structure
+        orm_profile.forbidden_phrasing = list(profile.forbidden_phrasing)
+        orm_profile.preferred_model = profile.preferred_model.value if profile.preferred_model is not None else None
+        orm_profile.response_length_hint = profile.response_length_hint
+        orm_profile.additional_constraints = profile.additional_constraints
+        orm_profile.updated_at = _now_naive_utc()
+        try:
+            await self._session.flush()
+        except IntegrityError as exc:
+            await self._session.rollback()
+            _logger.error("profile_update_integrity_violation", profile_id=str(profile.id), error=str(exc))
+            raise InfrastructureError(
+                message=f"Не удалось обновить профиль {profile.id} из-за нарушения целостности: {exc}",
+                user_message="Не удалось обновить профиль, попробуйте позже.",
+                code="PROFILE_UPDATE_INTEGRITY_VIOLATION",
+                cause=exc,
+            ) from exc
+        return profile_to_domain(orm_profile)
+
+    async def archive(self, profile_id: UUID) -> UserProfile | None:
+        """Sprint 8, S8-06, ADR-8.7 — идемпотентна относительно уже `ARCHIVED`-профиля; `None` — не существует."""
+        orm_profile = await self._session.get(ProfileORM, profile_id)
+        if orm_profile is None:
+            return None
+        orm_profile.status = ProfileStatus.ARCHIVED.value
+        orm_profile.updated_at = _now_naive_utc()
+        await self._session.flush()
+        return profile_to_domain(orm_profile)
+
+    async def list_all(self) -> list[UserProfile]:
+        """Sprint 8, S8-06, ADR-8.7 — все профили независимо от `status`, тот же порядок, что `list_active()`."""
+        statement = sa.select(ProfileORM).order_by(ProfileORM.created_at.asc(), ProfileORM.id.asc())
+        orm_profiles = (await self._session.execute(statement)).scalars().all()
+        return [profile_to_domain(orm_profile) for orm_profile in orm_profiles]
