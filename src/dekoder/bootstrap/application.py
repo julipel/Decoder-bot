@@ -139,8 +139,10 @@ def create_application(settings: Settings) -> FastAPI:
     # `presentation.api.routes.admin_documents` -> `presentation.api.
     # dependencies.documents` -> `bootstrap.application`.
     from dekoder.presentation.api.routes.admin_documents import router as admin_documents_router
+    from dekoder.presentation.api.routes.admin_profiles import router as admin_profiles_router
 
     app.include_router(admin_documents_router)
+    app.include_router(admin_profiles_router)
     app.add_exception_handler(DekoderError, dekoder_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, unhandled_exception_handler)
     return app
