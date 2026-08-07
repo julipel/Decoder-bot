@@ -2377,6 +2377,168 @@ Sprint 7 — не заменяет полноценную запись §32, е�
   не добавлена — Sprint 7 (S7-01…S7-08) полностью завершён — см. §36 для
   подробностей.
 
+## Текущий спринт (обновление 6)
+
+**Спринт 8: административные функции — защищённый REST API для CRUD
+документов базы знаний и профилей, реальные health-check Qdrant/
+OpenRouter/OpenAI, CLI-паритет — завершён (S8-01…S8-11).**
+
+Цель и полный состав спринта — внешняя архитектурная спецификация
+`backlog_8.md` (12 ADR, не входит в этот репозиторий) и §33 ниже.
+Реализует Этап 10 «Плана реализации.md». Прогресс по задачам:
+
+* [x] S8-01 — удаление мёртвого v2.0-скелета `application/admin/`
+  (`AdminAuthPort`, `AuthenticateAdminCommand`, `AuthenticateAdminUseCase`
+  — login/session-модель, несовместимая с выбранной статичной
+  API-key-авторизацией). Отклонение от буквального текста задачи:
+  `composition/container.py` (формально «не трогать») импортировал
+  `AdminAuthPort`/`AuthenticateAdminUseCase` на уровне модуля — после
+  удаления `application/admin/` этот импорт стал бы падать, транзитивно
+  ломая `composition/bootstrap.py::create_app`, который использует
+  тестируемый `tests/integration/test_health_endpoint.py`. Минимальная
+  правка: удалены два dangling-импорта и два неиспользуемых поля
+  (`admin_auth`, `authenticate_admin`) из мёртвого, никогда не
+  создаваемого `Container`-датакласса — `build_container()` там
+  по-прежнему `raise NotImplementedError`. `grep -RIn "application\.admin"
+  src tests` — без совпадений.
+* [x] S8-02 — `shared/config.py::AdminSettings` (`env_prefix="ADMIN_"`,
+  `api_key: SecretStr` без default, `health_check_timeout: float = 3.0`),
+  `presentation/api/dependencies/auth.py::require_admin_api_key`
+  (`APIKeyHeader`, `secrets.compare_digest`, единообразный 401 на
+  отсутствие/неверный ключ), `_SENSITIVE_KEYS` += `admin_api_key`/
+  `x-admin-api-key`/`provided_key`. `.env`/`.env.example` дополнены
+  `ADMIN_API_KEY`/`ADMIN_HEALTH_CHECK_TIMEOUT` (`.env` не отслеживается
+  git). Три существующих теста, создающих полный `Settings()`, дополнены
+  `ADMIN_API_KEY` в окружении.
+* [x] S8-03 — `bootstrap/application.py::_lifespan` публикует
+  `settings`/`openai_http_client`/`qdrant_client` на `app.state`, четыре
+  новые accessor-функции (`get_settings`/`get_db_session_factory`/
+  `get_openai_http_client`/`get_qdrant_client`); `shared/errors.py::
+  NotFoundError` (сиблинг `ValidationError`/`ApplicationError`/
+  `InfrastructureError`); `presentation/api/error_handlers.py` —
+  `dekoder_error_handler` (422/404/502/400 по типу + code-override 409
+  для `PROFILE_ARCHIVE_DEFAULT_FORBIDDEN`) и `unhandled_exception_handler`
+  (500, нейтральное тело, полный traceback только в логах), оба
+  зарегистрированы глобально в `create_application()`. `GET /health`
+  (`composition/health.py`) не изменён ни строкой.
+* [x] S8-04 — `KnowledgeDocumentRepository.list_all()` (порт + SQLAlchemy,
+  `ORDER BY created_at DESC, id DESC`, без пагинации), `ListKnowledgeDocumentsUseCase`/
+  `GetKnowledgeDocumentUseCase` (тонкие read-обёртки), `ReindexKnowledgeDocumentUseCase`
+  (читает байты через `DocumentStorage.read()`, делегирует весь конвейер
+  уже существующему `IndexKnowledgeDocumentUseCase` — переиспользование
+  checksum-дедупликации ADR-6.9 сохраняет `document_id`); три новых
+  билдера в `bootstrap/knowledge_container.py`. `IndexKnowledgeDocumentUseCase`/
+  `DeleteKnowledgeDocumentUseCase` не изменены по существу.
+* [x] S8-05 — `presentation/api/dependencies/documents.py` (`get_admin_session`
+  — per-request `session_scope()`, `DocumentUseCases`, `get_document_use_cases`),
+  `presentation/api/schemas/documents.py::DocumentResponse` (без
+  `checksum`), `presentation/api/routes/admin_documents.py::
+  admin_documents_router` (`POST`/`GET`/`GET{id}`/`DELETE{id}`/
+  `POST{id}/reindex`, `require_admin_api_key` на уровне `APIRouter`,
+  `DELETE` идемпотентен). Добавлена рантайм-зависимость
+  `python-multipart` (иначе `Form`/`UploadFile` падают 500 на рантайме).
+  Отклонение: импорт `admin_documents_router` в `create_application()`
+  сделан локальным (внутри функции) — иначе цикл `bootstrap.application`
+  → `presentation.api.routes.admin_documents` →
+  `presentation.api.dependencies.documents` → `bootstrap.application`
+  (зависимости документов импортируют accessor-функции из
+  `bootstrap.application`); тот же приём применён к
+  `admin_profiles_router`/`admin_health_router` в S8-08/S8-09. Новый
+  `tests/support/fake_qdrant_client.py` — duck-typed фейк, принимающий
+  реальные объекты `qdrant_client.models`, для тестов без реального
+  Qdrant-сервера.
+* [x] S8-06 — `ProfileRepository.get_by_id`/`create`/`update`/`archive`/
+  `list_all` (порт + `SQLAlchemyProfileRepository`, тот же стиль, что
+  `SQLAlchemyKnowledgeDocumentRepository` — НЕ копирует `select_profile()`'s
+  собственный `session.commit()`). Никакой новой Alembic-миграции —
+  подтверждено эмпирически (`alembic upgrade head → downgrade -1 →
+  upgrade head`, 6 файлов в `alembic/versions/` до и после).
+* [x] S8-07 — `CreateProfile`/`UpdateProfile`/`DeactivateProfile`/
+  `ListAllProfiles` (`application/profile/use_cases/*`) поверх той же
+  `ConversationRepositoriesFactory`; `CreateProfile` всегда
+  `is_system=False, is_default=False`; `UpdateProfile` — `dataclasses.
+  replace()` поверх `UpdateProfileCommand.changed_fields()` (партиальный
+  PATCH, `is_default`/`is_system`/`status` физически отсутствуют в
+  команде); `DeactivateProfile` — единственное место, проверяющее
+  `is_default` перед архивированием, поднимает `ApplicationError(code=
+  "PROFILE_ARCHIVE_DEFAULT_FORBIDDEN")`. `ApplicationContainer` получил
+  ровно 4 новых профильных поля. Логирование по конвенции: `admin_profile_created`/
+  `_updated`/`_archived`, без полного текста профиля.
+* [x] S8-08 — `presentation/api/schemas/profiles.py`/`routes/admin_profiles.py::
+  admin_profiles_router` (`GET`/`POST`/`GET{id}`/`PATCH{id}`/
+  `POST{id}/archive`). Request-схемы физически не содержат
+  `is_default`/`is_system`/`status`. Отклонение: `GET /admin/profiles/{id}`
+  не получил отдельного use case'а «GetProfile» — ADR-8.4 фиксирует
+  ровно 4 новых профильных поля контейнера без пятого; роут переиспользует
+  `list_all_profiles` и фильтрует по id на уровне presentation.
+  `presentation/telegram/handlers/profile.py` не изменён ни строкой
+  (`git diff` пуст).
+* [x] S8-09 — `application/health/ports.py` (`ServiceStatus`,
+  `ServiceHealthCheck` Protocol — новый узкий bounded-context, не
+  `application/admin/`), `application/health/use_cases/
+  check_external_services.py::CheckExternalServicesHealthUseCase`,
+  три адаптера в `infrastructure/health/` (Qdrant/OpenRouter/OpenAI),
+  каждый переиспользует уже открытые клиенты (никаких новых). Уточнение
+  сверх буквального текста ADR-8.9: `CheckExternalServicesHealthUseCase`
+  дополнительно оборачивает каждый `check()` собственным `try/except`
+  (`_run_one`, defense in depth) — задача явно требовала подтвердить, что
+  `execute()` не падает даже если один фейк нарушает контракт и
+  поднимает исключение вместо `ServiceStatus(healthy=False)`. `GET
+  /admin/health` (`admin_health_router`) — всегда 200, даже если все три
+  сервиса недоступны (`all_healthy=false`, не 5xx). `GET /health` не
+  тронут.
+* [x] S8-10 — `scripts/index_document.py` дополнен подкомандами
+  `list`/`reindex`, переиспользующими билдеры `bootstrap/
+  knowledge_container.py` (не дублируют логику); скрипт не переименован.
+  Новый `scripts/check_services.py` — тонкая CLI-обёртка над
+  `CheckExternalServicesHealthUseCase`, без admin-ключа (CLI и так
+  требует доступа к `.env`/файловой системе сервера), exit code 0/1 по
+  `all_healthy`.
+* [x] S8-11 — финальная интеграция. Полный аудит `bootstrap/
+  application.py`/`bootstrap/container.py`/`bootstrap/knowledge_container.py`
+  не выявил дефектов сверх уже найденных и исправленных по ходу задач
+  S8-01/S8-05 (см. записи выше) — DI-сборка корректна, ровно одна
+  `ConversationRepositoriesFactory` во всём приложении (`grep`
+  подтверждает единственный вызов `build_conversation_repositories_factory`
+  в `bootstrap/container.py`). Новый `tests/e2e/test_admin_scenario.py` —
+  один continuous-прогон через реальный `create_application()` lifespan:
+  auth 401 на всех трёх роутерах (документы/профили/health, отсутствие И
+  неверный ключ), полный цикл документа (upload→list→get→reindex→
+  delete→404), полный цикл профиля (create→patch→archive, включая 409 на
+  попытке архивировать `is_default=True`), health-check (здоровый И
+  нездоровый сценарий) — всё в одном тесте, одном `app`/lifespan, не
+  изолированными кусочками (уже покрыто отдельными
+  `test_admin_documents.py`/`test_admin_profiles.py`/`test_admin_health.py`
+  из S8-05/S8-08/S8-09). `git diff --stat feature/sprint-7..HEAD --
+  domain/prompt application/prompt infrastructure/prompts
+  process_user_message.py presentation/telegram` — пусто. Реальная
+  Docker-верификация (не сфабрикована, Docker Desktop запущен и
+  проверен): `docker compose build && docker compose up -d` — все три
+  сервиса (api/telegram-bot/qdrant) стартуют штатно, `api` сообщает
+  `healthy` через встроенный healthcheck; `GET /health` → `200`; `GET
+  /admin/health` с реальным `ADMIN_API_KEY` из `.env` и РЕАЛЬНЫМИ
+  `OPENROUTER_API_KEY`/`OPENAI_API_KEY` → `200`, все три сервиса
+  `healthy: true` (Qdrant виден по имени сервиса `qdrant` из
+  docker-compose сети — не заглушка); `GET /admin/health` без ключа/с
+  неверным ключом → `401` оба раза; `alembic current`/`history` внутри
+  контейнера подтверждают ровно 6 миграций (без новых для
+  `profiles`/`knowledge_documents`); `alembic upgrade head → downgrade -1
+  → upgrade head` внутри контейнера — чисто, `sqlite_master` после цикла
+  содержит все 8 таблиц (включая `profiles`/`knowledge_documents`/
+  `user_active_models`); `scripts/check_services.py`/`scripts/
+  index_document.py list` отработали внутри контейнера штатно; полный
+  реальный документный цикл выполнен внутри контейнера сквозь ОБА
+  интерфейса разом — `index` через CLI (реальный OpenAI embeddings-вызов,
+  реальный Qdrant upsert, `chunk_count=1`) → документ виден через `GET
+  /admin/documents` (REST) → `reindex` через REST (тот же `document_id`)
+  → `delete` через CLI → `GET /admin/documents/{id}` (REST) → `404`;
+  попытка архивировать РЕАЛЬНЫЙ сид-профиль `is_default=True` («Деловой»,
+  из сид-миграции S3-04) через REST против реального контейнера → `409`.
+  Полный набор тестов (842), Ruff, Ruff format, MyPy проходят.
+  `README.md`/`claude.md` обновлены под фактическое состояние Sprint 8.
+  Новая бизнес-функциональность в этой задаче не добавлялась — только
+  верификация и документация.
+
 ---
 
 # 33. План следующих спринтов
@@ -2435,21 +2597,36 @@ Sprint 7 — не заменяет полноценную запись §32, е�
 * несколько AI-провайдеров;
 * fallback policy.
 
-## Спринт 8
+## Спринт 8 — завершён (S8-01…S8-11, см. §32 «Текущий спринт (обновление 6)»)
 
-* административные функции;
-* аудит;
-* метрики;
-* production-развёртывание;
-* приёмочные тесты.
-* явный глобальный `exception_handler` для FastAPI (`bootstrap/application.py`) —
-  до сих пор непокрытая граница интерфейса опиралась на дефолтное
+* [x] административные функции — защищённый REST API (`presentation/api/`)
+  для CRUD документов базы знаний (список/детали/загрузка+индексация/
+  удаление/переиндексация) и профилей (список/создание/редактирование/
+  архивация), статичная API-key авторизация (`X-Admin-Api-Key`/
+  `ADMIN_API_KEY`), CLI-паритет (`scripts/index_document.py list/reindex`,
+  `scripts/check_services.py`);
+* [x] реальные health-check внешних сервисов (`GET /admin/health` —
+  Qdrant/OpenRouter/OpenAI), `GET /health` остался дешёвым/без auth;
+* [x] аудит-логирование административных действий (`admin_profile_created`/
+  `_updated`/`_archived`, `knowledge_document_reindex_requested` — через
+  уже существующий `structlog`-механизм, не отдельная подсистема);
+* [x] явный глобальный `exception_handler` для FastAPI
+  (`bootstrap/application.py`/`presentation/api/error_handlers.py`) —
+  до Sprint 8 непокрытая граница интерфейса опиралась на дефолтное
   поведение Starlette (`debug=False` → общий `500` без traceback), т.к.
   единственный эндпоинт был `/health` и не мог бросить содержательное
   исключение; с первым эндпоинтом, вызывающим use case/бизнес-логику,
-  нужна та же явная обработка `DekoderError`/неожиданных исключений, что
-  уже есть в Telegram-обработчике (`presentation/telegram/handlers/messages.py`)
-  — безопасное сообщение пользователю, без stack trace и внутренних деталей.
+  понадобилась та же явная обработка `DekoderError`/неожиданных
+  исключений, что уже есть в Telegram-обработчике (`presentation/
+  telegram/handlers/messages.py`) — безопасное сообщение пользователю,
+  без stack trace и внутренних деталей.
+* [ ] полноценный просмотр/агрегация логов и метрик, полная иерархия
+  ошибок §17.4 «Плана реализации.md» — явно отложены пользователем на
+  этапе планирования Sprint 8 (скоуп-решение №3, backlog_8.md §1) на
+  Этап 11, не входили в объём этого спринта;
+* [ ] CRUD каталога AI-моделей, admin-управление долговременной памятью
+  (`MemoryRecord` cross-user) — явно отклонены пользователем на этапе
+  планирования (backlog_8.md §1, скоуп-решения №2/№3), не Sprint 8.
 
 Порядок может корректироваться, но изменение должно быть зафиксировано.
 
@@ -3471,20 +3648,37 @@ e2e), ruff/ruff format/mypy проходят.
 
 ## В разработке
 
-Ничего — Sprint 7 полностью завершён (S7-01…S7-08, см. запись выше;
-Sprint 6, Этап 8 «база знаний и RAG», тоже фактически завершён —
-см. примечание об отсутствующей записи Sprint 6 выше). Следующий шаг —
-Этап 10, административные функции (§33).
+Ничего — Sprint 8 полностью завершён (S8-01…S8-11, см. запись в §32
+«Текущий спринт (обновление 6)» и запись в конце этого раздела).
+Следующий шаг — Этап 11 (полноценный просмотр логов/метрик,
+`AccessDeniedError`/`ConfigurationError`/`KnowledgeSearchError`,
+сквозной `correlation_id`), не начат.
 
 ## Не реализовано
 
-* персональные (не каталожные) профили пользователя, `CreateProfile`/
-  `UpdateProfile`/`DeactivateProfile`, административные функции (Этап
-  10) — по плану, следующие спринты/этапы (§33). Prompt Engine (Этап 6)
-  реализован в Sprint 4; долговременная память (Этап 7) — в Sprint 5;
-  база знаний и RAG (Этап 8) — в Sprint 6; выбор AI-модели (Этап 9) — в
-  Sprint 7 (см. запись выше) — ни одна из этих секций/возможностей
-  больше не относится к «не реализовано».
+* Prompt Engine (Этап 6) реализован в Sprint 4; долговременная память
+  (Этап 7) — в Sprint 5; база знаний и RAG (Этап 8) — в Sprint 6; выбор
+  AI-модели (Этап 9) — в Sprint 7; административные функции (Этап 10,
+  admin REST для документов/профилей, реальный health-check) — в Sprint 8
+  (см. запись выше) — ни одна из этих секций/возможностей больше не
+  относится к «не реализовано». `CreateProfile`/`UpdateProfile`/
+  `DeactivateProfile` (персональные, каталожные профили-CRUD) реализованы
+  в Sprint 8 (S8-06/S8-07/S8-08), не персональные профили пользователя
+  (те по-прежнему не входят в модель Sprint 1-8 — каталог общий,
+  ADR-3.1).
+* полноценный просмотр/агрегация логов и метрик, полная иерархия ошибок
+  §17.4 «Плана реализации.md» (`AccessDeniedError`/`ConfigurationError`/
+  `KnowledgeSearchError`, сквозной `correlation_id` через весь стек) —
+  Этап 11, явно отложено пользователем на этапе планирования Sprint 8
+  (backlog_8.md §1, скоуп-решение №3); Sprint 8 добавил ровно один новый
+  класс, `NotFoundError`, и аудит-логирование административных действий
+  через уже существующий `structlog`, не полноценную подсистему логов.
+* admin CRUD каталога AI-моделей (`admin_models.py`, §16.5 «Плана
+  реализации.md»), admin-управление долговременной памятью
+  (`MemoryRecord` cross-user list/delete) — явно отклонены пользователем
+  на этапе планирования Sprint 8 (backlog_8.md §1, скоуп-решения №2/№3);
+  каталог моделей остаётся статичным `catalog.json` четвёртый спринт
+  подряд (Sprint 5-8).
 * `UpdateMemoryRecord` (§13.6 «Плана реализации.md») — сознательно не
   реализован в Sprint 5 (ADR-5.9, S5-05): нет вызывающего сценария без
   административного интерфейса (Этап 10). `ConfirmMemoryRecord`/
@@ -3502,8 +3696,9 @@ Sprint 6, Этап 8 «база знаний и RAG», тоже фактичес
   не входят») до стабилизации интерфейса; каталог моделей и персональный
   выбор (Этап 9) полностью реализованы и не входят в этот список.
 * редактирование каталога моделей через Telegram/HTTP, CRUD каталога —
-  Этап 10 (административная панель), сознательно не реализовано в
-  Sprint 7 (ADR-7.4): каталог — статичный файл, правится передеплоем.
+  сознательно не реализовано ни в Sprint 7 (ADR-7.4), ни в Sprint 8
+  (скоуп-решение №2, см. запись выше): каталог остаётся статичным файлом,
+  правится передеплоем.
 * `UserProfile.preferred_model` — по-прежнему не читается/не пишется
   (ADR-7.6, третий спринт подряд): персональный выбор модели моделируется
   исключительно через `ModelSelection`/`user_active_models`, не через это
@@ -3629,6 +3824,31 @@ ADR-7.1/7.2, узел `model_gateway` целиком, узел `model_catalog`
 состояние на момент Sprint 1 и объясняет ИСТОРИЮ дублирования; удаление
 конкретных файлов, о которых он предупреждал, зафиксировано здесь, а не
 через правку задним числом более раннего текста.
+
+**Обновление Sprint 8 (S8-01, ADR-8.1):** узел администрирования
+старого дерева, релевантный Sprint 8, удалён — `application/admin/`
+(`ports.py::AdminAuthPort`, `commands.py::AuthenticateAdminCommand`,
+`use_cases/authenticate_admin.py::AuthenticateAdminUseCase` —
+login/session/токен-модель, `raise NotImplementedError`) — та же логика,
+что ADR-4.10/5.1/6.x/7.1: правдоподобно выглядящий «модуль
+администрирования» ровно в момент, когда строился настоящий (структурно
+другая модель авторизации — статичный API-key, не login/password/
+session, скоуп-решение пользователя №1). В отличие от S5-01/S7-01, здесь
+dangling-импорт был не в `application/ai_core/` (это про каталог
+моделей), а в самом `composition/container.py::Container` — датакласс
+держал поля `admin_auth: AdminAuthPort`/`authenticate_admin:
+AuthenticateAdminUseCase`, импортированные на уровне модуля; удаление
+`application/admin/` без правки `composition/container.py` сломало бы
+импорт этого модуля, а с ним — транзитивно импортирующий его
+`composition/bootstrap.py::create_app`, используемый живым, проходящим
+тестом (`tests/integration/test_health_endpoint.py`). Задокументировано
+как отклонение от буквального текста задачи (та ограничивала правку
+только удалением `application/admin/`) в §32 (S8-01) и в сообщении
+коммита. Остальной v2.0-скелет (`rag`, `session`, `skills`,
+`knowledge_base`, `interfaces/`, `shared/domain/identifiers.py`,
+`composition/` за пределами точечной правки) не тронут — зачистка
+остального скелета осознанно вынесена в отдельную будущую задачу
+(ADR-4.10/5.1/6.x/7.1/8.1), не в Sprint 8.
 
 ## Последнее принятое решение
 
@@ -3926,3 +4146,86 @@ api/telegram-bot/qdrant) — оба процесса приложения ста
 штатно, без единой ошибки/traceback. 741 тест, ruff/ruff format/mypy
 проходят. `README.md` обновлён под фактическое состояние Sprint 7.
 Следующий шаг — Этап 10, административные функции (§33), не начат.
+
+S8-11 завершена — Sprint 8 (S8-01…S8-11) полностью завершён. Полный
+аудит `bootstrap/application.py`/`bootstrap/container.py`/`bootstrap/
+knowledge_container.py` не выявил новых дефектов сверх уже найденных и
+исправленных по ходу самих задач (S8-01 — dangling-импорт мёртвого
+`AdminAuthPort`/`AuthenticateAdminUseCase` в живом `composition/
+container.py`, транзитивно ломавший тестируемый `composition/
+bootstrap.py`; S8-05/S8-08/S8-09 — необходимость локального (не
+module-level) импорта трёх новых роутеров внутри `create_application()`,
+иначе цикл импорта `bootstrap.application` ↔
+`presentation.api.routes.*`/`presentation.api.dependencies.documents`,
+поскольку их зависимости импортируют accessor-функции обратно из
+`bootstrap.application`); DI-сборка корректна — `ApplicationContainer`
+содержит ровно 4 новых профильных поля (`create_profile`/
+`update_profile`/`deactivate_profile`/`list_all_profiles`) плюс
+`check_external_services_health` (ADR-8.4 checklist подтверждён
+буквально), `bootstrap/knowledge_container.py` — три новых билдера
+(`build_list_documents_use_case`/`build_get_document_use_case`/
+`build_reindex_document_use_case`), ровно одна
+`ConversationRepositoriesFactory` во всём приложении (`grep` находит
+единственный вызов `build_conversation_repositories_factory`, в
+`bootstrap/container.py`).
+
+Эмпирически подтверждено (`tests/e2e/test_admin_scenario.py`, новый):
+один continuous-прогон через реальный `create_application()` lifespan —
+401 без ключа/с неверным ключом на всех трёх admin-роутерах; полный
+жизненный цикл документа (`upload → list → get → reindex → delete →
+404`, `reindex` сохраняет `document_id`); полный жизненный цикл профиля
+(`create → patch (частичный) → archive → list`, попытка архивировать
+`is_default=True` → `409 PROFILE_ARCHIVE_DEFAULT_FORBIDDEN`, профиль
+остаётся `ACTIVE`); `GET /admin/health` — оба крайних сценария (все три
+сервиса здоровы/все три недоступны) в одном и том же прогоне; публичный
+`GET /health` не задет присутствием admin-роутеров. `git diff --stat
+feature/sprint-7..HEAD -- domain/prompt application/prompt
+infrastructure/prompts process_user_message.py presentation/telegram` —
+пусто (диалоговый путь и Telegram-хендлеры не тронуты ни одним байтом
+за весь спринт).
+
+Docker-верификация выполнена реально, не сфабрикована (Docker Desktop
+запущен и проверен в рамках этой сессии): `docker compose build` —
+успешно (оба образа, `api`/`telegram-bot`, из одного `Dockerfile`,
+включая новую рантайм-зависимость `python-multipart`); `docker compose
+up -d` — все три сервиса (`api`/`telegram-bot`/`qdrant`) стартуют
+штатно, `api` отчитывается `healthy` через встроенный Docker
+healthcheck; `GET /health` (без ключа) → `200`, контракт не изменился;
+`GET /admin/health` без ключа/с неверным ключом → `401` оба раза; `GET
+/admin/health` С РЕАЛЬНЫМ `ADMIN_API_KEY` (значение из локального
+`.env`, не в git) И РЕАЛЬНЫМИ `OPENROUTER_API_KEY`/`OPENAI_API_KEY` →
+`200`, все три сервиса `healthy: true`, включая Qdrant, увиденный по
+имени сервиса Docker Compose `qdrant` (не `localhost`) — прямое
+эмпирическое подтверждение сетевого решения `docker-compose.yml::
+QDRANT_HOST=qdrant`; `alembic current`/`alembic history` внутри
+контейнера подтверждают ровно 6 миграций, без единой новой ревизии для
+`profiles`/`knowledge_documents` (список ревизий идентичен состоянию до
+Sprint 8); `alembic upgrade head → downgrade -1 → upgrade head` внутри
+контейнера — чисто, без ошибок; прямой запрос к `sqlite_master` внутри
+контейнера после цикла подтверждает все 8 таблиц на месте (`users`,
+`conversations`, `messages`, `profiles`, `user_active_profiles`,
+`memory_records`, `knowledge_documents`, `user_active_models`).
+`scripts/check_services.py`/`scripts/index_document.py list` отработали
+штатно внутри контейнера (реальные HTTP-вызовы к Qdrant/OpenRouter/
+OpenAI, не фейки). Дополнительно, сверх формальных требований S8-11:
+полный документный цикл выполнен внутри контейнера СКВОЗЬ ОБА интерфейса
+одновременно, доказывая, что CLI и REST реально используют одну и ту же
+композицию (не два похожих, но раздельных пути) — `python
+scripts/index_document.py index` (CLI, реальный OpenAI embeddings-вызов,
+реальный Qdrant upsert, `status=indexed chunk_count=1`) → документ
+немедленно виден через `GET /admin/documents/{id}` (REST) → `POST
+/admin/documents/{id}/reindex` (REST) возвращает тот же `document_id` →
+`python scripts/index_document.py delete` (CLI) → `GET
+/admin/documents/{id}` (REST) → `404`; отдельно — попытка архивировать
+РЕАЛЬНЫЙ сид-профиль `is_default=True» («Деловой», из сид-миграции
+S3-04, не тестовые данные) через REST против настоящего контейнера и
+настоящей персистентной БД → `409 PROFILE_ARCHIVE_DEFAULT_FORBIDDEN`,
+профиль не изменён.
+
+842 теста проходят (было 741 на конец Sprint 7), Ruff, Ruff format, MyPy
+проходят без ошибок. `README.md` обновлён под фактическое состояние
+Sprint 8 (переменная `ADMIN_API_KEY`, раздел «Admin API» с перечнем всех
+11 admin-эндпоинтов, обновлённое дерево каталогов, обновлённый раздел
+«Тесты»). Следующий шаг — Этап 11 (полноценный просмотр логов/метрик,
+`AccessDeniedError`/`ConfigurationError`/`KnowledgeSearchError`, сквозной
+`correlation_id`), не начат.

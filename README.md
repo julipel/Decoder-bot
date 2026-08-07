@@ -9,7 +9,10 @@
 (постоянное хранилище, диалоги, история), Sprint 3 (пользовательские
 профили), Sprint 4 (Prompt Engine — централизованная сборка промпта),
 Sprint 5 (долговременная память), Sprint 6 (база знаний и RAG через
-Qdrant) и Sprint 7 (выбор AI-модели пользователем) полностью завершены:
+Qdrant), Sprint 7 (выбор AI-модели пользователем) и Sprint 8
+(административные функции — защищённый REST API для документов базы
+знаний и профилей, реальные health-check внешних сервисов, CLI-паритет)
+полностью завершены:
 
 ```text
 Telegram → ProcessUserMessage → (модель + профиль + память + история + RAG) → PromptContext → PromptBuilder → PromptBuildResult
@@ -75,13 +78,21 @@ model_catalog/catalog.json`, 6 моделей OpenRouter из 4 семейств
 у моделей, помеченных в каталоге неактивными — выбор такой модели
 отклоняется на уровне use case, не только UI; переключение влияет только
 на будущие сообщения и не затрагивает других пользователей.
-Персональных (не каталожных) профилей, `CreateProfile`/`UpdateProfile`/
-`DeactivateProfile`, реальных прямых (не через OpenRouter) адаптеров
-провайдеров и интеллектуальной авто-маршрутизации между моделями ещё
-нет — они добавляются по следующим спринтам/этапам (`claude.md`, §33).
+Реальных прямых (не через OpenRouter) адаптеров провайдеров и
+интеллектуальной авто-маршрутизации между моделями ещё нет — они
+добавляются по следующим спринтам/этапам (`claude.md`, §33).
 Автоматическое извлечение фактов AI из диалога не реализовано и
 не планируется в MVP (§13.2 «Плана реализации.md») — память растёт
 только через явную команду `/remember`.
+
+Sprint 8 добавляет защищённый административный REST API
+(`presentation/api/`, все эндпоинты — под заголовком
+`X-Admin-Api-Key`) поверх той же архитектуры: CRUD документов базы
+знаний (список/детали/загрузка+индексация/удаление/переиндексация),
+CRUD профилей (список/создание/редактирование/архивация) и реальные
+проверки доступности Qdrant/OpenRouter/OpenAI (`GET /admin/health`) —
+без единого изменения в `ProcessUserMessage`, Prompt Engine или
+Telegram-командах. Подробности — раздел «Admin API» ниже.
 
 ## Архитектура
 
@@ -227,6 +238,12 @@ OpenRouter не отдаёт embeddings API), а не через OpenRouter.
 остаётся единственным реальным LLM-провайдером — выбор модели меняет
 только значение `LLMRequest.model_id`, отправляемое тому же
 `OpenRouterLLMAdapter`, не добавляет второй HTTP-клиент/адаптер.
+Sprint 8 (admin REST) добавляет ровно одну новую рантайм-зависимость —
+`python-multipart` (обязательна для FastAPI `Form`/`UploadFile` в `POST
+/admin/documents`, без неё запрос падает `500` на рантайме); авторизация
+— штатный `fastapi.security.APIKeyHeader`, без сторонних библиотек;
+health-check переиспользует уже подключённые `httpx`/`qdrant-client`, не
+добавляет собственных HTTP-клиентов.
 
 ## Быстрый старт (локальная разработка)
 
@@ -347,6 +364,14 @@ create_all()` нигде не вызывается в рабочем коде (�
   прямой аналог `user_active_profiles`; **без** сид-данных (ADR-7.4:
   сам каталог моделей — статичный файл `catalog.json`, не БД).
 
+Sprint 8 (административные функции) не добавляет новой ревизии — схема
+`profiles`/`knowledge_documents` уже содержала всё необходимое для admin
+CRUD с момента её создания (ADR-8.7), включая `status = 'archived'` для
+`profiles` (`ck_profiles_status`, разрешено с S3-03). Подтверждено
+эмпирически: `alembic upgrade head → downgrade -1 → upgrade head` внутри
+Docker-контейнера при финальной интеграции Sprint 8 (S8-11) — те же
+шесть ревизий до и после.
+
 ```powershell
 # Применить все миграции (создаёт/обновляет схему БД) — идемпотентно,
 # повторный запуск на уже актуальной схеме ничего не ломает
@@ -397,9 +422,79 @@ upgrade head` перед первым стартом приложения — с
 | `QdrantSettings` | `QDRANT_` | — | `QDRANT_HOST`, `QDRANT_PORT`, `QDRANT_COLLECTION_NAME`, `QDRANT_VECTOR_SIZE` |
 | `KnowledgeSettings` | `KNOWLEDGE_` | — | `KNOWLEDGE_MAX_FILE_SIZE_BYTES`, `KNOWLEDGE_CHUNK_SIZE`, `KNOWLEDGE_CHUNK_OVERLAP`, `KNOWLEDGE_SEARCH_LIMIT`, `KNOWLEDGE_MIN_RELEVANCE_SCORE`, `KNOWLEDGE_STORAGE_PATH` |
 | `ModelCatalogSettings` | `MODEL_CATALOG_` | — | `MODEL_CATALOG_CATALOG_PATH` (путь к `catalog.json`, по умолчанию сид-файл внутри пакета, Sprint 7, ADR-7.4) |
+| `AdminSettings` | `ADMIN_` | `ADMIN_API_KEY` | `ADMIN_HEALTH_CHECK_TIMEOUT` (таймаут одного probe `GET /admin/health` в секундах, по умолчанию 3.0, Sprint 8, ADR-8.3/8.9) |
 
 Отсутствие обязательного секрета в окружении останавливает процесс при
 создании `Settings()` (fail-fast), а не на первом запросе.
+
+`ADMIN_API_KEY` — статичный ключ, который клиент передаёт в заголовке
+`X-Admin-Api-Key` на любой `/admin/*` эндпоинт (не login/session/JWT —
+единственная admin-учётка для MVP). Сравнивается через
+`secrets.compare_digest` (защита от timing-атак); ни ожидаемое, ни
+переданное значение никогда не попадают в логи (`shared/logging.py::
+_SENSITIVE_KEYS`).
+
+## Admin API
+
+Защищённый REST API администрирования (Sprint 8, `presentation/api/`) —
+доступен только на процессе `api` (`uvicorn dekoder.main:app`), не на
+`telegram-bot`. Каждый запрос обязан нести заголовок `X-Admin-Api-Key`
+со значением `ADMIN_API_KEY` — без него или с неверным значением любой
+`/admin/*` эндпоинт отвечает `401`. Публичный `GET /health` (без auth,
+без сети) не входит в этот раздел и не изменился ни строкой.
+
+Документы базы знаний (`prefix /admin/documents`):
+
+| Метод | Путь | Действие | Код успеха |
+|---|---|---|---|
+| `POST` | `/admin/documents` | Загрузить и проиндексировать документ (`multipart/form-data`: `file`, `title?`, `tags?`, `description?`) | `201` |
+| `GET` | `/admin/documents` | Список всех документов каталога (все статусы, включая `FAILED`/`UNSUPPORTED`) | `200` |
+| `GET` | `/admin/documents/{document_id}` | Статус/детали одного документа | `200` / `404` |
+| `DELETE` | `/admin/documents/{document_id}` | Удалить документ (векторы → файл → запись); идемпотентно | `204` |
+| `POST` | `/admin/documents/{document_id}/reindex` | Переиндексировать уже загруженный документ без повторной загрузки файла | `200` / `404` |
+
+Профили (`prefix /admin/profiles`):
+
+| Метод | Путь | Действие | Код успеха |
+|---|---|---|---|
+| `GET` | `/admin/profiles` | Список всех профилей каталога (включая архивные) | `200` |
+| `POST` | `/admin/profiles` | Создать новый профиль (всегда `is_system=false`, `is_default=false`) | `201` |
+| `GET` | `/admin/profiles/{profile_id}` | Детали одного профиля | `200` / `404` |
+| `PATCH` | `/admin/profiles/{profile_id}` | Частично изменить профиль (`is_default`/`is_system`/`status` не принимаются) | `200` / `404` |
+| `POST` | `/admin/profiles/{profile_id}/archive` | Архивировать профиль | `200` / `404` / `409` (попытка архивировать профиль по умолчанию) |
+
+Здоровье внешних сервисов:
+
+| Метод | Путь | Действие | Код успеха |
+|---|---|---|---|
+| `GET` | `/admin/health` | Реальные проверки доступности Qdrant/OpenRouter/OpenAI | `200` (всегда — `all_healthy=false`, не `5xx`, если сервисы недоступны) |
+
+Пример запроса:
+
+```powershell
+curl -H "X-Admin-Api-Key: $env:ADMIN_API_KEY" http://localhost:8000/admin/documents
+curl -H "X-Admin-Api-Key: $env:ADMIN_API_KEY" http://localhost:8000/admin/health
+```
+
+Тот же функционал доступен через CLI без HTTP/auth-слоя, теми же
+билдерами use case'ов, что и REST (единая точка истины сборки,
+`bootstrap/knowledge_container.py`):
+
+```powershell
+uv run python scripts/index_document.py index <файл> [--title ...] [--tags a,b,c] [--description ...]
+uv run python scripts/index_document.py list
+uv run python scripts/index_document.py reindex <document_id>
+uv run python scripts/index_document.py delete <document_id>
+uv run python scripts/check_services.py   # exit code 0, если все три сервиса здоровы, иначе 1
+```
+
+`scripts/check_services.py` не проверяет `ADMIN_API_KEY` — CLI-скрипты и
+так требуют доступа к `.env`/файловой системе сервера.
+
+Каталог AI-моделей (Sprint 7) остаётся статичным `catalog.json` —
+admin CRUD для моделей и admin-доступ к долговременной памяти
+(`MemoryRecord` других пользователей) сознательно не входят в Sprint 8
+(скоуп-решения №2/№3, `claude.md` §32/§36).
 
 ## Проверка качества кода
 
@@ -428,13 +523,24 @@ pre-commit run --all-files
 
 ```text
 tests/
-├── unit/            # domain, application use cases, presentation-мапперы, shared
+├── unit/            # domain, application use cases (включая admin: profile CRUD,
+│                    #   knowledge list/get/reindex, CheckExternalServicesHealthUseCase),
+│                    #   presentation-мапперы/require_admin_api_key, health-check адаптеры, shared
 ├── integration/     # OpenRouter adapter через respx, /health endpoint, Alembic-миграции,
 │                    #   репозитории/persistence-потоки ProcessUserMessage/StartNewConversation/
-│                    #   ClearConversation/ProfileRepository/MemoryRepository/
-│                    #   KnowledgeDocumentRepository/ModelSelectionRepository/ConfigModelCatalogRepository
-│                    #   поверх временной SQLite (без сети)
-└── e2e/             # test_conversation_scenario.py — сквозной сценарий диалога поверх реального
+│                    #   ClearConversation/ProfileRepository (включая admin CRUD)/MemoryRepository/
+│                    #   KnowledgeDocumentRepository (включая list_all)/ModelSelectionRepository/
+│                    #   ConfigModelCatalogRepository поверх временной SQLite (без сети);
+│                    #   presentation/api/ — test_admin_documents.py/test_admin_profiles.py/
+│                    #   test_admin_health.py/test_error_handlers.py — через реальный
+│                    #   create_application() lifespan (OpenAI/OpenRouter — respx, Qdrant — fake-клиент
+│                    #   или respx-перехват реального REST-эндпоинта, см. докстринги файлов)
+└── e2e/             # test_admin_scenario.py (Sprint 8, S8-11) — один continuous-прогон через
+                     #   реальный create_application() lifespan: auth на всех трёх admin-роутерах,
+                     #   полный цикл документа (upload→list→get→reindex→delete→404), полный цикл
+                     #   профиля (create→patch→archive, включая 409 на попытке архивировать
+                     #   is_default=True), health-check (здоровый/нездоровый сценарий);
+                     # test_conversation_scenario.py — сквозной сценарий диалога поверх реального
                      #   telegram.ext.Application (in-memory fake-репозитории);
                      # test_conversation_persistence_scenario.py — те же сценарии (первое/второе
                      #   сообщение, /new, /clear, изоляция пользователей, перезапуск приложения,
@@ -487,6 +593,13 @@ LLM или реальному Qdrant/OpenAI — единственные под�
 `catalog.json` (статичный каталог AI-моделей, Sprint 7) устанавливается
 вместе с пакетом (`pip install .`, `pyproject.toml::package-data`) — не
 требует отдельного volume/`COPY`, как и Alembic-миграции/`scripts/`.
+
+Внутри compose-сети сервис `api` видит Qdrant по имени сервиса
+(`QDRANT_HOST=qdrant`, переопределяется в `docker-compose.yml` поверх
+дефолтного `localhost` в `.env`) — на этом основан `GET /admin/health`
+(Sprint 8): подтверждено эмпирически при финальной интеграции (S8-11)
+реальным запросом изнутри контейнера с реальными `OPENROUTER_API_KEY`/
+`OPENAI_API_KEY`, все три сервиса вернулись `healthy: true`.
 
 Секреты не хранятся в `docker-compose.yml` и не копируются в образ —
 только через `env_file: .env` (создать из `.env.example`, сам `.env` не коммитится).
