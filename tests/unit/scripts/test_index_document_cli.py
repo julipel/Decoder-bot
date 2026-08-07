@@ -51,6 +51,25 @@ class TestDeleteSubcommand:
         assert args.document_id == "11111111-1111-1111-1111-111111111111"
 
 
+class TestListSubcommand:
+    """Sprint 8, S8-10, ADR-8.11."""
+
+    def test_parses_without_arguments(self) -> None:
+        args = _build_parser().parse_args(["list"])
+
+        assert args.command == "list"
+
+
+class TestReindexSubcommand:
+    """Sprint 8, S8-10, ADR-8.11."""
+
+    def test_parses_document_id_argument(self) -> None:
+        args = _build_parser().parse_args(["reindex", "11111111-1111-1111-1111-111111111111"])
+
+        assert args.command == "reindex"
+        assert args.document_id == "11111111-1111-1111-1111-111111111111"
+
+
 class TestMissingSubcommand:
     def test_requires_a_subcommand(self) -> None:
         with pytest.raises(SystemExit):

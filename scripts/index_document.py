@@ -8,11 +8,24 @@ admin API — Этап 10, отдельный будущий спринт.
 Использование:
     python scripts/index_document.py index <файл> [--title ...] [--tags a,b,c] [--description ...]
     python scripts/index_document.py delete <document_id>
+    python scripts/index_document.py list
+    python scripts/index_document.py reindex <document_id>
 
 В отличие от `bootstrap/application.py`/`telegram_main.py`,
 `ensure_collection` здесь fail-fast (не перехватывается) — индексация без
 доступного Qdrant бессмысленна, в то время как обычный диалог должен
 продолжать работать без RAG (см. `bootstrap/application.py`).
+
+С задачи S8-10 (Sprint 8, ADR-8.11) скрипт не переименован (churn без
+функциональной пользы) и дополнен подкомандами `list`/`reindex` —
+переиспользуют те же билдеры `bootstrap/knowledge_container.py`
+(`build_list_documents_use_case`/`build_reindex_document_use_case`,
+S8-04), что и REST-слой (`presentation/api/routes/admin_documents.py`,
+S8-05) — единая точка истины сборки для обоих интерфейсов. `list` не
+трогает Qdrant вообще (только чтение метаданных из БД, без
+`ensure_collection`/`build_qdrant_client`); `reindex` — тот же каркас,
+что `index` (fail-fast `ensure_collection`, второй `httpx.AsyncClient`
+для эмбеддингов).
 """
 
 from __future__ import annotations
@@ -27,7 +40,12 @@ import httpx
 
 from dekoder.application.knowledge.dto import IndexDocumentCommand
 from dekoder.bootstrap.database import dispose_database, init_database
-from dekoder.bootstrap.knowledge_container import build_delete_document_use_case, build_index_document_use_case
+from dekoder.bootstrap.knowledge_container import (
+    build_delete_document_use_case,
+    build_index_document_use_case,
+    build_list_documents_use_case,
+    build_reindex_document_use_case,
+)
 from dekoder.domain.knowledge.value_objects import DocumentStatus
 from dekoder.infrastructure.persistence.session import session_scope
 from dekoder.infrastructure.qdrant.client import build_qdrant_client, ensure_collection
@@ -108,6 +126,61 @@ async def _run_delete(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+async def _run_list(settings: Settings) -> int:
+    """`list` не трогает Qdrant — только чтение метаданных документов из БД (build_list_documents_use_case, S8-04)."""
+    db_engine, db_session_factory = await init_database(settings)
+    try:
+        async with session_scope(db_session_factory) as session:
+            use_case = build_list_documents_use_case(session)
+            documents = await use_case.execute()
+    finally:
+        await dispose_database(db_engine)
+
+    if not documents:
+        print("Документов нет.")
+        return 0
+
+    print(f"{'id':36}  {'status':12}  {'chunks':>6}  {'updated_at':26}  title")
+    for document in documents:
+        print(
+            f"{document.id}  {document.status.value:12}  {document.chunk_count:>6}  "
+            f"{document.updated_at.isoformat():26}  {document.title}"
+        )
+    return 0
+
+
+async def _run_reindex(args: argparse.Namespace, settings: Settings) -> int:
+    try:
+        document_id = UUID(args.document_id)
+    except ValueError:
+        print(f"Некорректный document_id: {args.document_id!r}", file=sys.stderr)
+        return 2
+
+    db_engine, db_session_factory = await init_database(settings)
+    qdrant_client = build_qdrant_client(settings.qdrant)
+    try:
+        await ensure_collection(qdrant_client, settings.qdrant)
+        async with (
+            httpx.AsyncClient(base_url=settings.openai.base_url, timeout=settings.llm.timeout) as openai_http_client,
+            session_scope(db_session_factory) as session,
+        ):
+            use_case = build_reindex_document_use_case(settings, session, openai_http_client, qdrant_client)
+            result = await use_case.execute(document_id)
+    finally:
+        await qdrant_client.close()
+        await dispose_database(db_engine)
+
+    if result is None:
+        print(f"Документ не найден: {document_id}", file=sys.stderr)
+        return 2
+
+    document = result.document
+    print(f"document_id={document.id} status={document.status.value} chunk_count={document.chunk_count}")
+    if document.error_message:
+        print(f"error: {document.error_message}", file=sys.stderr)
+    return 0 if document.status is DocumentStatus.INDEXED else 1
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Индексация/удаление документов базы знаний (Sprint 6, S6-09).")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -120,6 +193,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     delete_parser = subparsers.add_parser("delete", help="Удалить документ и его векторы.")
     delete_parser.add_argument("document_id", help="UUID документа.")
+
+    subparsers.add_parser("list", help="Показать список всех документов каталога (Sprint 8, S8-10).")
+
+    reindex_parser = subparsers.add_parser(
+        "reindex", help="Переиндексировать уже загруженный документ без повторной загрузки файла (Sprint 8, S8-10)."
+    )
+    reindex_parser.add_argument("document_id", help="UUID документа.")
 
     return parser
 
@@ -151,9 +231,14 @@ def main() -> None:
                 description=args.description,
             )
         )
-    else:
+    elif args.command == "delete":
         _logger.info("knowledge_document_deletion_started", document_id=args.document_id)
         exit_code = asyncio.run(_run_delete(args, settings))
+    elif args.command == "list":
+        exit_code = asyncio.run(_run_list(settings))
+    else:
+        _logger.info("knowledge_document_reindex_cli_started", document_id=args.document_id)
+        exit_code = asyncio.run(_run_reindex(args, settings))
     sys.exit(exit_code)
 
 
