@@ -130,8 +130,17 @@ def create_application(settings: Settings) -> FastAPI:
 
     app = FastAPI(title=settings.application.name, version=APP_VERSION, lifespan=_lifespan)
     app.include_router(health_router)
-    # Регистрация admin-роутеров (S8-05/S8-08/S8-09) — после health_router,
-    # не взамен: GET /health остаётся без auth и без изменений в контракте.
+    # Регистрация admin-роутеров (S8-05, ADR-8.2) — после health_router, не
+    # взамен: GET /health остаётся без auth и без изменений в контракте.
+    # Импорт роутеров — внутри функции, а не на уровне модуля: их
+    # зависимости (`presentation/api/dependencies/documents.py`) сами
+    # импортируют accessor-функции этого модуля (`get_settings` и т.п.) —
+    # импорт на уровне модуля создал бы цикл `bootstrap.application` ->
+    # `presentation.api.routes.admin_documents` -> `presentation.api.
+    # dependencies.documents` -> `bootstrap.application`.
+    from dekoder.presentation.api.routes.admin_documents import router as admin_documents_router
+
+    app.include_router(admin_documents_router)
     app.add_exception_handler(DekoderError, dekoder_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, unhandled_exception_handler)
     return app

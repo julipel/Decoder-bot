@@ -21,6 +21,10 @@ dependencies = [
     "qdrant-client>=1.19.0",
     "python-docx>=1.2.0",
     "pypdf>=6.15.0",
+    # Sprint 8, S8-05 (ADR-8.6): multipart/form-data для POST /admin/documents
+    # (FastAPI Form/UploadFile требуют python-multipart на рантайме, не
+    # только для валидации схемы — без него запрос падает 500 при старте).
+    "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]
@@ -89,6 +93,15 @@ ignore = ["ANN401", "UP042"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["dekoder"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Sprint 8 (S8-05): `Depends(...)` как значение по умолчанию параметра —
+# идиоматичный, официально рекомендованный FastAPI-паттерн DI (используется
+# буквально в сниппетах backlog_8.md, ADR-8.2/8.4), не изменяемый
+# аргумент по умолчанию в обычном смысле B008 — FastAPI резолвит его
+# заново на каждый запрос. `fastapi.Security`/`fastapi.Form` уже входят
+# в дефолтный allowlist bugbear, `fastapi.Depends` — нет, добавлено явно.
+extend-immutable-calls = ["fastapi.Depends"]
 
 [tool.ruff.format]
 quote-style = "double"
