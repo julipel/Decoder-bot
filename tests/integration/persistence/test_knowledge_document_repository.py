@@ -222,3 +222,56 @@ class TestDelete:
             repository = SQLAlchemyKnowledgeDocumentRepository(session)
             await repository.delete(uuid4())  # не должно поднимать исключение
             await session.commit()
+
+
+class TestListAll:
+    """Sprint 8, S8-04, ADR-8.5: `list_all()` — все документы независимо от статуса, `created_at DESC, id DESC`."""
+
+    async def test_returns_documents_of_all_statuses(
+        self,
+        session_factory: async_sessionmaker,  # type: ignore[type-arg]
+    ) -> None:
+        indexed = _make_document(status=DocumentStatus.INDEXED, checksum="checksum-indexed")
+        failed = _make_document(status=DocumentStatus.FAILED, checksum="checksum-failed")
+        unsupported = _make_document(status=DocumentStatus.UNSUPPORTED, checksum="checksum-unsupported")
+        async with session_factory() as session:
+            repository = SQLAlchemyKnowledgeDocumentRepository(session)
+            for document in (indexed, failed, unsupported):
+                await repository.save(document)
+            await session.commit()
+
+        async with session_factory() as session:
+            repository = SQLAlchemyKnowledgeDocumentRepository(session)
+            documents = await repository.list_all()
+
+        assert {document.id for document in documents} == {indexed.id, failed.id, unsupported.id}
+
+    async def test_orders_by_created_at_desc(
+        self,
+        session_factory: async_sessionmaker,  # type: ignore[type-arg]
+    ) -> None:
+        older_at = datetime(2026, 1, 1, tzinfo=UTC)
+        newer_at = datetime(2026, 1, 2, tzinfo=UTC)
+        older = _make_document(checksum="checksum-older", created_at=older_at, updated_at=older_at)
+        newer = _make_document(checksum="checksum-newer", created_at=newer_at, updated_at=newer_at)
+        async with session_factory() as session:
+            repository = SQLAlchemyKnowledgeDocumentRepository(session)
+            await repository.save(older)
+            await repository.save(newer)
+            await session.commit()
+
+        async with session_factory() as session:
+            repository = SQLAlchemyKnowledgeDocumentRepository(session)
+            documents = await repository.list_all()
+
+        assert [document.id for document in documents] == [newer.id, older.id]
+
+    async def test_empty_catalog_returns_empty_list(
+        self,
+        session_factory: async_sessionmaker,  # type: ignore[type-arg]
+    ) -> None:
+        async with session_factory() as session:
+            repository = SQLAlchemyKnowledgeDocumentRepository(session)
+            documents = await repository.list_all()
+
+        assert documents == []

@@ -49,6 +49,10 @@ class FakeKnowledgeDocumentRepository:
     async def delete(self, document_id: UUID) -> None:
         self._by_id.pop(document_id, None)
 
+    async def list_all(self) -> Sequence[KnowledgeDocument]:
+        """Sprint 8, S8-04 — все документы; порядок вставки обратный (имитирует `created_at DESC`)."""
+        return list(reversed(list(self._by_id.values())))
+
 
 class FakeDocumentStorage:
     """In-memory fake порта `DocumentStorage`."""

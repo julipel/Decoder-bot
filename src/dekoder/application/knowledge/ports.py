@@ -67,6 +67,18 @@ class KnowledgeDocumentRepository(Protocol):
         """Удаляет запись документа. Идемпотентна: отсутствующий `document_id` — 0 удалённых строк, не ошибка."""
         ...
 
+    async def list_all(self) -> Sequence[KnowledgeDocument]:
+        """
+        Все документы каталога, включая ещё не проиндексированные/сбойные
+        (`INDEXING`/`FAILED`/`UNSUPPORTED`) — для admin-обзора (Sprint 8,
+        задача S8-04, ADR-8.5). Без пагинации/фильтров (YAGNI для
+        MVP-объёма). Порядок — `created_at DESC, id DESC`: администратору
+        интереснее видеть последние загрузки первыми (в отличие от
+        `ProfileRepository.list_active`, где порядок — вопрос стабильного
+        отображения, не свежести).
+        """
+        ...
+
 
 @runtime_checkable
 class DocumentStorage(Protocol):

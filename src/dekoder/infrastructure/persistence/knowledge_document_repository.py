@@ -12,6 +12,7 @@ Sprint 6, задача S6-04, ADR-6.1/6.2/6.9) поверх `KnowledgeDocumentOR
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -97,3 +98,11 @@ class SQLAlchemyKnowledgeDocumentRepository:
         statement = sa.delete(KnowledgeDocumentORM).where(KnowledgeDocumentORM.id == document_id)
         await self._session.execute(statement)
         await self._session.flush()
+
+    async def list_all(self) -> Sequence[KnowledgeDocument]:
+        """Все документы каталога независимо от статуса (Sprint 8, S8-04, ADR-8.5), `created_at DESC, id DESC`."""
+        statement = sa.select(KnowledgeDocumentORM).order_by(
+            KnowledgeDocumentORM.created_at.desc(), KnowledgeDocumentORM.id.desc()
+        )
+        orm_documents = (await self._session.execute(statement)).scalars().all()
+        return [knowledge_document_to_domain(orm_document) for orm_document in orm_documents]
