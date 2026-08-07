@@ -50,6 +50,12 @@ _SENSITIVE_KEYS: frozenset[str] = frozenset(
         "admin_password_hash",
         "secret",
         "session_secret",
+        # Sprint 8, задача S8-02 (ADR-8.3): статичный admin API-ключ —
+        # ни ожидаемое значение (Settings.admin.api_key), ни переданное
+        # клиентом значение заголовка не должны попадать в лог ни в каком виде.
+        "admin_api_key",
+        "x-admin-api-key",
+        "provided_key",
     }
 )
 

@@ -218,6 +218,29 @@ class ModelCatalogSettings(BaseSettings):
     catalog_path: Path = _DEFAULT_MODEL_CATALOG_PATH
 
 
+class AdminSettings(BaseSettings):
+    """
+    Настройки статичной API-key авторизации admin REST (Sprint 8, задача
+    S8-02, ADR-8.3, скоуп-решение пользователя №1: статичный ключ в
+    HTTP-заголовке, не login/session/JWT).
+
+    `api_key` — прямой прецедент `OpenRouterSettings.api_key`/
+    `OpenAiSettings.api_key`: `SecretStr` без значения по умолчанию,
+    отсутствие в окружении останавливает процесс на этапе создания
+    `Settings()` (fail-fast). `health_check_timeout` — таймаут одного
+    probe `GET /admin/health` (ADR-8.9), не переиспользует
+    `LLMSettings.timeout` — семантически другая, заметно более короткая
+    операция.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="ADMIN_", env_file=_ENV_FILES, env_file_encoding="utf-8", extra="ignore"
+    )
+
+    api_key: SecretStr
+    health_check_timeout: float = Field(default=3.0, gt=0)
+
+
 class Settings(BaseSettings):
     """
     Корневой объект конфигурации — группирует настройки по областям.
@@ -241,3 +264,4 @@ class Settings(BaseSettings):
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
     knowledge: KnowledgeSettings = Field(default_factory=KnowledgeSettings)
     model_catalog: ModelCatalogSettings = Field(default_factory=ModelCatalogSettings)
+    admin: AdminSettings = Field(default_factory=AdminSettings)  # type: ignore[arg-type]

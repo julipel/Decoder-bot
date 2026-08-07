@@ -16,6 +16,7 @@ import pytest
 from pydantic import ValidationError
 
 from dekoder.shared.config import (
+    AdminSettings,
     ApplicationSettings,
     DatabaseSettings,
     LLMSettings,
@@ -225,6 +226,7 @@ class TestSettingsAggregation:
         monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "webhook-secret")
         monkeypatch.setenv("OPENROUTER_API_KEY", "api-key")
         monkeypatch.setenv("OPENAI_API_KEY", "embedding-api-key")
+        monkeypatch.setenv("ADMIN_API_KEY", "admin-api-key")
         monkeypatch.setenv("APP_PORT", "8080")
         monkeypatch.setenv("LLM_TEMPERATURE", "0.3")
 
@@ -236,9 +238,11 @@ class TestSettingsAggregation:
         assert isinstance(settings.openrouter, OpenRouterSettings)
         assert isinstance(settings.database, DatabaseSettings)
         assert isinstance(settings.prompt, PromptSettings)
+        assert isinstance(settings.admin, AdminSettings)
         assert settings.application.port == 8080
         assert settings.llm.temperature == 0.3
         assert settings.telegram.bot_token.get_secret_value() == "token"
         assert settings.openrouter.api_key.get_secret_value() == "api-key"
         assert settings.database.url == "sqlite+aiosqlite:///./data/app.db"
         assert settings.prompt.token_budget == 12000
+        assert settings.admin.api_key.get_secret_value() == "admin-api-key"
