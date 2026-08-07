@@ -11,8 +11,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from dekoder.application.admin.ports import AdminAuthPort
-from dekoder.application.admin.use_cases.authenticate_admin import AuthenticateAdminUseCase
 from dekoder.application.ai_core.use_cases.generate_content import GenerateContentUseCase
 from dekoder.application.ai_core.use_cases.regenerate import RegenerateUseCase
 from dekoder.application.ai_core.use_cases.route_command import RouteCommandUseCase
@@ -34,7 +32,6 @@ class Container:
     # Репозитории и внешние порты
     content_skill_repository: ContentSkillRepository
     session_repository: SessionRepository
-    admin_auth: AdminAuthPort
     clock: Clock
     correlation_id_generator: CorrelationIdGenerator
 
@@ -42,9 +39,6 @@ class Container:
     generate_content: GenerateContentUseCase
     regenerate: RegenerateUseCase
     route_command: RouteCommandUseCase
-
-    # application/admin/ — вход для будущего admin-интерфейса (Этап 10)
-    authenticate_admin: AuthenticateAdminUseCase
 
 
 def build_container(settings: Settings) -> Container:
