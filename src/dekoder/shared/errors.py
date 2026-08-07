@@ -5,6 +5,7 @@
     DekoderError
     ├── ValidationError
     ├── ApplicationError
+    ├── NotFoundError
     └── InfrastructureError
         └── ExternalServiceError
             ├── LLMProviderError
@@ -70,6 +71,19 @@ class ApplicationError(DekoderError):
     """Ошибка бизнес-логики / use case'а."""
 
     code = "APPLICATION_ERROR"
+
+
+class NotFoundError(DekoderError):
+    """
+    Запрошенный ресурс не существует (Sprint 8, admin REST, ADR-8.12) —
+    сиблинг `ValidationError`/`ApplicationError`/`InfrastructureError`,
+    не подкласс. Use case'ы, уже возвращающие `None` на «не найдено»
+    (`SelectProfile`/`GetActiveProfile` и т.п.), сами эту ошибку не
+    поднимают — её поднимает вызывающий REST-роут, транслируя `None` в
+    404 (`presentation/api/error_handlers.py`).
+    """
+
+    code = "NOT_FOUND"
 
 
 class InfrastructureError(DekoderError):

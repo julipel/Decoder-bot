@@ -34,6 +34,25 @@ Qdrant при старте логируется и не мешает прило�
 `ProcessUserMessage` в этом случае просто не найдёт коллекцию на каждом
 поиске и вернёт пустой RAG-контекст (`_search_knowledge` перехватывает
 эту же ошибку и там).
+
+С задачи S8-03 (Sprint 8, ADR-8.2) `_lifespan` дополнительно публикует на
+`app.state` три объекта, которые уже создавались здесь и раньше, но не
+были доступны driving-адаптерам за пределами `ApplicationContainer`:
+`settings`, `openai_http_client`, `qdrant_client` (`http_client`/
+`db_engine`/`db_session_factory`/`container` уже публиковались). Четыре
+новые accessor-функции (`get_settings`/`get_db_session_factory`/
+`get_openai_http_client`/`get_qdrant_client`) — тот же приём, что уже
+существующие `get_container`/`get_process_user_message`: единственный
+способ для admin REST-зависимостей (`presentation/api/dependencies/
+documents.py`, S8-05) добраться до этих объектов через `Request`, не
+через глобальную переменную или собственный service locator.
+
+Также с S8-03 здесь регистрируются глобальные обработчики ошибок
+(`presentation/api/error_handlers.py::dekoder_error_handler`/
+`unhandled_exception_handler`, ADR-8.12) — единый JSON-конверт ошибок
+для всех текущих и будущих REST-роутов. `GET /health` не поднимает
+`DekoderError`, поэтому обработчики для него безвредны и ничего не
+меняют в его поведении/контракте.
 """
 
 from __future__ import annotations
@@ -43,6 +62,8 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, Request
+from qdrant_client import AsyncQdrantClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.bootstrap.container import ApplicationContainer, build_container
@@ -50,8 +71,9 @@ from dekoder.bootstrap.database import dispose_database, init_database
 from dekoder.composition.health import APP_VERSION
 from dekoder.composition.health import router as health_router
 from dekoder.infrastructure.qdrant.client import build_qdrant_client, ensure_collection
+from dekoder.presentation.api.error_handlers import dekoder_error_handler, unhandled_exception_handler
 from dekoder.shared.config import Settings
-from dekoder.shared.errors import InfrastructureError
+from dekoder.shared.errors import DekoderError, InfrastructureError
 from dekoder.shared.logging import configure_logging, get_logger
 
 _logger = get_logger(__name__)
@@ -94,6 +116,9 @@ def create_application(settings: Settings) -> FastAPI:
                 )
                 app.state.db_engine = db_engine
                 app.state.db_session_factory = db_session_factory
+                app.state.settings = settings
+                app.state.openai_http_client = openai_http_client
+                app.state.qdrant_client = qdrant_client
                 yield
                 # Дошли сюда при остановке приложения: `async with` сейчас
                 # выйдет из блока и закроет оба httpx-клиента
@@ -105,6 +130,10 @@ def create_application(settings: Settings) -> FastAPI:
 
     app = FastAPI(title=settings.application.name, version=APP_VERSION, lifespan=_lifespan)
     app.include_router(health_router)
+    # Регистрация admin-роутеров (S8-05/S8-08/S8-09) — после health_router,
+    # не взамен: GET /health остаётся без auth и без изменений в контракте.
+    app.add_exception_handler(DekoderError, dekoder_error_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(Exception, unhandled_exception_handler)
     return app
 
 
@@ -125,3 +154,34 @@ def get_process_user_message(request: Request) -> ProcessUserMessage:
     `ProcessUserMessage` — без импорта `OpenRouterLLMAdapter` напрямую.
     """
     return get_container(request).process_user_message
+
+
+def get_settings(request: Request) -> Settings:
+    """
+    FastAPI-зависимость: доступ к `Settings` через `request.app.state`
+    (S8-03, ADR-8.2) — тем же приёмом, что и `get_container`. Нужен
+    admin-зависимостям (`require_admin_api_key`, `presentation/api/
+    dependencies/documents.py`), которым не подходит `ApplicationContainer`
+    целиком (например, авторизация не должна тянуть за собой весь
+    диалоговый контейнер).
+    """
+    settings: Settings = request.app.state.settings
+    return settings
+
+
+def get_db_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
+    """FastAPI-зависимость: единая фабрика сессий БД (S8-03) — нужна per-request сессии admin-документных роутов."""
+    session_factory: async_sessionmaker[AsyncSession] = request.app.state.db_session_factory
+    return session_factory
+
+
+def get_openai_http_client(request: Request) -> httpx.AsyncClient:
+    """FastAPI-зависимость: уже открытый клиент OpenAI (эмбеддинги, S8-03) — не создаёт новый клиент."""
+    client: httpx.AsyncClient = request.app.state.openai_http_client
+    return client
+
+
+def get_qdrant_client(request: Request) -> AsyncQdrantClient:
+    """FastAPI-зависимость: уже открытый клиент Qdrant (S8-03) — не создаёт новый клиент."""
+    client: AsyncQdrantClient = request.app.state.qdrant_client
+    return client

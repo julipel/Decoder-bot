@@ -19,8 +19,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
+from qdrant_client import AsyncQdrantClient
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from dekoder.bootstrap.application import create_application
@@ -79,3 +81,17 @@ def test_lifespan_initializes_database_engine_and_session_factory(settings: Sett
 
     assert isinstance(db_engine, AsyncEngine)
     assert isinstance(db_session_factory, async_sessionmaker)
+
+
+def test_lifespan_publishes_settings_and_external_clients_on_app_state(settings: Settings) -> None:
+    """S8-03, ADR-8.2: settings/openai_http_client/qdrant_client должны быть доступны admin-зависимостям."""
+    app = create_application(settings)
+
+    with TestClient(app):
+        published_settings = app.state.settings
+        openai_http_client = app.state.openai_http_client
+        qdrant_client = app.state.qdrant_client
+
+    assert published_settings is settings
+    assert isinstance(openai_http_client, httpx.AsyncClient)
+    assert isinstance(qdrant_client, AsyncQdrantClient)
