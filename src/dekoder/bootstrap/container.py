@@ -118,6 +118,17 @@ config_repository.py`, парсит `catalog.json` один раз при пос
 `AsyncSession` (`presentation/api/dependencies/documents.py`, S8-05).
 `CheckExternalServicesHealthUseCase` (S8-09) также НЕ собирается здесь —
 не требует БД вообще, собирается напрямую внутри `build_container()`.
+
+С задачи S8-09 (Sprint 8, ADR-8.9) контейнер также собирает
+`CheckExternalServicesHealthUseCase` (`application/health/use_cases/
+check_external_services.py`) поверх трёх адаптеров `ServiceHealthCheck`
+(`infrastructure/health/*`) — `QdrantHealthCheck`/`OpenRouterHealthCheck`/
+`OpenAiHealthCheck`, каждый переиспользует уже готовые `qdrant_client`/
+`http_client`/`openai_http_client` (те же самые объекты, что уже
+используются `SemanticSearchService`/`OpenRouterLLMAdapter`/
+`OpenAiEmbeddingProvider` — новые клиенты не создаются). Таймаут одного
+probe — `settings.admin.health_check_timeout` (S8-02), не
+`LLMSettings.timeout`.
 """
 
 from __future__ import annotations
@@ -131,6 +142,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from dekoder.application.conversation.use_cases.clear_conversation import ClearConversation
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.application.conversation.use_cases.start_new_conversation import StartNewConversation
+from dekoder.application.health.use_cases.check_external_services import CheckExternalServicesHealthUseCase
 from dekoder.application.knowledge.services.semantic_search_service import SemanticSearchService
 from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.application.memory.use_cases.delete_memory_record import DeleteMemoryRecordUseCase
@@ -151,6 +163,9 @@ from dekoder.bootstrap.repositories import build_conversation_repositories_facto
 from dekoder.domain.conversation.value_objects import ModelId
 from dekoder.domain.prompt.policies import TokenBudgetPolicy
 from dekoder.infrastructure.embeddings.openai_embedding_provider import OpenAiEmbeddingProvider
+from dekoder.infrastructure.health.openai_health_check import OpenAiHealthCheck
+from dekoder.infrastructure.health.openrouter_health_check import OpenRouterHealthCheck
+from dekoder.infrastructure.health.qdrant_health_check import QdrantHealthCheck
 from dekoder.infrastructure.llm.openrouter_adapter import OpenRouterLLMAdapter
 from dekoder.infrastructure.model_catalog.config_repository import ConfigModelCatalogRepository
 from dekoder.infrastructure.prompts.file_template_repository import FileTemplateRepository
@@ -177,6 +192,7 @@ class ApplicationContainer:
     update_profile: UpdateProfile
     deactivate_profile: DeactivateProfile
     list_all_profiles: ListAllProfiles
+    check_external_services_health: CheckExternalServicesHealthUseCase
 
 
 def build_container(
@@ -253,6 +269,22 @@ def build_container(
     update_profile = UpdateProfile(repositories=repositories_factory)
     deactivate_profile = DeactivateProfile(repositories=repositories_factory)
     list_all_profiles = ListAllProfiles(repositories=repositories_factory)
+    health_check_timeout = settings.admin.health_check_timeout
+    check_external_services_health = CheckExternalServicesHealthUseCase(
+        checks=[
+            QdrantHealthCheck(client=qdrant_client, timeout=health_check_timeout),
+            OpenRouterHealthCheck(
+                client=http_client,
+                api_key=settings.openrouter.api_key.get_secret_value(),
+                timeout=health_check_timeout,
+            ),
+            OpenAiHealthCheck(
+                client=openai_http_client,
+                api_key=settings.openai.api_key.get_secret_value(),
+                timeout=health_check_timeout,
+            ),
+        ]
+    )
     return ApplicationContainer(
         settings=settings,
         process_user_message=process_user_message,
@@ -271,4 +303,5 @@ def build_container(
         update_profile=update_profile,
         deactivate_profile=deactivate_profile,
         list_all_profiles=list_all_profiles,
+        check_external_services_health=check_external_services_health,
     )

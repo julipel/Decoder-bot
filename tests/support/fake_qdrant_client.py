@@ -24,10 +24,11 @@ class _QueryPointsResponse:
 
 
 class FakeAsyncQdrantClient:
-    def __init__(self) -> None:
+    def __init__(self, *, get_collections_should_fail: bool = False) -> None:
         self.points: dict[str, Any] = {}
         self.upsert_calls: list[dict[str, Any]] = []
         self.delete_calls: list[dict[str, Any]] = []
+        self._get_collections_should_fail = get_collections_should_fail
 
     async def upsert(self, collection_name: str, points: list[Any]) -> None:
         self.upsert_calls.append({"collection_name": collection_name, "points": list(points)})
@@ -56,3 +57,9 @@ class FakeAsyncQdrantClient:
 
     async def close(self) -> None:
         return None
+
+    async def get_collections(self) -> object:
+        """Sprint 8, S8-09 — используется `QdrantHealthCheck.check()`; успех по умолчанию, не выбрасывает исключений."""
+        if self._get_collections_should_fail:
+            raise RuntimeError("FakeAsyncQdrantClient: имитация недоступности Qdrant")
+        return object()
