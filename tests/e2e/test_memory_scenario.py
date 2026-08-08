@@ -15,11 +15,18 @@ memory.py`, реальные SQLAlchemy-репозитории (`bootstrap/repos
     4. TestDeleteViaCallback      — нажатие 🗑 удаляет запись, список обновляется;
     5. TestCrossUserDeleteIsRejected — пользователь A не может удалить запись пользователя B
        даже подделав callback_data с чужим id (ADR-5.10);
-    6. TestNoForgetCommand        — `/forget` не зарегистрирован (ADR-5.10).
+    6. TestNoForgetCommand        — `/forget` не зарегистрирован (ADR-5.10);
+    7. TestRememberAndDeleteAuditLog — Sprint 9, задача S9-05/S9-07 (ADR-9.4):
+       /remember -> callback-удаление, тем же сквозным харнессом (реальный
+       `telegram.ext.Application`, реальные SQLAlchemy-репозитории поверх
+       временной SQLite), подтверждает появление `memory_record_created`/
+       `memory_record_deleted` с `audit=True` — формализует живую проверку,
+       выполненную вручную в работающем Docker-контейнере при S9-07.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -46,6 +53,7 @@ from dekoder.presentation.telegram.handlers.memory import (
     REMEMBER_SAVED_MESSAGE,
 )
 from dekoder.shared.domain.identifiers import CorrelationId
+from dekoder.shared.logging import configure_logging
 
 _TEST_BOT_TOKEN = "123456:test-token"  # noqa: S105 - фиктивный токен для теста, не секрет
 
@@ -285,3 +293,54 @@ class TestNoForgetCommand:
         assert "forget" not in callbacks
         # "start" — регистрируется build_telegram_application() безусловно (не входит в объём этой задачи).
         assert set(callbacks) == {"start", "remember", "memory", "memory_delete_callback"}
+
+
+class TestRememberAndDeleteAuditLog:
+    """
+    Сценарий 7, Sprint 9 (задача S9-05/S9-07, ADR-9.4): тем же сквозным
+    харнессом (реальный `Application`, реальные SQLAlchemy-репозитории
+    поверх временной SQLite), что и сценарии 1/4 выше, подтверждает, что
+    `/remember` и callback-удаление порождают `memory_record_created`/
+    `memory_record_deleted` с маркером `audit=True`
+    (`shared/logging.py::log_audit_event`) — формализует живую проверку,
+    выполненную вручную в работающем Docker-контейнере при S9-07
+    (`docker compose exec` + реальный DI-контейнер против реальной БД).
+    """
+
+    async def test_remember_then_delete_emit_audit_marked_events(
+        self,
+        use_cases: tuple[CreateMemoryRecordUseCase, ListMemoryRecordsUseCase, DeleteMemoryRecordUseCase],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        configure_logging(environment="test")
+        application = _build_application(*use_cases)
+        callbacks = _handler_callbacks(application)
+
+        remember_update = _make_text_update("/remember S9-07 сквозная проверка аудита", user_id=6006)
+        await callbacks["remember"](remember_update, MagicMock())  # type: ignore[operator]
+        remember_update.effective_message.reply_text.assert_awaited_once_with(REMEMBER_SAVED_MESSAGE)
+
+        memory_update = _make_text_update("/memory", user_id=6006)
+        await callbacks["memory"](memory_update, MagicMock())  # type: ignore[operator]
+        keyboard = memory_update.effective_message.reply_text.call_args.kwargs["reply_markup"]
+        record_id = UUID(keyboard.inline_keyboard[0][0].callback_data.removeprefix("memory_delete:"))
+
+        callback_update = _make_callback_update(record_id, user_id=6006)
+        await callbacks["memory_delete_callback"](callback_update, MagicMock())  # type: ignore[operator]
+
+        # Sprint 5 use case'ы (`create_memory_record.py`/`delete_memory_record.py`)
+        # логируют те же имена событий без `audit=True` — фильтруем именно по
+        # маркеру аудита (`log_audit_event`), не только по имени события.
+        entries = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        audit_created = [
+            entry for entry in entries if entry["event"] == "memory_record_created" and entry.get("audit") is True
+        ]
+        audit_deleted = [
+            entry for entry in entries if entry["event"] == "memory_record_deleted" and entry.get("audit") is True
+        ]
+
+        assert len(audit_created) == 1
+        assert audit_created[0]["record_id"] == str(record_id)
+
+        assert len(audit_deleted) == 1
+        assert audit_deleted[0]["record_id"] == str(record_id)
