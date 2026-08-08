@@ -10,6 +10,8 @@ SQLAlchemy, по стилю `test_memory_use_cases.py`.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from tests.support.fake_conversation_repositories import (
     FakeModelSelectionRepository,
@@ -30,6 +32,13 @@ from dekoder.domain.conversation.value_objects import ModelId
 from dekoder.domain.model_catalog.enums import ModelAvailability
 from dekoder.shared.domain.identifiers import CorrelationId
 from dekoder.shared.errors import ApplicationError
+from dekoder.shared.logging import configure_logging
+
+
+def _read_last_log_line(capsys: pytest.CaptureFixture[str]) -> dict[str, object]:
+    out = capsys.readouterr().out.strip().splitlines()
+    assert out, "ожидалась хотя бы одна строка журнала"
+    return json.loads(out[-1])
 
 
 class TestListAvailableModels:
@@ -216,3 +225,23 @@ class TestSelectModel:
             GetSelectedModelCommand(telegram_user_id=999, correlation_id=CorrelationId("corr-1"))
         )
         assert selected.model == second_model
+
+
+class TestSelectModelAuditLog:
+    """Sprint 9, S9-04 (ADR-9.4): model_selected переведён на log_audit_event()."""
+
+    async def test_logs_selection_event_marked_as_audit(self, capsys: pytest.CaptureFixture[str]) -> None:
+        configure_logging(environment="test")
+        model = make_ai_model("openai/gpt-4o-mini", availability=ModelAvailability.AVAILABLE)
+        catalog = FakeModelCatalogRepository([model])
+        factory = make_in_memory_repositories_factory()
+        use_case = SelectModel(repositories=factory, model_catalog=catalog)
+
+        result = await use_case.execute(
+            SelectModelCommand(telegram_user_id=1010, model_id=model.model_id, correlation_id=CorrelationId("corr-1"))
+        )
+
+        entry = _read_last_log_line(capsys)
+        assert entry["event"] == "model_selected"
+        assert entry["model_id"] == result.model.model_id.value
+        assert entry["audit"] is True

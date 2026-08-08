@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from tests.support.fake_knowledge_repositories import (
     FakeDocumentStorage,
@@ -18,6 +20,14 @@ from dekoder.infrastructure.documents.parsers.markdown_parser import MarkdownPar
 from dekoder.infrastructure.documents.parsers.pdf_parser import PdfParser
 from dekoder.infrastructure.documents.parsers.txt_parser import TxtParser
 from dekoder.shared.errors import ValidationError
+from dekoder.shared.logging import configure_logging
+
+
+def _read_last_log_line(capsys: pytest.CaptureFixture[str]) -> dict[str, object]:
+    out = capsys.readouterr().out.strip().splitlines()
+    assert out, "ожидалась хотя бы одна строка журнала"
+    return json.loads(out[-1])
+
 
 _PARSERS = {
     DocumentType.TXT: TxtParser(),
@@ -130,3 +140,21 @@ class TestPipelineFailure:
         assert result.document.chunk_count == 0
         assert "имитация сбоя" in (result.document.error_message or "")
         assert vector_repository.deleted_documents == []
+
+
+class TestIndexKnowledgeDocumentAuditLog:
+    """Sprint 9, S9-04 (ADR-9.4): knowledge_document_indexed переведён на log_audit_event()."""
+
+    async def test_logs_indexed_event_marked_as_audit(self, capsys: pytest.CaptureFixture[str]) -> None:
+        configure_logging(environment="test")
+        use_case, _, _, _ = _make_use_case()
+
+        result = await use_case.execute(
+            IndexDocumentCommand(title="Заметка", source_filename="note.txt", content=b"Some content here.")
+        )
+
+        entry = _read_last_log_line(capsys)
+        assert entry["event"] == "knowledge_document_indexed"
+        assert entry["document_id"] == str(result.document.id)
+        assert entry["chunk_count"] == result.document.chunk_count
+        assert entry["audit"] is True

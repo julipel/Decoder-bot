@@ -26,7 +26,7 @@ from uuid import UUID
 from dekoder.application.knowledge.dto import IndexDocumentCommand, IndexDocumentResult
 from dekoder.application.knowledge.ports import DocumentStorage, KnowledgeDocumentRepository
 from dekoder.application.knowledge.use_cases.index_document import IndexKnowledgeDocumentUseCase
-from dekoder.shared.logging import get_logger
+from dekoder.shared.logging import get_logger, log_audit_event
 
 _logger = get_logger(__name__)
 
@@ -48,7 +48,7 @@ class ReindexKnowledgeDocumentUseCase:
             return None
 
         content = await self._document_storage.read(document_id)
-        _logger.info("knowledge_document_reindex_requested", document_id=str(document_id))
+        log_audit_event(_logger, "knowledge_document_reindex_requested", document_id=str(document_id))
         command = IndexDocumentCommand(
             title=document.title,
             source_filename=document.source_filename,

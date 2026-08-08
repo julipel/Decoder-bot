@@ -11,6 +11,7 @@ from dekoder.shared.logging import (
     clear_request_context,
     configure_logging,
     get_logger,
+    log_audit_event,
 )
 
 
@@ -141,3 +142,28 @@ class TestSensitiveFieldsAreRedacted:
 
         assert entry["status"] == "ok"
         assert entry["count"] == 3
+
+
+class TestLogAuditEvent:
+    """Sprint 9, задача S9-04 (ADR-9.4): единственная точка простановки `audit=True`."""
+
+    def test_marks_the_event_as_audit(self, capsys: pytest.CaptureFixture[str]) -> None:
+        configure_logging(environment="test")
+
+        log_audit_event(get_logger("dekoder.test"), "some_event", foo="bar")
+
+        entry = _read_last_log_line(capsys)
+
+        assert entry["audit"] is True
+        assert entry["event"] == "some_event"
+        assert entry["foo"] == "bar"
+
+    def test_behaves_like_a_regular_info_log_otherwise(self, capsys: pytest.CaptureFixture[str]) -> None:
+        configure_logging(environment="test")
+
+        log_audit_event(get_logger("dekoder.test"), "audited_event")
+
+        entry = _read_last_log_line(capsys)
+
+        assert entry["level"] == "info"
+        assert entry["logger"] == "dekoder.test"

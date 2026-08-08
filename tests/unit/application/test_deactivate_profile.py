@@ -83,3 +83,5 @@ class TestDeactivateProfileAuditLog:
         entry = _read_last_log_line(capsys)
         assert entry["event"] == "admin_profile_archived"
         assert entry["profile_id"] == str(profile.id)
+        # Sprint 9, S9-04 (ADR-9.4): событие переведено на log_audit_event() — помечено audit=True.
+        assert entry["audit"] is True

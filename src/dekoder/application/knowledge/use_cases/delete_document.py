@@ -14,7 +14,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from dekoder.application.knowledge.ports import DocumentStorage, KnowledgeDocumentRepository, VectorRepository
-from dekoder.shared.logging import get_logger
+from dekoder.shared.logging import get_logger, log_audit_event
 
 _logger = get_logger(__name__)
 
@@ -34,4 +34,4 @@ class DeleteKnowledgeDocumentUseCase:
         await self._vector_repository.delete_by_document(document_id)
         await self._document_storage.delete(document_id)
         await self._document_repository.delete(document_id)
-        _logger.info("knowledge_document_deleted", document_id=str(document_id))
+        log_audit_event(_logger, "knowledge_document_deleted", document_id=str(document_id))

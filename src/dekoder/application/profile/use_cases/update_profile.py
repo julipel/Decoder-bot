@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from dekoder.application.conversation.ports import ConversationRepositoriesFactory
 from dekoder.application.profile.dto import UpdateProfileCommand
 from dekoder.domain.profile.entities import UserProfile
-from dekoder.shared.logging import get_logger
+from dekoder.shared.logging import get_logger, log_audit_event
 
 _logger = get_logger(__name__)
 
@@ -45,5 +45,5 @@ class UpdateProfile:
             # is_system/is_default/status.
             updated = replace(existing, **command.changed_fields(), updated_at=datetime.now(UTC))  # type: ignore[arg-type]
             saved = await repositories.profiles.update(updated)
-            _logger.info("admin_profile_updated", profile_id=str(saved.id))
+            log_audit_event(_logger, "admin_profile_updated", profile_id=str(saved.id))
             return saved

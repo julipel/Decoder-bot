@@ -75,3 +75,5 @@ class TestUpdateProfileAuditLog:
         assert entry["event"] == "admin_profile_updated"
         assert entry["profile_id"] == str(existing.id)
         assert "name" not in entry
+        # Sprint 9, S9-04 (ADR-9.4): событие переведено на log_audit_event() — помечено audit=True.
+        assert entry["audit"] is True

@@ -81,3 +81,5 @@ class TestCreateProfileAuditLog:
         assert entry["name"] == "Аудит-тест"
         # system_instruction (потенциально длинный/чувствительный текст) не логируется.
         assert "system_instruction" not in entry
+        # Sprint 9, S9-04 (ADR-9.4): событие переведено на log_audit_event() — помечено audit=True.
+        assert entry["audit"] is True

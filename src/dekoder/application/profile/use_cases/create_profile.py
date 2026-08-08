@@ -24,7 +24,7 @@ from dekoder.application.conversation.ports import ConversationRepositoriesFacto
 from dekoder.application.profile.dto import CreateProfileCommand
 from dekoder.domain.profile.entities import UserProfile
 from dekoder.domain.profile.value_objects import ProfileStatus
-from dekoder.shared.logging import get_logger
+from dekoder.shared.logging import get_logger, log_audit_event
 
 _logger = get_logger(__name__)
 
@@ -56,5 +56,5 @@ class CreateProfile:
                 updated_at=now,
             )
             saved = await repositories.profiles.create(profile)
-            _logger.info("admin_profile_created", profile_id=str(saved.id), name=saved.name)
+            log_audit_event(_logger, "admin_profile_created", profile_id=str(saved.id), name=saved.name)
             return saved

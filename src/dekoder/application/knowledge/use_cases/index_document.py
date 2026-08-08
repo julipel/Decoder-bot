@@ -40,7 +40,7 @@ from dekoder.application.knowledge.ports import (
 from dekoder.domain.knowledge.entities import KnowledgeDocument
 from dekoder.domain.knowledge.value_objects import DocumentStatus, DocumentType
 from dekoder.shared.errors import ValidationError
-from dekoder.shared.logging import get_logger
+from dekoder.shared.logging import get_logger, log_audit_event
 
 _logger = get_logger(__name__)
 
@@ -114,7 +114,9 @@ class IndexKnowledgeDocumentUseCase:
             return IndexDocumentResult(document=document)
 
         document = await self._finalize(document, DocumentStatus.INDEXED, chunk_count=len(embedded_chunks), error=None)
-        _logger.info("knowledge_document_indexed", document_id=str(document.id), chunk_count=len(embedded_chunks))
+        log_audit_event(
+            _logger, "knowledge_document_indexed", document_id=str(document.id), chunk_count=len(embedded_chunks)
+        )
         return IndexDocumentResult(document=document)
 
     def _resolve_document_type(self, filename: str) -> DocumentType:

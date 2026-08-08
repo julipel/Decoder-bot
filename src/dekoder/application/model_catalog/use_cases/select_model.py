@@ -37,7 +37,7 @@ from dekoder.application.model_catalog.dto import SelectModelCommand, SelectMode
 from dekoder.application.model_catalog.ports import ModelCatalogRepository
 from dekoder.domain.model_catalog.enums import ModelAvailability
 from dekoder.shared.errors import ApplicationError
-from dekoder.shared.logging import get_logger
+from dekoder.shared.logging import get_logger, log_audit_event
 
 _logger = get_logger(__name__)
 
@@ -67,6 +67,6 @@ class SelectModel:
         async with self._repositories() as repositories:
             user = await repositories.users.get_or_create_by_telegram_user_id(command.telegram_user_id)
             await repositories.model_selection.select(user.id, command.model_id)
-            _logger.info("model_selected", user_id=str(user.id), model_id=command.model_id.value)
+            log_audit_event(_logger, "model_selected", user_id=str(user.id), model_id=command.model_id.value)
 
         return SelectModelResult(model=model)

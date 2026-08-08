@@ -24,7 +24,7 @@ from __future__ import annotations
 from dekoder.application.conversation.ports import ConversationRepositoriesFactory
 from dekoder.application.profile.dto import DeactivateProfileCommand, DeactivateProfileResult, DeactivateProfileStatus
 from dekoder.shared.errors import ApplicationError
-from dekoder.shared.logging import get_logger
+from dekoder.shared.logging import get_logger, log_audit_event
 
 _logger = get_logger(__name__)
 
@@ -47,5 +47,5 @@ class DeactivateProfile:
                 )
 
             archived = await repositories.profiles.archive(command.profile_id)
-            _logger.info("admin_profile_archived", profile_id=str(command.profile_id))
+            log_audit_event(_logger, "admin_profile_archived", profile_id=str(command.profile_id))
             return DeactivateProfileResult(status=DeactivateProfileStatus.ARCHIVED, profile=archived)
