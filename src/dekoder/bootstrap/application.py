@@ -53,6 +53,14 @@ documents.py`, S8-05) добраться до этих объектов чере
 для всех текущих и будущих REST-роутов. `GET /health` не поднимает
 `DekoderError`, поэтому обработчики для него безвредны и ничего не
 меняют в его поведении/контракте.
+
+С задачи S9-03 (Sprint 9, ADR-9.3) здесь же регистрируется
+`presentation/api/middleware.py::CorrelationIdMiddleware` — один
+экземпляр на всё приложение, действует на все роуты, включая
+`GET /health`. Именно поэтому `dekoder_error_handler`/
+`unhandled_exception_handler` автоматически получают `correlation_id` в
+своих логах без изменений в них самих — контекст логирования уже
+привязан middleware к моменту вызова обработчика ошибки.
 """
 
 from __future__ import annotations
@@ -72,6 +80,7 @@ from dekoder.composition.health import APP_VERSION
 from dekoder.composition.health import router as health_router
 from dekoder.infrastructure.qdrant.client import build_qdrant_client, ensure_collection
 from dekoder.presentation.api.error_handlers import dekoder_error_handler, unhandled_exception_handler
+from dekoder.presentation.api.middleware import CorrelationIdMiddleware
 from dekoder.shared.config import Settings
 from dekoder.shared.errors import DekoderError, InfrastructureError
 from dekoder.shared.logging import configure_logging, get_logger
@@ -129,6 +138,11 @@ def create_application(settings: Settings) -> FastAPI:
             await dispose_database(db_engine)
 
     app = FastAPI(title=settings.application.name, version=APP_VERSION, lifespan=_lifespan)
+    # CorrelationIdMiddleware (S9-03, ADR-9.3) — один middleware на всё
+    # приложение, действует на все роуты, включая GET /health ниже: не
+    # меняет тело/статус ответа, только заголовок X-Correlation-Id и
+    # контекст логирования на время обработки запроса.
+    app.add_middleware(CorrelationIdMiddleware)
     app.include_router(health_router)
     # Регистрация admin-роутеров (S8-05, ADR-8.2) — после health_router, не
     # взамен: GET /health остаётся без auth и без изменений в контракте.
