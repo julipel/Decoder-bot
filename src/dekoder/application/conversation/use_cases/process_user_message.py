@@ -141,6 +141,7 @@ ADR-7.4: каталог — не пользовательские, не тран
 
 from __future__ import annotations
 
+import time
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -365,11 +366,18 @@ class ProcessUserMessage:
         релевантного контекста (§14.8: «ответ формируется без RAG»),
         не как сбой всего `execute()`.
         """
+        started_at = time.monotonic()
         try:
-            return await self._knowledge_search.search(query_text)
+            results = await self._knowledge_search.search(query_text)
         except Exception as error:
             _logger.error("knowledge_search_failed", error=str(error))
             return []
+        _logger.info(
+            "knowledge_search_completed",
+            chunks_found=len(results),
+            duration_ms=round((time.monotonic() - started_at) * 1000, 1),
+        )
+        return results
 
     async def _save_assistant_message(self, conversation_id: UUID, response_text: str) -> Message:
         """

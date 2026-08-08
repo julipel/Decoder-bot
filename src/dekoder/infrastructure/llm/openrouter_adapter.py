@@ -36,9 +36,12 @@ from dekoder.infrastructure.llm.schemas import (
     OpenRouterChatMessage,
 )
 from dekoder.shared.errors import LLMProviderError
+from dekoder.shared.logging import get_logger
 
 _CHAT_COMPLETIONS_PATH = "/chat/completions"
 _PROVIDER_ID = ProviderId("openrouter")
+
+_logger = get_logger(__name__)
 
 
 class OpenRouterLLMAdapter(LLMProvider):
@@ -71,7 +74,17 @@ class OpenRouterLLMAdapter(LLMProvider):
 
         self._raise_for_status(http_response)
         parsed = self._parse_response(http_response)
-        return self._to_llm_response(parsed, request.model_id, duration_ms)
+        llm_response = self._to_llm_response(parsed, request.model_id, duration_ms)
+        _logger.info(
+            "llm_generation_completed",
+            provider=_PROVIDER_ID.value,
+            model=request.model_id.value,
+            duration_ms=round(duration_ms, 1),
+            input_tokens=llm_response.input_tokens,
+            output_tokens=llm_response.output_tokens,
+            correlation_id=request.correlation_id,
+        )
+        return llm_response
 
     async def _post(self, payload: OpenRouterChatCompletionRequest) -> httpx.Response:
         try:

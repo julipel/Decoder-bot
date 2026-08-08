@@ -18,6 +18,7 @@ from dekoder.domain.conversation.value_objects import ModelId
 from dekoder.infrastructure.llm.openrouter_adapter import OpenRouterLLMAdapter
 from dekoder.shared.domain.identifiers import CorrelationId
 from dekoder.shared.errors import LLMProviderError
+from dekoder.shared.logging import configure_logging
 
 BASE_URL = "https://openrouter.ai/api/v1"
 CHAT_COMPLETIONS_URL = f"{BASE_URL}/chat/completions"
@@ -169,6 +170,47 @@ class TestSuccessfulGeneration:
 
         assert response.input_tokens == 0
         assert response.output_tokens == 0
+
+
+class TestLlmGenerationCompletedLog:
+    """Sprint 9, задача S9-06 (ADR-9.5): метрика вызова LLM на успешном пути."""
+
+    @respx.mock
+    async def test_logs_llm_generation_completed_with_metrics(
+        self, client: httpx.AsyncClient, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure_logging(environment="test")
+        respx.post(CHAT_COMPLETIONS_URL).mock(return_value=httpx.Response(200, json=_success_payload()))
+        adapter = OpenRouterLLMAdapter(client=client, api_key="sk-test")
+
+        response = await adapter.generate(_make_request())
+
+        out = capsys.readouterr().out.strip().splitlines()
+        entries = [json.loads(line) for line in out]
+        matches = [entry for entry in entries if entry.get("event") == "llm_generation_completed"]
+        assert len(matches) == 1
+        entry = matches[0]
+        assert entry["provider"] == "openrouter"
+        assert entry["model"] == "openai/gpt-4o-mini"
+        assert entry["input_tokens"] == response.input_tokens
+        assert entry["output_tokens"] == response.output_tokens
+        assert entry["correlation_id"] == "corr-1"
+        assert isinstance(entry["duration_ms"], (int, float))
+
+    @respx.mock
+    async def test_does_not_log_the_event_on_failure(
+        self, client: httpx.AsyncClient, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure_logging(environment="test")
+        respx.post(CHAT_COMPLETIONS_URL).mock(side_effect=httpx.TimeoutException("timed out"))
+        adapter = OpenRouterLLMAdapter(client=client, api_key="sk-test")
+
+        with pytest.raises(LLMProviderError):
+            await adapter.generate(_make_request())
+
+        out = capsys.readouterr().out.strip().splitlines()
+        events = [json.loads(line).get("event") for line in out]
+        assert "llm_generation_completed" not in events
 
 
 class TestErrorScenarios:

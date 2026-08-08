@@ -10,8 +10,10 @@ Update → Command → use case → ответ, не подменяя use case �
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from telegram import Update
 from tests.support.fake_conversation_repositories import make_in_memory_repositories_factory
 from tests.support.fake_knowledge_repositories import FakeKnowledgeSearchService
@@ -27,6 +29,20 @@ from dekoder.presentation.telegram.handlers.messages import (
 )
 from dekoder.presentation.telegram.mapper import TELEGRAM_SAFE_MESSAGE_LIMIT
 from dekoder.shared.errors import LLMProviderError
+from dekoder.shared.logging import clear_request_context, configure_logging
+
+
+@pytest.fixture(autouse=True)
+def _reset_logging_context() -> None:
+    clear_request_context()
+    yield
+    clear_request_context()
+
+
+def _read_last_log_line(capsys: pytest.CaptureFixture[str]) -> dict[str, object]:
+    out = capsys.readouterr().out.strip().splitlines()
+    assert out, "ожидалась хотя бы одна строка журнала"
+    return json.loads(out[-1])
 
 
 class FakeLLMProvider:
@@ -118,6 +134,42 @@ class TestSuccessfulMessage:
         assert update.effective_message.reply_text.await_count > 1
         for call in update.effective_message.reply_text.await_args_list:
             assert len(call.args[0]) <= TELEGRAM_SAFE_MESSAGE_LIMIT
+
+
+class TestMessageProcessingCompletedLog:
+    """Sprint 9, задача S9-06 (ADR-9.6): агрегированное событие успешной обработки сообщения."""
+
+    async def test_logs_message_processing_completed_with_full_metrics(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure_logging(environment="test")
+        response = _make_response("Здравствуйте!")
+        provider = FakeLLMProvider(response=response)
+        handler = TextMessageHandler(_make_process_user_message(provider))
+
+        await handler(_make_update("Привет!"), MagicMock())
+
+        entry = _read_last_log_line(capsys)
+        assert entry["event"] == "message_processing_completed"
+        assert entry["provider"] == response.provider_id.value
+        assert entry["model"] == response.model_id.value
+        assert entry["duration_ms"] == round(response.duration_ms, 1)
+        assert entry["input_tokens"] == response.input_tokens
+        assert entry["output_tokens"] == response.output_tokens
+        assert entry["status"] == "success"
+        assert "template_versions" in entry
+
+    async def test_does_not_log_the_event_on_failure(self, capsys: pytest.CaptureFixture[str]) -> None:
+        configure_logging(environment="test")
+        provider = FakeLLMProvider(error=LLMProviderError(message="boom", user_message="Ошибка."))
+        handler = TextMessageHandler(_make_process_user_message(provider))
+
+        await handler(_make_update(), MagicMock())
+
+        out = capsys.readouterr().out.strip().splitlines()
+        events = [json.loads(line)["event"] for line in out]
+        assert "message_processing_completed" not in events
+        assert "process_user_message_failed" in events
 
 
 class TestIgnoresNonTextUpdates:

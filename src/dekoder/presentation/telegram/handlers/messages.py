@@ -44,7 +44,23 @@ class TextMessageHandler:
             # `clear_request_context()` в `finally` ниже. Основной,
             # проверяемый тестом механизм — `result.prompt_template_versions`
             # (DTO use case'а), это лишь дополнение.
-            _logger.info("prompt_built", template_versions=dict(result.prompt_template_versions))
+            #
+            # Sprint 9, задача S9-06 (ADR-9.6): агрегированное событие
+            # уровня «запрос обработан» — вместе с `process_user_message_failed`
+            # (путь неудачи, не переименован) даёт все метрики §17.7
+            # (количество запросов/ошибок, среднее время ответа) простым
+            # агрегированием по имени события. Значения берутся из уже
+            # вычисленного `ProcessUserMessageResult`, не пересчитываются.
+            _logger.info(
+                "message_processing_completed",
+                template_versions=dict(result.prompt_template_versions),
+                provider=result.provider_id.value,
+                model=result.model_id.value,
+                duration_ms=round(result.duration_ms, 1),
+                input_tokens=result.usage.input_tokens if result.usage else None,
+                output_tokens=result.usage.output_tokens if result.usage else None,
+                status="success",
+            )
         except DekoderError as error:
             _logger.warning("process_user_message_failed", error_code=error.code)
             await message.reply_text(error.user_message)

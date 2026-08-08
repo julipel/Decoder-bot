@@ -967,3 +967,61 @@ class TestKnowledgeIntegration:
         result = await use_case.execute(_make_command())
 
         assert result.response_text == "Здравствуйте!"
+
+    async def test_logs_knowledge_search_completed_with_chunks_found(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Sprint 9, S9-06 (ADR-9.6): успешный поиск логируется вместе с числом найденных фрагментов."""
+        clear_request_context()
+        configure_logging(environment="test")
+        result = SearchResult(
+            text="Гарантия действует 24 месяца.",
+            score=0.9,
+            source=SourceReference(
+                document_id=uuid4(),
+                document_title="Условия гарантии",
+                chunk_index=0,
+                section_title=None,
+                page_number=None,
+            ),
+        )
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, knowledge_search=FakeKnowledgeSearchService([result]))
+
+        await use_case.execute(_make_command())
+
+        log_lines = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        entries = [line for line in log_lines if line.get("event") == "knowledge_search_completed"]
+        assert len(entries) == 1
+        assert entries[0]["chunks_found"] == 1
+        assert isinstance(entries[0]["duration_ms"], (int, float))
+        clear_request_context()
+
+    async def test_logs_knowledge_search_completed_even_when_no_results_found(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """ADR-9.6: `chunks_found=0` — штатный исход RAG, не оборачивается в `if results:`."""
+        clear_request_context()
+        configure_logging(environment="test")
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, knowledge_search=FakeKnowledgeSearchService([]))
+
+        await use_case.execute(_make_command())
+
+        log_lines = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        entries = [line for line in log_lines if line.get("event") == "knowledge_search_completed"]
+        assert len(entries) == 1
+        assert entries[0]["chunks_found"] == 0
+        clear_request_context()
+
+    async def test_does_not_log_knowledge_search_completed_on_failure(self, capsys: pytest.CaptureFixture[str]) -> None:
+        clear_request_context()
+        configure_logging(environment="test")
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, knowledge_search=FakeKnowledgeSearchService(fail=True))
+
+        await use_case.execute(_make_command())
+
+        log_lines = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        events = [line.get("event") for line in log_lines]
+        assert "knowledge_search_completed" not in events
+        assert "knowledge_search_failed" in events
+        clear_request_context()
