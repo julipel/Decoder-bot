@@ -19,10 +19,11 @@ from tests.support.fake_conversation_repositories import (
 from dekoder.application.conversation.dto import StartNewConversationCommand
 from dekoder.application.conversation.use_cases.start_new_conversation import StartNewConversation
 from dekoder.domain.user.entities import User
+from dekoder.shared.domain.identifiers import CorrelationId
 
 
 def _make_command(telegram_user_id: int = 123) -> StartNewConversationCommand:
-    return StartNewConversationCommand(telegram_user_id=telegram_user_id)
+    return StartNewConversationCommand(telegram_user_id=telegram_user_id, correlation_id=CorrelationId("corr-1"))
 
 
 def _make_use_case(

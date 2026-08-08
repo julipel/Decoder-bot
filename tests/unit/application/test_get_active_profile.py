@@ -17,6 +17,7 @@ from tests.support.fake_conversation_repositories import (
 
 from dekoder.application.profile.dto import GetActiveProfileCommand
 from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
+from dekoder.shared.domain.identifiers import CorrelationId
 
 
 class TestUnknownUser:
@@ -25,7 +26,9 @@ class TestUnknownUser:
     async def test_returns_none_profile_for_unknown_user(self) -> None:
         use_case = GetActiveProfile(repositories=make_in_memory_repositories_factory())
 
-        result = await use_case.execute(GetActiveProfileCommand(telegram_user_id=999))
+        result = await use_case.execute(
+            GetActiveProfileCommand(telegram_user_id=999, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.profile is None
 
@@ -38,7 +41,9 @@ class TestKnownUserWithoutExplicitSelection:
         profiles = FakeProfileRepository([default_profile])
         use_case = GetActiveProfile(repositories=make_in_memory_repositories_factory(users=users, profiles=profiles))
 
-        result = await use_case.execute(GetActiveProfileCommand(telegram_user_id=123))
+        result = await use_case.execute(
+            GetActiveProfileCommand(telegram_user_id=123, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.profile is not None
         assert result.profile.id == default_profile.id
@@ -55,7 +60,9 @@ class TestKnownUserWithExplicitSelection:
         await profiles.select_profile(user.id, other_profile.id)
         use_case = GetActiveProfile(repositories=make_in_memory_repositories_factory(users=users, profiles=profiles))
 
-        result = await use_case.execute(GetActiveProfileCommand(telegram_user_id=456))
+        result = await use_case.execute(
+            GetActiveProfileCommand(telegram_user_id=456, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.profile is not None
         assert result.profile.id == other_profile.id

@@ -43,7 +43,7 @@ from dekoder.application.profile.use_cases.select_profile import SelectProfile
 from dekoder.domain.profile.entities import UserProfile
 from dekoder.presentation.telegram.mapper import to_get_active_profile_command, to_select_profile_command
 from dekoder.shared.errors import DekoderError
-from dekoder.shared.logging import get_logger
+from dekoder.shared.logging import bind_request_context, clear_request_context, get_logger
 
 _logger = get_logger(__name__)
 
@@ -90,6 +90,7 @@ class ProfileCommandHandler:
             return
 
         command = to_get_active_profile_command(update)
+        bind_request_context(correlation_id=command.correlation_id)
         try:
             active_result = await self._get_active_profile.execute(command)
         except DekoderError as error:
@@ -100,11 +101,14 @@ class ProfileCommandHandler:
             _logger.exception("get_active_profile_unexpected_error")
             await message.reply_text(UNEXPECTED_ERROR_MESSAGE)
             return
+        finally:
+            clear_request_context()
 
         if active_result.profile is None:
             await message.reply_text(NO_PREVIOUS_INTERACTION_MESSAGE)
             return
 
+        bind_request_context(correlation_id=command.correlation_id)
         try:
             profiles_result = await self._list_profiles.execute()
         except DekoderError as error:
@@ -115,6 +119,8 @@ class ProfileCommandHandler:
             _logger.exception("list_profiles_unexpected_error")
             await message.reply_text(UNEXPECTED_ERROR_MESSAGE)
             return
+        finally:
+            clear_request_context()
 
         keyboard = _build_profile_keyboard(profiles_result.profiles, active_profile_id=active_result.profile.id)
         await message.reply_text(PROFILE_LIST_MESSAGE, reply_markup=keyboard)
@@ -136,6 +142,7 @@ class ProfileSelectionCallbackHandler:
             return
 
         command = to_select_profile_command(update, profile_id)
+        bind_request_context(correlation_id=command.correlation_id)
         try:
             result = await self._select_profile.execute(command)
         except DekoderError as error:
@@ -146,6 +153,8 @@ class ProfileSelectionCallbackHandler:
             _logger.exception("select_profile_unexpected_error")
             await query.edit_message_text(UNEXPECTED_ERROR_MESSAGE)
             return
+        finally:
+            clear_request_context()
 
         if result.status is SelectProfileStatus.UNKNOWN_USER:
             await query.edit_message_text(NO_PREVIOUS_INTERACTION_MESSAGE)

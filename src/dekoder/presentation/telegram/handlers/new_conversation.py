@@ -26,7 +26,7 @@ from telegram.ext import ContextTypes
 from dekoder.application.conversation.use_cases.start_new_conversation import StartNewConversation
 from dekoder.presentation.telegram.mapper import to_start_new_conversation_command
 from dekoder.shared.errors import DekoderError
-from dekoder.shared.logging import get_logger
+from dekoder.shared.logging import bind_request_context, clear_request_context, get_logger
 
 _logger = get_logger(__name__)
 
@@ -45,6 +45,7 @@ class NewConversationHandler:
             return
 
         command = to_start_new_conversation_command(update)
+        bind_request_context(correlation_id=command.correlation_id)
         try:
             result = await self._start_new_conversation.execute(command)
         except DekoderError as error:
@@ -55,6 +56,8 @@ class NewConversationHandler:
             _logger.exception("start_new_conversation_unexpected_error")
             await message.reply_text(UNEXPECTED_ERROR_MESSAGE)
             return
+        finally:
+            clear_request_context()
 
         if result.conversation_id is None:
             await message.reply_text(NO_PREVIOUS_INTERACTION_MESSAGE)

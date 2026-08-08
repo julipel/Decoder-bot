@@ -28,6 +28,7 @@ from dekoder.application.model_catalog.use_cases.list_models import ListAvailabl
 from dekoder.application.model_catalog.use_cases.select_model import SelectModel
 from dekoder.domain.conversation.value_objects import ModelId
 from dekoder.domain.model_catalog.enums import ModelAvailability
+from dekoder.shared.domain.identifiers import CorrelationId
 from dekoder.shared.errors import ApplicationError
 
 
@@ -43,7 +44,9 @@ class TestListAvailableModels:
         factory = make_in_memory_repositories_factory(users=users, model_selection=selections)
 
         use_case = ListAvailableModels(repositories=factory, model_catalog=catalog)
-        result = await use_case.execute(ListAvailableModelsCommand(telegram_user_id=111))
+        result = await use_case.execute(
+            ListAvailableModelsCommand(telegram_user_id=111, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert {model.model_id for model in result.models} == {available.model_id, other.model_id}
         assert result.active_model_id == ModelId("anthropic/claude-3.5-sonnet")
@@ -53,7 +56,9 @@ class TestListAvailableModels:
         factory = make_in_memory_repositories_factory()
 
         use_case = ListAvailableModels(repositories=factory, model_catalog=catalog)
-        result = await use_case.execute(ListAvailableModelsCommand(telegram_user_id=999))
+        result = await use_case.execute(
+            ListAvailableModelsCommand(telegram_user_id=999, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert len(result.models) == 1
         assert result.active_model_id is None
@@ -65,7 +70,9 @@ class TestGetSelectedModel:
         factory = make_in_memory_repositories_factory()
 
         use_case = GetSelectedModel(repositories=factory, model_catalog=catalog)
-        result = await use_case.execute(GetSelectedModelCommand(telegram_user_id=123))
+        result = await use_case.execute(
+            GetSelectedModelCommand(telegram_user_id=123, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.model is None
 
@@ -76,7 +83,9 @@ class TestGetSelectedModel:
         factory = make_in_memory_repositories_factory(users=users)
 
         use_case = GetSelectedModel(repositories=factory, model_catalog=catalog)
-        result = await use_case.execute(GetSelectedModelCommand(telegram_user_id=222))
+        result = await use_case.execute(
+            GetSelectedModelCommand(telegram_user_id=222, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.model is None
 
@@ -89,7 +98,9 @@ class TestGetSelectedModel:
         factory = make_in_memory_repositories_factory(users=users, model_selection=selections)
 
         use_case = GetSelectedModel(repositories=factory, model_catalog=catalog)
-        result = await use_case.execute(GetSelectedModelCommand(telegram_user_id=333))
+        result = await use_case.execute(
+            GetSelectedModelCommand(telegram_user_id=333, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.model == model
 
@@ -102,7 +113,9 @@ class TestGetSelectedModel:
         factory = make_in_memory_repositories_factory(users=users, model_selection=selections)
 
         use_case = GetSelectedModel(repositories=factory, model_catalog=catalog)
-        result = await use_case.execute(GetSelectedModelCommand(telegram_user_id=444))
+        result = await use_case.execute(
+            GetSelectedModelCommand(telegram_user_id=444, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.model is None
 
@@ -114,12 +127,16 @@ class TestSelectModel:
         factory = make_in_memory_repositories_factory()
 
         use_case = SelectModel(repositories=factory, model_catalog=catalog)
-        result = await use_case.execute(SelectModelCommand(telegram_user_id=555, model_id=model.model_id))
+        result = await use_case.execute(
+            SelectModelCommand(telegram_user_id=555, model_id=model.model_id, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.model == model
 
         get_use_case = GetSelectedModel(repositories=factory, model_catalog=catalog)
-        selected = await get_use_case.execute(GetSelectedModelCommand(telegram_user_id=555))
+        selected = await get_use_case.execute(
+            GetSelectedModelCommand(telegram_user_id=555, correlation_id=CorrelationId("corr-1"))
+        )
         assert selected.model == model
 
     async def test_rejects_unavailable_model_without_calling_select(self) -> None:
@@ -132,7 +149,11 @@ class TestSelectModel:
         use_case = SelectModel(repositories=factory, model_catalog=catalog)
 
         with pytest.raises(ApplicationError) as excinfo:
-            await use_case.execute(SelectModelCommand(telegram_user_id=666, model_id=unavailable.model_id))
+            await use_case.execute(
+                SelectModelCommand(
+                    telegram_user_id=666, model_id=unavailable.model_id, correlation_id=CorrelationId("corr-1")
+                )
+            )
 
         assert excinfo.value.code == "MODEL_UNAVAILABLE"
         # Ошибка поднимается до входа в транзакцию — пользователь не
@@ -147,7 +168,13 @@ class TestSelectModel:
         use_case = SelectModel(repositories=factory, model_catalog=catalog)
 
         with pytest.raises(ApplicationError) as excinfo:
-            await use_case.execute(SelectModelCommand(telegram_user_id=777, model_id=ModelId("does-not-exist/model")))
+            await use_case.execute(
+                SelectModelCommand(
+                    telegram_user_id=777,
+                    model_id=ModelId("does-not-exist/model"),
+                    correlation_id=CorrelationId("corr-1"),
+                )
+            )
 
         assert excinfo.value.code == "MODEL_NOT_FOUND"
         assert await users.get_by_telegram_user_id(777) is None
@@ -159,7 +186,9 @@ class TestSelectModel:
         factory = make_in_memory_repositories_factory(users=users)
 
         use_case = SelectModel(repositories=factory, model_catalog=catalog)
-        await use_case.execute(SelectModelCommand(telegram_user_id=888, model_id=model.model_id))
+        await use_case.execute(
+            SelectModelCommand(telegram_user_id=888, model_id=model.model_id, correlation_id=CorrelationId("corr-1"))
+        )
 
         created_user = await users.get_by_telegram_user_id(888)
         assert created_user is not None
@@ -171,9 +200,19 @@ class TestSelectModel:
         factory = make_in_memory_repositories_factory()
 
         use_case = SelectModel(repositories=factory, model_catalog=catalog)
-        await use_case.execute(SelectModelCommand(telegram_user_id=999, model_id=first_model.model_id))
-        await use_case.execute(SelectModelCommand(telegram_user_id=999, model_id=second_model.model_id))
+        await use_case.execute(
+            SelectModelCommand(
+                telegram_user_id=999, model_id=first_model.model_id, correlation_id=CorrelationId("corr-1")
+            )
+        )
+        await use_case.execute(
+            SelectModelCommand(
+                telegram_user_id=999, model_id=second_model.model_id, correlation_id=CorrelationId("corr-1")
+            )
+        )
 
         get_use_case = GetSelectedModel(repositories=factory, model_catalog=catalog)
-        selected = await get_use_case.execute(GetSelectedModelCommand(telegram_user_id=999))
+        selected = await get_use_case.execute(
+            GetSelectedModelCommand(telegram_user_id=999, correlation_id=CorrelationId("corr-1"))
+        )
         assert selected.model == second_model

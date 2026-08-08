@@ -58,7 +58,7 @@ from dekoder.presentation.telegram.mapper import (
     to_select_model_command,
 )
 from dekoder.shared.errors import DekoderError
-from dekoder.shared.logging import get_logger
+from dekoder.shared.logging import bind_request_context, clear_request_context, get_logger
 
 _logger = get_logger(__name__)
 
@@ -112,8 +112,17 @@ class ModelCommandHandler:
         if message is None:
             return
 
+        selected_command = to_get_selected_model_command(update)
+        # Единый correlation_id на оба use-case вызова этого обработчика
+        # (Sprint 9, S9-02) — команды строятся из двух отдельных вызовов
+        # mapper'а (`to_get_selected_model_command`/
+        # `to_list_available_models_command`), каждый со своим свежим
+        # `correlation_id`; для наблюдаемости обработки одного `Update`
+        # используем `correlation_id` первой (главной для строки «Текущая
+        # модель: …») команды, не заводим второй bind/clear на тот же вызов.
+        bind_request_context(correlation_id=selected_command.correlation_id)
         try:
-            selected_result = await self._get_selected_model.execute(to_get_selected_model_command(update))
+            selected_result = await self._get_selected_model.execute(selected_command)
             list_result = await self._list_available_models.execute(to_list_available_models_command(update))
         except DekoderError as error:
             _logger.warning("list_available_models_failed", error_code=error.code)
@@ -123,6 +132,8 @@ class ModelCommandHandler:
             _logger.exception("list_available_models_unexpected_error")
             await message.reply_text(UNEXPECTED_ERROR_MESSAGE)
             return
+        finally:
+            clear_request_context()
 
         if selected_result.model is not None:
             text = MODEL_CURRENT_MESSAGE_TEMPLATE.format(
@@ -156,6 +167,7 @@ class ModelSelectionCallbackHandler:
             return
 
         command = to_select_model_command(update, model_id)
+        bind_request_context(correlation_id=command.correlation_id)
         try:
             result = await self._select_model.execute(command)
         except DekoderError as error:
@@ -169,6 +181,8 @@ class ModelSelectionCallbackHandler:
             _logger.exception("select_model_unexpected_error")
             await query.answer(UNEXPECTED_ERROR_MESSAGE, show_alert=True)
             return
+        finally:
+            clear_request_context()
 
         await query.answer()
         # Реиспользуем уже разрешённый `command.telegram_user_id`
@@ -176,10 +190,19 @@ class ModelSelectionCallbackHandler:
         # обхода `Update` через `to_list_available_models_command()` (тот
         # опирается на `update.effective_user`, который для callback-only
         # `Update` фактически совпадает, но не должен становиться вторым
-        # источником истины).
-        list_result = await self._list_available_models.execute(
-            ListAvailableModelsCommand(telegram_user_id=command.telegram_user_id)
-        )
+        # источником истины). `correlation_id` (Sprint 9, S9-02) —
+        # переиспользуем `command.correlation_id`, а не заводим новый: это
+        # тот же логический запрос (нажатие кнопки выбора модели).
+        bind_request_context(correlation_id=command.correlation_id)
+        try:
+            list_result = await self._list_available_models.execute(
+                ListAvailableModelsCommand(
+                    telegram_user_id=command.telegram_user_id,
+                    correlation_id=command.correlation_id,
+                )
+            )
+        finally:
+            clear_request_context()
         keyboard = _build_model_keyboard(list_result.models, active_model_id=list_result.active_model_id)
         await query.edit_message_text(
             MODEL_SELECTED_MESSAGE_TEMPLATE.format(name=result.model.display_name), reply_markup=keyboard

@@ -78,6 +78,7 @@ from dekoder.presentation.telegram.bot import (
     register_model_handlers,
 )
 from dekoder.presentation.telegram.handlers.model import MODEL_SELECTED_MESSAGE_TEMPLATE
+from dekoder.shared.domain.identifiers import CorrelationId
 from dekoder.shared.logging import clear_request_context, configure_logging
 
 _TEST_BOT_TOKEN = "123456:test-token"  # noqa: S105 - фиктивный токен для теста, не секрет
@@ -291,7 +292,9 @@ class TestModelSelectionAffectsGeneration:
         await callbacks["text"](_make_text_update(user_id=9001), MagicMock())  # type: ignore[operator]
         provider.received_requests.clear()
 
-        await select_model.execute(SelectModelCommand(telegram_user_id=9001, model_id=_SONNET_MODEL_ID))
+        await select_model.execute(
+            SelectModelCommand(telegram_user_id=9001, model_id=_SONNET_MODEL_ID, correlation_id=CorrelationId("corr-1"))
+        )
 
         await callbacks["text"](_make_text_update(text="Как дела?", user_id=9001), MagicMock())  # type: ignore[operator]
 
@@ -416,7 +419,9 @@ class TestUserIsolation:
         await bootstrap_callbacks["text"](_make_text_update(user_id=9201), MagicMock())  # type: ignore[operator]
         await bootstrap_callbacks["text"](_make_text_update(user_id=9202), MagicMock())  # type: ignore[operator]
 
-        await select_model.execute(SelectModelCommand(telegram_user_id=9201, model_id=_SONNET_MODEL_ID))
+        await select_model.execute(
+            SelectModelCommand(telegram_user_id=9201, model_id=_SONNET_MODEL_ID, correlation_id=CorrelationId("corr-1"))
+        )
         # пользователь 9202 ничего не выбирает — остаётся на умолчании
 
         provider_a = FakeLLMProvider(response=_response())
@@ -492,5 +497,7 @@ class TestFullModelSelectionCycle:
         assert callback_update.callback_query.answer.call_args.kwargs.get("show_alert") is True
 
         _, get_selected_model, _ = use_cases
-        selected = await get_selected_model.execute(GetSelectedModelCommand(telegram_user_id=9302))
+        selected = await get_selected_model.execute(
+            GetSelectedModelCommand(telegram_user_id=9302, correlation_id=CorrelationId("corr-1"))
+        )
         assert selected.model is None  # выбор не изменился (изначально не был сделан)

@@ -47,11 +47,13 @@ entities.py`; преобразование `MessageRole.USER/ASSISTANT -> "user"
 задача S2-07) — вход/выход use case `StartNewConversation`
 (`application/conversation/use_cases/start_new_conversation.py`), тот же
 стиль, что и `ProcessUserMessageCommand`/`ProcessUserMessageResult`.
-`StartNewConversationCommand` содержит только `telegram_user_id` — в
-отличие от `ProcessUserMessageCommand`, тут нет ни текста сообщения, ни
-`correlation_id`/`model_id`: use case не логирует и не вызывает LLM
-(команда /new к Telegram Adapter в этой задаче ещё не подключается —
-S2-08). `StartNewConversationResult.conversation_id: UUID | None` — `None`
+`StartNewConversationCommand` содержит только `telegram_user_id` и (с
+Sprint 9, задача S9-02, ADR-9.2) `correlation_id` — в отличие от
+`ProcessUserMessageCommand`, тут нет ни текста сообщения, ни `model_id`:
+use case не вызывает LLM (команда /new к Telegram Adapter в этой задаче
+ещё не подключается — S2-08); `correlation_id` используется только
+presentation-слоем (`bind_request_context()` в `NewConversationHandler`),
+use case его не читает. `StartNewConversationResult.conversation_id: UUID | None` — `None`
 означает «пользователь не найден» (в отличие от `ProcessUserMessage`,
 `StartNewConversation` не создаёт пользователя автоматически,
 backlog_2_tasks.md S2-07) и не является ошибкой: результат в этом случае
@@ -60,10 +62,11 @@ backlog_2_tasks.md S2-07) и не является ошибкой: резуль�
 `ClearConversationCommand`/`ClearConversationResult`/`ClearConversationStatus`
 (Sprint 2, задача S2-09) — вход/выход use case `ClearConversation`
 (`application/conversation/use_cases/clear_conversation.py`).
-`ClearConversationCommand` содержит только `telegram_user_id` — тот же
-минимальный состав, что и `StartNewConversationCommand`, по той же
-причине (use case не логирует и не вызывает LLM; команда /clear к
-Telegram Adapter в этой задаче ещё не подключается — S2-10).
+`ClearConversationCommand` содержит только `telegram_user_id` и (с
+Sprint 9, задача S9-02) `correlation_id` — тот же минимальный состав, что
+и `StartNewConversationCommand`, по той же причине (use case не вызывает
+LLM; команда /clear к Telegram Adapter в этой задаче ещё не подключается
+— S2-10).
 `ClearConversationResult` должен различать три исхода (backlog_2_tasks.md
 S2-09), поэтому вместо одного `bool`/`UUID | None`, как у
 `StartNewConversationResult`, здесь явное поле `status:
@@ -169,6 +172,7 @@ class LLMResponse:
 @dataclass(frozen=True)
 class StartNewConversationCommand:
     telegram_user_id: int
+    correlation_id: CorrelationId
 
 
 @dataclass(frozen=True)
@@ -187,6 +191,7 @@ class ClearConversationStatus(Enum):
 @dataclass(frozen=True)
 class ClearConversationCommand:
     telegram_user_id: int
+    correlation_id: CorrelationId
 
 
 @dataclass(frozen=True)

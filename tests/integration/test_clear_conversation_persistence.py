@@ -36,6 +36,7 @@ from dekoder.infrastructure.persistence.base import Base
 from dekoder.infrastructure.persistence.conversation_orm import ConversationORM
 from dekoder.infrastructure.persistence.engine import create_database_engine
 from dekoder.infrastructure.persistence.session import create_session_factory
+from dekoder.shared.domain.identifiers import CorrelationId
 
 
 @pytest.fixture
@@ -83,7 +84,9 @@ class TestClearsActiveConversationHistory:
             )
 
         use_case = ClearConversation(repositories=repositories_factory)
-        result = await use_case.execute(ClearConversationCommand(telegram_user_id=5050))
+        result = await use_case.execute(
+            ClearConversationCommand(telegram_user_id=5050, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.status == ClearConversationStatus.CLEARED
         assert result.conversation_id == conversation.id
@@ -110,7 +113,7 @@ class TestClearsActiveConversationHistory:
             )
 
         use_case = ClearConversation(repositories=repositories_factory)
-        await use_case.execute(ClearConversationCommand(telegram_user_id=5151))
+        await use_case.execute(ClearConversationCommand(telegram_user_id=5151, correlation_id=CorrelationId("corr-1")))
 
         async with repositories_factory() as repositories:
             active_after_clear = await repositories.conversations.get_active_by_user_id(user.id)
@@ -152,7 +155,9 @@ class TestDoesNotAffectOtherConversations:
             )
 
         use_case = ClearConversation(repositories=repositories_factory)
-        result = await use_case.execute(ClearConversationCommand(telegram_user_id=6060))
+        result = await use_case.execute(
+            ClearConversationCommand(telegram_user_id=6060, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.status == ClearConversationStatus.CLEARED
         assert result.conversation_id == conversation_a.id
@@ -184,7 +189,9 @@ class TestDoesNotAffectOtherConversations:
             )
 
         use_case = ClearConversation(repositories=repositories_factory)
-        result = await use_case.execute(ClearConversationCommand(telegram_user_id=6070))
+        result = await use_case.execute(
+            ClearConversationCommand(telegram_user_id=6070, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.status == ClearConversationStatus.CLEARED
         assert result.conversation_id == new_conversation.id
@@ -210,7 +217,9 @@ class TestMissingUserOrConversation:
     ) -> None:
         use_case = ClearConversation(repositories=repositories_factory)
 
-        result = await use_case.execute(ClearConversationCommand(telegram_user_id=999999))
+        result = await use_case.execute(
+            ClearConversationCommand(telegram_user_id=999999, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.status == ClearConversationStatus.NO_ACTIVE_CONVERSATION
         assert result.conversation_id is None
@@ -231,7 +240,9 @@ class TestMissingUserOrConversation:
             await repositories.conversations.close(conversation)
 
         use_case = ClearConversation(repositories=repositories_factory)
-        result = await use_case.execute(ClearConversationCommand(telegram_user_id=7070))
+        result = await use_case.execute(
+            ClearConversationCommand(telegram_user_id=7070, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.status == ClearConversationStatus.NO_ACTIVE_CONVERSATION
         assert result.conversation_id is None

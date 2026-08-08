@@ -17,11 +17,13 @@ from dataclasses import dataclass
 
 from dekoder.domain.conversation.value_objects import ModelId
 from dekoder.domain.model_catalog.entities import AIModel
+from dekoder.shared.domain.identifiers import CorrelationId
 
 
 @dataclass(frozen=True)
 class ListAvailableModelsCommand:
     telegram_user_id: int
+    correlation_id: CorrelationId
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,7 @@ class ListAvailableModelsResult:
 @dataclass(frozen=True)
 class GetSelectedModelCommand:
     telegram_user_id: int
+    correlation_id: CorrelationId
 
 
 @dataclass(frozen=True)
@@ -54,6 +57,7 @@ class GetSelectedModelResult:
 class SelectModelCommand:
     telegram_user_id: int
     model_id: ModelId
+    correlation_id: CorrelationId
 
 
 @dataclass(frozen=True)

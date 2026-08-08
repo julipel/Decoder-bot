@@ -155,7 +155,9 @@ class TestCallsUseCaseWithCorrectArguments:
         await handler(_make_update(user_id=54321), MagicMock())
 
         assert len(use_case.received_commands) == 1
-        assert use_case.received_commands[0] == StartNewConversationCommand(telegram_user_id=54321)
+        received = use_case.received_commands[0]
+        assert received.telegram_user_id == 54321
+        assert received.correlation_id  # свежий correlation_id (Sprint 9, S9-02) — непустая строка
 
 
 class TestIgnoresUpdatesWithoutMessage:

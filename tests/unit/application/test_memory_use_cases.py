@@ -41,6 +41,7 @@ from dekoder.domain.memory.value_objects import (
     MemorySource,
     MemoryStatus,
 )
+from dekoder.shared.domain.identifiers import CorrelationId
 from dekoder.shared.logging import clear_request_context, configure_logging
 
 
@@ -89,6 +90,7 @@ class TestCreateMemoryRecord:
                 text="Люблю кофе.",
                 status=MemoryStatus.CONFIRMED,
                 source=MemorySource.USER_EXPLICIT,
+                correlation_id=CorrelationId("corr-1"),
             )
         )
 
@@ -110,6 +112,7 @@ class TestCreateMemoryRecord:
                 text="Черновой факт.",
                 status=MemoryStatus.PENDING,
                 source=MemorySource.USER_EXPLICIT,
+                correlation_id=CorrelationId("corr-1"),
             )
         )
 
@@ -125,6 +128,7 @@ class TestCreateMemoryRecord:
                 text="Живёт в Берлине.",
                 status=MemoryStatus.CONFIRMED,
                 source=MemorySource.USER_EXPLICIT,
+                correlation_id=CorrelationId("corr-1"),
                 category=MemoryCategory.PERSONAL,
                 confidence=MemoryConfidence.HIGH,
                 is_sensitive=True,
@@ -149,7 +153,9 @@ class TestListMemoryRecords:
         factory = make_in_memory_repositories_factory(users=users, memory=memory)
         use_case = ListMemoryRecordsUseCase(repositories=factory)
 
-        result = await use_case.execute(ListMemoryRecordsCommand(telegram_user_id=600))
+        result = await use_case.execute(
+            ListMemoryRecordsCommand(telegram_user_id=600, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert [record.id for record in result.records] == [confirmed.id]
 
@@ -158,7 +164,9 @@ class TestListMemoryRecords:
         factory = make_in_memory_repositories_factory(users=users)
         use_case = ListMemoryRecordsUseCase(repositories=factory)
 
-        result = await use_case.execute(ListMemoryRecordsCommand(telegram_user_id=601))
+        result = await use_case.execute(
+            ListMemoryRecordsCommand(telegram_user_id=601, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.records == ()
         assert await users.get_by_telegram_user_id(601) is None
@@ -175,7 +183,9 @@ class TestDeleteMemoryRecord:
         factory = make_in_memory_repositories_factory(users=users, memory=memory)
         use_case = DeleteMemoryRecordUseCase(repositories=factory)
 
-        await use_case.execute(DeleteMemoryRecordCommand(telegram_user_id=700, record_id=record.id))
+        await use_case.execute(
+            DeleteMemoryRecordCommand(telegram_user_id=700, record_id=record.id, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert await memory.get_by_id(record.id) is None
 
@@ -185,13 +195,17 @@ class TestDeleteMemoryRecord:
         factory = make_in_memory_repositories_factory(users=users)
         use_case = DeleteMemoryRecordUseCase(repositories=factory)
 
-        await use_case.execute(DeleteMemoryRecordCommand(telegram_user_id=701, record_id=uuid4()))
+        await use_case.execute(
+            DeleteMemoryRecordCommand(telegram_user_id=701, record_id=uuid4(), correlation_id=CorrelationId("corr-1"))
+        )
 
     async def test_deleting_for_unknown_telegram_user_does_not_raise(self) -> None:
         factory = make_in_memory_repositories_factory()
         use_case = DeleteMemoryRecordUseCase(repositories=factory)
 
-        await use_case.execute(DeleteMemoryRecordCommand(telegram_user_id=702, record_id=uuid4()))
+        await use_case.execute(
+            DeleteMemoryRecordCommand(telegram_user_id=702, record_id=uuid4(), correlation_id=CorrelationId("corr-1"))
+        )
 
     async def test_does_not_delete_another_users_record(self) -> None:
         """Изоляция пользователей (ADR-5.10) — на уровне use case + порта, не только Telegram-хендлера."""
@@ -203,7 +217,9 @@ class TestDeleteMemoryRecord:
         factory = make_in_memory_repositories_factory(users=users, memory=memory)
         use_case = DeleteMemoryRecordUseCase(repositories=factory)
 
-        await use_case.execute(DeleteMemoryRecordCommand(telegram_user_id=704, record_id=record.id))
+        await use_case.execute(
+            DeleteMemoryRecordCommand(telegram_user_id=704, record_id=record.id, correlation_id=CorrelationId("corr-1"))
+        )
         assert other is not None
 
         assert await memory.get_by_id(record.id) is not None
@@ -270,6 +286,7 @@ class TestSensitiveDataRedaction:
                 text=secret_text,
                 status=MemoryStatus.CONFIRMED,
                 source=MemorySource.USER_EXPLICIT,
+                correlation_id=CorrelationId("corr-1"),
                 is_sensitive=True,
             )
         )
@@ -290,6 +307,7 @@ class TestSensitiveDataRedaction:
                 text="Люблю чай.",
                 status=MemoryStatus.CONFIRMED,
                 source=MemorySource.USER_EXPLICIT,
+                correlation_id=CorrelationId("corr-1"),
                 is_sensitive=False,
             )
         )
@@ -307,7 +325,9 @@ class TestSensitiveDataRedaction:
         factory = make_in_memory_repositories_factory(users=users, memory=memory)
         use_case = DeleteMemoryRecordUseCase(repositories=factory)
 
-        await use_case.execute(DeleteMemoryRecordCommand(telegram_user_id=802, record_id=record.id))
+        await use_case.execute(
+            DeleteMemoryRecordCommand(telegram_user_id=802, record_id=record.id, correlation_id=CorrelationId("corr-1"))
+        )
 
         entry = _read_last_log_line(capsys)
         assert entry["event"] == "memory_record_deleted"

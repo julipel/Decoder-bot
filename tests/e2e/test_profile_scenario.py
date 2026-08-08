@@ -70,6 +70,7 @@ from dekoder.presentation.telegram.handlers.profile import (
     PROFILE_NOT_FOUND_MESSAGE,
     PROFILE_SELECTED_MESSAGE_TEMPLATE,
 )
+from dekoder.shared.domain.identifiers import CorrelationId
 
 _TEST_BOT_TOKEN = "123456:test-token"  # noqa: S105 - фиктивный токен для теста, не секрет
 
@@ -361,7 +362,11 @@ class TestUserIsolation:
         await bootstrap_callbacks["text"](_make_text_update(user_id=3001), MagicMock())  # type: ignore[operator]
         await bootstrap_callbacks["text"](_make_text_update(user_id=3002), MagicMock())  # type: ignore[operator]
 
-        await select_profile.execute(SelectProfileCommand(telegram_user_id=3001, profile_id=catalog["creative"]))
+        await select_profile.execute(
+            SelectProfileCommand(
+                telegram_user_id=3001, profile_id=catalog["creative"], correlation_id=CorrelationId("corr-1")
+            )
+        )
 
         provider_a = FakeLLMProvider(response=_response())
         provider_b = FakeLLMProvider(response=_response())
@@ -406,7 +411,9 @@ class TestUnknownProfileIdIsRejected:
         assert provider.received_requests == []  # LLM не вызывается при обработке callback'а
 
         _, get_active_profile, _ = use_cases
-        active_result = await get_active_profile.execute(GetActiveProfileCommand(telegram_user_id=4001))
+        active_result = await get_active_profile.execute(
+            GetActiveProfileCommand(telegram_user_id=4001, correlation_id=CorrelationId("corr-1"))
+        )
         assert active_result.profile is not None
         assert active_result.profile.name == "Деловой"  # остался дефолт, не изменился
 

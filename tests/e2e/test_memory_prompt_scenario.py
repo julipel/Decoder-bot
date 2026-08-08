@@ -77,6 +77,7 @@ from dekoder.presentation.telegram.bot import (
     register_message_handler,
     register_new_conversation_handler,
 )
+from dekoder.shared.domain.identifiers import CorrelationId
 from dekoder.shared.logging import clear_request_context, configure_logging
 
 _TEST_BOT_TOKEN = "123456:test-token"  # noqa: S105 - фиктивный токен для теста, не секрет
@@ -292,7 +293,9 @@ class TestClearAndNewPreserveMemory:
         await callbacks["clear"](_make_text_update("/clear", user_id=8201), MagicMock())  # type: ignore[operator]
 
         list_memory_records = ListMemoryRecordsUseCase(repositories=repositories_factory)
-        result = await list_memory_records.execute(ListMemoryRecordsCommand(telegram_user_id=8201))
+        result = await list_memory_records.execute(
+            ListMemoryRecordsCommand(telegram_user_id=8201, correlation_id=CorrelationId("corr-1"))
+        )
         assert any(record.text == "Люблю горные походы" for record in result.records)
 
     async def test_new_does_not_delete_memory_records(
@@ -310,7 +313,9 @@ class TestClearAndNewPreserveMemory:
         await callbacks["new"](_make_text_update("/new", user_id=8202), MagicMock())  # type: ignore[operator]
 
         list_memory_records = ListMemoryRecordsUseCase(repositories=repositories_factory)
-        result = await list_memory_records.execute(ListMemoryRecordsCommand(telegram_user_id=8202))
+        result = await list_memory_records.execute(
+            ListMemoryRecordsCommand(telegram_user_id=8202, correlation_id=CorrelationId("corr-1"))
+        )
         assert any(record.text == "Люблю классическую музыку" for record in result.records)
 
 
@@ -345,6 +350,7 @@ class TestSensitiveDataRedactionOverRealDatabase:
                 text=secret_text,
                 status=MemoryStatus.CONFIRMED,
                 source=MemorySource.USER_EXPLICIT,
+                correlation_id=CorrelationId("corr-1"),
                 is_sensitive=True,
             )
         )
@@ -372,13 +378,16 @@ class TestSensitiveDataRedactionOverRealDatabase:
                 text=secret_text,
                 status=MemoryStatus.CONFIRMED,
                 source=MemorySource.USER_EXPLICIT,
+                correlation_id=CorrelationId("corr-1"),
                 is_sensitive=True,
             )
         )
         capsys.readouterr()  # сбрасываем лог создания — под проверкой только лог удаления
 
         await delete_memory_record.execute(
-            DeleteMemoryRecordCommand(telegram_user_id=8302, record_id=create_result.record.id)
+            DeleteMemoryRecordCommand(
+                telegram_user_id=8302, record_id=create_result.record.id, correlation_id=CorrelationId("corr-1")
+            )
         )
 
         entry = _read_last_log_line(capsys)

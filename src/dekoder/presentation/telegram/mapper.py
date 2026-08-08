@@ -100,14 +100,15 @@ def to_start_new_conversation_command(update: Update) -> StartNewConversationCom
     """
     Строит команду для обработчика `/new` из входящего `Update`.
     `telegram_user_id` извлекается тем же способом, что и в `to_command()`
-    — `update.effective_user.id`. Команда не содержит текста сообщения и
-    `correlation_id`, как и сам `StartNewConversationCommand`.
+    — `update.effective_user.id`. Команда не содержит текста сообщения, но
+    (с Sprint 9, задача S9-02, ADR-9.2) несёт свежий `correlation_id` —
+    генерируется здесь тем же способом, что и в `to_command()`.
     """
     user = update.effective_user
     if user is None:
         raise ValueError("Update does not contain a known user")
 
-    return StartNewConversationCommand(telegram_user_id=user.id)
+    return StartNewConversationCommand(telegram_user_id=user.id, correlation_id=CorrelationId(str(uuid.uuid4())))
 
 
 def to_clear_conversation_command(update: Update) -> ClearConversationCommand:
@@ -115,12 +116,13 @@ def to_clear_conversation_command(update: Update) -> ClearConversationCommand:
     Строит команду для обработчика `/clear` из входящего `Update`.
     `telegram_user_id` извлекается тем же способом, что и в `to_command()`/
     `to_start_new_conversation_command()` — `update.effective_user.id`.
+    `correlation_id` (Sprint 9, S9-02) генерируется тем же способом.
     """
     user = update.effective_user
     if user is None:
         raise ValueError("Update does not contain a known user")
 
-    return ClearConversationCommand(telegram_user_id=user.id)
+    return ClearConversationCommand(telegram_user_id=user.id, correlation_id=CorrelationId(str(uuid.uuid4())))
 
 
 def to_get_active_profile_command(update: Update) -> GetActiveProfileCommand:
@@ -128,13 +130,14 @@ def to_get_active_profile_command(update: Update) -> GetActiveProfileCommand:
     Строит команду для обработчика `/profile` из входящего `Update`.
     `telegram_user_id` извлекается тем же способом, что и в `to_command()`/
     `to_start_new_conversation_command()`/`to_clear_conversation_command()`
-    — `update.effective_user.id`.
+    — `update.effective_user.id`. `correlation_id` (Sprint 9, S9-02)
+    генерируется тем же способом.
     """
     user = update.effective_user
     if user is None:
         raise ValueError("Update does not contain a known user")
 
-    return GetActiveProfileCommand(telegram_user_id=user.id)
+    return GetActiveProfileCommand(telegram_user_id=user.id, correlation_id=CorrelationId(str(uuid.uuid4())))
 
 
 def to_select_profile_command(update: Update, profile_id: UUID) -> SelectProfileCommand:
@@ -142,13 +145,18 @@ def to_select_profile_command(update: Update, profile_id: UUID) -> SelectProfile
     Строит команду для callback'а выбора профиля из входящего `Update`.
     `telegram_user_id` извлекается из `update.callback_query.from_user`
     (не `update.effective_user`) — пользователь, нажавший inline-кнопку,
-    а не автор исходного сообщения со списком профилей.
+    а не автор исходного сообщения со списком профилей. `correlation_id`
+    (Sprint 9, S9-02) генерируется тем же способом, что и в `to_command()`.
     """
     query = update.callback_query
     if query is None or query.from_user is None:
         raise ValueError("Update does not contain a callback query from a known user")
 
-    return SelectProfileCommand(telegram_user_id=query.from_user.id, profile_id=profile_id)
+    return SelectProfileCommand(
+        telegram_user_id=query.from_user.id,
+        profile_id=profile_id,
+        correlation_id=CorrelationId(str(uuid.uuid4())),
+    )
 
 
 def to_create_memory_record_command(update: Update, text: str) -> CreateMemoryRecordCommand:
@@ -158,7 +166,8 @@ def to_create_memory_record_command(update: Update, text: str) -> CreateMemoryRe
     ответственность `presentation/telegram/handlers/memory.py`, не этого
     модуля). `status=CONFIRMED, source=USER_EXPLICIT` — явно, здесь
     (ADR-5.9): `/remember` сохраняет запись сразу подтверждённой, без
-    двухшагового сценария.
+    двухшагового сценария. `correlation_id` (Sprint 9, S9-02) генерируется
+    тем же способом, что и в `to_command()`.
     """
     user = update.effective_user
     if user is None:
@@ -169,6 +178,7 @@ def to_create_memory_record_command(update: Update, text: str) -> CreateMemoryRe
         text=text,
         status=MemoryStatus.CONFIRMED,
         source=MemorySource.USER_EXPLICIT,
+        correlation_id=CorrelationId(str(uuid.uuid4())),
     )
 
 
@@ -177,13 +187,14 @@ def to_list_memory_records_command(update: Update) -> ListMemoryRecordsCommand:
     Строит команду для обработчика `/memory` из входящего `Update`.
     `telegram_user_id` извлекается тем же способом, что и в `to_command()`/
     `to_clear_conversation_command()`/`to_get_active_profile_command()` —
-    `update.effective_user.id`.
+    `update.effective_user.id`. `correlation_id` (Sprint 9, S9-02)
+    генерируется тем же способом.
     """
     user = update.effective_user
     if user is None:
         raise ValueError("Update does not contain a known user")
 
-    return ListMemoryRecordsCommand(telegram_user_id=user.id)
+    return ListMemoryRecordsCommand(telegram_user_id=user.id, correlation_id=CorrelationId(str(uuid.uuid4())))
 
 
 def to_delete_memory_record_command(update: Update, record_id: UUID) -> DeleteMemoryRecordCommand:
@@ -191,13 +202,18 @@ def to_delete_memory_record_command(update: Update, record_id: UUID) -> DeleteMe
     Строит команду для callback'а удаления записи памяти из входящего
     `Update`. `telegram_user_id` извлекается из `update.callback_query.
     from_user` (не `update.effective_user`) — тот же принцип, что и
-    `to_select_profile_command()` (ADR-5.10).
+    `to_select_profile_command()` (ADR-5.10). `correlation_id` (Sprint 9,
+    S9-02) генерируется тем же способом, что и в `to_command()`.
     """
     query = update.callback_query
     if query is None or query.from_user is None:
         raise ValueError("Update does not contain a callback query from a known user")
 
-    return DeleteMemoryRecordCommand(telegram_user_id=query.from_user.id, record_id=record_id)
+    return DeleteMemoryRecordCommand(
+        telegram_user_id=query.from_user.id,
+        record_id=record_id,
+        correlation_id=CorrelationId(str(uuid.uuid4())),
+    )
 
 
 def to_list_available_models_command(update: Update) -> ListAvailableModelsCommand:
@@ -205,12 +221,13 @@ def to_list_available_models_command(update: Update) -> ListAvailableModelsComma
     Строит команду для обработчика `/model` из входящего `Update`.
     `telegram_user_id` извлекается тем же способом, что и в
     `to_get_active_profile_command()` — `update.effective_user.id`.
+    `correlation_id` (Sprint 9, S9-02) генерируется тем же способом.
     """
     user = update.effective_user
     if user is None:
         raise ValueError("Update does not contain a known user")
 
-    return ListAvailableModelsCommand(telegram_user_id=user.id)
+    return ListAvailableModelsCommand(telegram_user_id=user.id, correlation_id=CorrelationId(str(uuid.uuid4())))
 
 
 def to_get_selected_model_command(update: Update) -> GetSelectedModelCommand:
@@ -218,12 +235,13 @@ def to_get_selected_model_command(update: Update) -> GetSelectedModelCommand:
     Строит команду для обработчика `/model` из входящего `Update` —
     используется для отображения текущего выбора (ADR-7.7) перед
     построением клавиатуры `to_list_available_models_command()`.
+    `correlation_id` (Sprint 9, S9-02) генерируется тем же способом.
     """
     user = update.effective_user
     if user is None:
         raise ValueError("Update does not contain a known user")
 
-    return GetSelectedModelCommand(telegram_user_id=user.id)
+    return GetSelectedModelCommand(telegram_user_id=user.id, correlation_id=CorrelationId(str(uuid.uuid4())))
 
 
 def to_select_model_command(update: Update, model_id: ModelId) -> SelectModelCommand:
@@ -232,13 +250,18 @@ def to_select_model_command(update: Update, model_id: ModelId) -> SelectModelCom
     `telegram_user_id` извлекается из `update.callback_query.from_user`
     (не `update.effective_user`) — тот же принцип, что и
     `to_select_profile_command()`/`to_delete_memory_record_command()`
-    (ADR-7.9).
+    (ADR-7.9). `correlation_id` (Sprint 9, S9-02) генерируется тем же
+    способом, что и в `to_command()`.
     """
     query = update.callback_query
     if query is None or query.from_user is None:
         raise ValueError("Update does not contain a callback query from a known user")
 
-    return SelectModelCommand(telegram_user_id=query.from_user.id, model_id=model_id)
+    return SelectModelCommand(
+        telegram_user_id=query.from_user.id,
+        model_id=model_id,
+        correlation_id=CorrelationId(str(uuid.uuid4())),
+    )
 
 
 def split_message(text: str, limit: int = TELEGRAM_SAFE_MESSAGE_LIMIT) -> list[str]:

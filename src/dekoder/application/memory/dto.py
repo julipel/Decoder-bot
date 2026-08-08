@@ -21,6 +21,7 @@ from dekoder.domain.memory.value_objects import (
     MemorySource,
     MemoryStatus,
 )
+from dekoder.shared.domain.identifiers import CorrelationId
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class CreateMemoryRecordCommand:
     text: str
     status: MemoryStatus
     source: MemorySource
+    correlation_id: CorrelationId
     category: MemoryCategory = MemoryCategory.OTHER
     confidence: MemoryConfidence = MemoryConfidence.MEDIUM
     is_sensitive: bool = False
@@ -91,6 +93,7 @@ class RejectMemoryRecordResult:
 @dataclass(frozen=True)
 class ListMemoryRecordsCommand:
     telegram_user_id: int
+    correlation_id: CorrelationId
 
 
 @dataclass(frozen=True)
@@ -104,3 +107,4 @@ class ListMemoryRecordsResult:
 class DeleteMemoryRecordCommand:
     telegram_user_id: int
     record_id: UUID
+    correlation_id: CorrelationId

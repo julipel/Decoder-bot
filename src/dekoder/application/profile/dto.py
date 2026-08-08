@@ -23,6 +23,7 @@ from uuid import UUID
 
 from dekoder.domain.conversation.value_objects import ModelId
 from dekoder.domain.profile.entities import UserProfile
+from dekoder.shared.domain.identifiers import CorrelationId
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class ListProfilesResult:
 @dataclass(frozen=True)
 class GetActiveProfileCommand:
     telegram_user_id: int
+    correlation_id: CorrelationId
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,7 @@ class GetActiveProfileResult:
 class SelectProfileCommand:
     telegram_user_id: int
     profile_id: UUID
+    correlation_id: CorrelationId
 
 
 class SelectProfileStatus(Enum):

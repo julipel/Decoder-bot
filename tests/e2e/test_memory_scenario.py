@@ -45,6 +45,7 @@ from dekoder.presentation.telegram.handlers.memory import (
     REMEMBER_EMPTY_TEXT_MESSAGE,
     REMEMBER_SAVED_MESSAGE,
 )
+from dekoder.shared.domain.identifiers import CorrelationId
 
 _TEST_BOT_TOKEN = "123456:test-token"  # noqa: S105 - фиктивный токен для теста, не секрет
 
@@ -169,7 +170,9 @@ class TestEmptyRememberText:
 
         _, list_memory_records, _ = use_cases
 
-        result = await list_memory_records.execute(ListMemoryRecordsCommand(telegram_user_id=6002))
+        result = await list_memory_records.execute(
+            ListMemoryRecordsCommand(telegram_user_id=6002, correlation_id=CorrelationId("corr-1"))
+        )
         assert result.records == ()
 
     async def test_remember_with_only_whitespace_shows_a_friendly_error(
@@ -225,7 +228,9 @@ class TestDeleteViaCallback:
 
         _, list_memory_records, _ = use_cases
 
-        result = await list_memory_records.execute(ListMemoryRecordsCommand(telegram_user_id=6005))
+        result = await list_memory_records.execute(
+            ListMemoryRecordsCommand(telegram_user_id=6005, correlation_id=CorrelationId("corr-1"))
+        )
         assert result.records == ()
 
 
@@ -246,7 +251,9 @@ class TestCrossUserDeleteIsRejected:
 
         await callbacks["remember"](_make_text_update("/remember Секрет пользователя A", user_id=7001), MagicMock())  # type: ignore[operator]
 
-        listing_a = await list_memory_records.execute(ListMemoryRecordsCommand(telegram_user_id=7001))
+        listing_a = await list_memory_records.execute(
+            ListMemoryRecordsCommand(telegram_user_id=7001, correlation_id=CorrelationId("corr-1"))
+        )
         assert len(listing_a.records) == 1
         record_a_id = listing_a.records[0].id
 
@@ -258,7 +265,9 @@ class TestCrossUserDeleteIsRejected:
         # Отказ, не тихая отписка: B получает свой (пустой) список, не подтверждение чужого удаления.
         crafted_callback.callback_query.edit_message_text.assert_awaited_once_with(MEMORY_EMPTY_MESSAGE)
 
-        listing_a_after = await list_memory_records.execute(ListMemoryRecordsCommand(telegram_user_id=7001))
+        listing_a_after = await list_memory_records.execute(
+            ListMemoryRecordsCommand(telegram_user_id=7001, correlation_id=CorrelationId("corr-1"))
+        )
         assert len(listing_a_after.records) == 1
         assert listing_a_after.records[0].id == record_a_id
 

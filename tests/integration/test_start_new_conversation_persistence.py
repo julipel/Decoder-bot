@@ -35,6 +35,7 @@ from dekoder.infrastructure.persistence.base import Base
 from dekoder.infrastructure.persistence.conversation_orm import ConversationORM
 from dekoder.infrastructure.persistence.engine import create_database_engine
 from dekoder.infrastructure.persistence.session import create_session_factory
+from dekoder.shared.domain.identifiers import CorrelationId
 
 
 @pytest.fixture
@@ -70,7 +71,9 @@ class TestFullCycle:
             first_conversation = await repositories.conversations.get_or_create_active(user.id)
 
         use_case = StartNewConversation(repositories=repositories_factory)
-        result = await use_case.execute(StartNewConversationCommand(telegram_user_id=4242))
+        result = await use_case.execute(
+            StartNewConversationCommand(telegram_user_id=4242, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.conversation_id is not None
         assert result.conversation_id != first_conversation.id
@@ -88,7 +91,9 @@ class TestFullCycle:
     ) -> None:
         use_case = StartNewConversation(repositories=repositories_factory)
 
-        result = await use_case.execute(StartNewConversationCommand(telegram_user_id=999999))
+        result = await use_case.execute(
+            StartNewConversationCommand(telegram_user_id=999999, correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.conversation_id is None
         async with session_factory() as session:
@@ -113,7 +118,9 @@ class TestSingleActiveConversationInvariant:
             old_conversation = await repositories.conversations.get_or_create_active(user.id)
 
         use_case = StartNewConversation(repositories=repositories_factory)
-        result = await use_case.execute(StartNewConversationCommand(telegram_user_id=1010))
+        result = await use_case.execute(
+            StartNewConversationCommand(telegram_user_id=1010, correlation_id=CorrelationId("corr-1"))
+        )
 
         async with session_factory() as session:
             rows = (
@@ -139,9 +146,15 @@ class TestSingleActiveConversationInvariant:
             user = await repositories.users.get_or_create_by_telegram_user_id(1111)
 
         use_case = StartNewConversation(repositories=repositories_factory)
-        await use_case.execute(StartNewConversationCommand(telegram_user_id=1111))
-        await use_case.execute(StartNewConversationCommand(telegram_user_id=1111))
-        third_result = await use_case.execute(StartNewConversationCommand(telegram_user_id=1111))
+        await use_case.execute(
+            StartNewConversationCommand(telegram_user_id=1111, correlation_id=CorrelationId("corr-1"))
+        )
+        await use_case.execute(
+            StartNewConversationCommand(telegram_user_id=1111, correlation_id=CorrelationId("corr-1"))
+        )
+        third_result = await use_case.execute(
+            StartNewConversationCommand(telegram_user_id=1111, correlation_id=CorrelationId("corr-1"))
+        )
 
         async with session_factory() as session:
             rows = (
@@ -192,7 +205,9 @@ class TestOldConversationHistoryPreserved:
             )
 
         use_case = StartNewConversation(repositories=repositories_factory)
-        await use_case.execute(StartNewConversationCommand(telegram_user_id=2020))
+        await use_case.execute(
+            StartNewConversationCommand(telegram_user_id=2020, correlation_id=CorrelationId("corr-1"))
+        )
 
         async with repositories_factory() as repositories:
             history = await repositories.messages.history(old_conversation.id)

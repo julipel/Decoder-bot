@@ -31,7 +31,7 @@ from dekoder.application.conversation.dto import ClearConversationStatus
 from dekoder.application.conversation.use_cases.clear_conversation import ClearConversation
 from dekoder.presentation.telegram.mapper import to_clear_conversation_command
 from dekoder.shared.errors import DekoderError
-from dekoder.shared.logging import get_logger
+from dekoder.shared.logging import bind_request_context, clear_request_context, get_logger
 
 _logger = get_logger(__name__)
 
@@ -57,6 +57,7 @@ class ClearConversationHandler:
             return
 
         command = to_clear_conversation_command(update)
+        bind_request_context(correlation_id=command.correlation_id)
         try:
             result = await self._clear_conversation.execute(command)
         except DekoderError as error:
@@ -67,5 +68,7 @@ class ClearConversationHandler:
             _logger.exception("clear_conversation_unexpected_error")
             await message.reply_text(UNEXPECTED_ERROR_MESSAGE)
             return
+        finally:
+            clear_request_context()
 
         await message.reply_text(_STATUS_MESSAGES[result.status])

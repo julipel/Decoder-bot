@@ -55,7 +55,7 @@ from dekoder.presentation.telegram.mapper import (
     to_list_memory_records_command,
 )
 from dekoder.shared.errors import DekoderError
-from dekoder.shared.logging import get_logger
+from dekoder.shared.logging import bind_request_context, clear_request_context, get_logger
 
 _logger = get_logger(__name__)
 
@@ -134,6 +134,7 @@ class RememberCommandHandler:
         except ValueError:
             return
 
+        bind_request_context(correlation_id=command.correlation_id)
         try:
             await self._create_memory_record.execute(command)
         except DekoderError as error:
@@ -144,6 +145,8 @@ class RememberCommandHandler:
             _logger.exception("create_memory_record_unexpected_error")
             await message.reply_text(UNEXPECTED_ERROR_MESSAGE)
             return
+        finally:
+            clear_request_context()
 
         await message.reply_text(REMEMBER_SAVED_MESSAGE)
 
@@ -162,6 +165,7 @@ class MemoryListCommandHandler:
         except ValueError:
             return
 
+        bind_request_context(correlation_id=command.correlation_id)
         try:
             result = await self._list_memory_records.execute(command)
         except DekoderError as error:
@@ -172,6 +176,8 @@ class MemoryListCommandHandler:
             _logger.exception("list_memory_records_unexpected_error")
             await message.reply_text(UNEXPECTED_ERROR_MESSAGE)
             return
+        finally:
+            clear_request_context()
 
         if not result.records:
             await message.reply_text(MEMORY_EMPTY_MESSAGE)
@@ -207,6 +213,7 @@ class MemoryDeleteCallbackHandler:
         except ValueError:
             return
 
+        bind_request_context(correlation_id=delete_command.correlation_id)
         try:
             await self._delete_memory_record.execute(delete_command)
         except DekoderError as error:
@@ -217,10 +224,16 @@ class MemoryDeleteCallbackHandler:
             _logger.exception("delete_memory_record_unexpected_error")
             await query.edit_message_text(UNEXPECTED_ERROR_MESSAGE)
             return
+        finally:
+            clear_request_context()
 
+        bind_request_context(correlation_id=delete_command.correlation_id)
         try:
             list_result = await self._list_memory_records.execute(
-                ListMemoryRecordsCommand(telegram_user_id=delete_command.telegram_user_id)
+                ListMemoryRecordsCommand(
+                    telegram_user_id=delete_command.telegram_user_id,
+                    correlation_id=delete_command.correlation_id,
+                )
             )
         except DekoderError as error:
             _logger.warning("list_memory_records_failed", error_code=error.code)
@@ -230,6 +243,8 @@ class MemoryDeleteCallbackHandler:
             _logger.exception("list_memory_records_unexpected_error")
             await query.edit_message_text(UNEXPECTED_ERROR_MESSAGE)
             return
+        finally:
+            clear_request_context()
 
         if not list_result.records:
             await query.edit_message_text(MEMORY_EMPTY_MESSAGE)

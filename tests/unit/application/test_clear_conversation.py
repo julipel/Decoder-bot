@@ -31,6 +31,7 @@ from dekoder.application.conversation.dto import ClearConversationCommand, Clear
 from dekoder.application.conversation.use_cases.clear_conversation import ClearConversation
 from dekoder.domain.conversation.entities import Conversation, Message, MessageRole
 from dekoder.domain.user.entities import User
+from dekoder.shared.domain.identifiers import CorrelationId
 
 
 class SpyConversationRepository:
@@ -78,7 +79,7 @@ class SpyMessageRepository:
 
 
 def _make_command(telegram_user_id: int = 123) -> ClearConversationCommand:
-    return ClearConversationCommand(telegram_user_id=telegram_user_id)
+    return ClearConversationCommand(telegram_user_id=telegram_user_id, correlation_id=CorrelationId("corr-1"))
 
 
 def _make_use_case(

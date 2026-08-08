@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import pytest
 from telegram import Update
 from tests.support.fake_conversation_repositories import (
     FakeProfileRepository,
@@ -45,6 +47,7 @@ from dekoder.presentation.telegram.handlers.profile import (
     ProfileSelectionCallbackHandler,
 )
 from dekoder.shared.errors import ApplicationError
+from dekoder.shared.logging import clear_request_context, configure_logging, get_logger
 
 
 class RecordingListProfiles:
@@ -343,6 +346,55 @@ class TestUnexpectedErrorHandling:
         sent_text = update.callback_query.edit_message_text.call_args.args[0]
         assert "secret=abc123" not in sent_text
         assert "Traceback" not in sent_text
+
+
+class TestCorrelationIdInLogs:
+    """
+    Sprint 9, задача S9-02 (ADR-9.2): некоммандный обработчик (`/profile`)
+    оборачивает вызов use case в `bind_request_context(correlation_id=...)`
+    — тот же паттерн, что и `TextMessageHandler`. Проверяем через реальный
+    JSON-вывод structlog (`capsys` + `configure_logging(environment="test")`,
+    по образцу `test_process_user_message.py::
+    test_unavailable_personal_selection_falls_back_to_default_and_logs_warning`),
+    что `correlation_id` действительно попадает в лог во время `execute()`,
+    а не просто присутствует на команде.
+    """
+
+    async def test_get_active_profile_failure_log_contains_correlation_id(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        clear_request_context()
+        configure_logging(environment="test")
+        list_profiles, _, _, _, _ = _make_use_cases()
+        get_active_profile = FakeFailingGetActiveProfile(ApplicationError(message="boom", user_message="дальше"))
+        handler = ProfileCommandHandler(list_profiles, get_active_profile)  # type: ignore[arg-type]
+        update = _make_command_update()
+
+        await handler(update, MagicMock())
+
+        log_lines = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        failure_entries = [line for line in log_lines if line.get("event") == "get_active_profile_failed"]
+        assert len(failure_entries) == 1
+        assert failure_entries[0].get("correlation_id")
+        clear_request_context()
+
+    async def test_correlation_id_is_cleared_after_the_handler_returns(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """После `finally: clear_request_context()` контекст не должен «утекать» в последующие логи."""
+        clear_request_context()
+        configure_logging(environment="test")
+        list_profiles, get_active_profile, _, users, _ = _make_use_cases()
+        await users.get_or_create_by_telegram_user_id(456)
+        handler = ProfileCommandHandler(list_profiles, get_active_profile)
+
+        await handler(_make_command_update(user_id=456), MagicMock())
+        capsys.readouterr()  # сбрасываем лог, накопленный самим вызовом handler'а
+
+        get_logger(__name__).info("after_handler_probe")
+        probe_lines = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        assert probe_lines[0].get("correlation_id") is None
+        clear_request_context()
 
 
 def _imported_module_names(module: object) -> set[str]:

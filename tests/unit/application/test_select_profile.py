@@ -24,6 +24,7 @@ from dekoder.application.profile.dto import (
 )
 from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
 from dekoder.application.profile.use_cases.select_profile import SelectProfile
+from dekoder.shared.domain.identifiers import CorrelationId
 
 
 class TestUnknownUser:
@@ -32,7 +33,9 @@ class TestUnknownUser:
     async def test_returns_unknown_user_status(self) -> None:
         use_case = SelectProfile(repositories=make_in_memory_repositories_factory())
 
-        result = await use_case.execute(SelectProfileCommand(telegram_user_id=999, profile_id=uuid4()))
+        result = await use_case.execute(
+            SelectProfileCommand(telegram_user_id=999, profile_id=uuid4(), correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.status is SelectProfileStatus.UNKNOWN_USER
         assert result.profile is None
@@ -49,13 +52,17 @@ class TestUnknownProfile:
         repositories_factory = make_in_memory_repositories_factory(users=users, profiles=profiles)
         use_case = SelectProfile(repositories=repositories_factory)
 
-        result = await use_case.execute(SelectProfileCommand(telegram_user_id=111, profile_id=uuid4()))
+        result = await use_case.execute(
+            SelectProfileCommand(telegram_user_id=111, profile_id=uuid4(), correlation_id=CorrelationId("corr-1"))
+        )
 
         assert result.status is SelectProfileStatus.UNKNOWN_PROFILE
         assert result.profile is None
 
         get_active_profile = GetActiveProfile(repositories=repositories_factory)
-        active_result = await get_active_profile.execute(GetActiveProfileCommand(telegram_user_id=111))
+        active_result = await get_active_profile.execute(
+            GetActiveProfileCommand(telegram_user_id=111, correlation_id=CorrelationId("corr-1"))
+        )
         assert active_result.profile is not None
         assert active_result.profile.id == default_profile.id
 
@@ -72,13 +79,19 @@ class TestValidSelection:
         repositories_factory = make_in_memory_repositories_factory(users=users, profiles=profiles)
         use_case = SelectProfile(repositories=repositories_factory)
 
-        result = await use_case.execute(SelectProfileCommand(telegram_user_id=222, profile_id=target_profile.id))
+        result = await use_case.execute(
+            SelectProfileCommand(
+                telegram_user_id=222, profile_id=target_profile.id, correlation_id=CorrelationId("corr-1")
+            )
+        )
 
         assert result.status is SelectProfileStatus.SELECTED
         assert result.profile is not None
         assert result.profile.id == target_profile.id
 
         get_active_profile = GetActiveProfile(repositories=repositories_factory)
-        active_result = await get_active_profile.execute(GetActiveProfileCommand(telegram_user_id=222))
+        active_result = await get_active_profile.execute(
+            GetActiveProfileCommand(telegram_user_id=222, correlation_id=CorrelationId("corr-1"))
+        )
         assert active_result.profile is not None
         assert active_result.profile.id == target_profile.id
