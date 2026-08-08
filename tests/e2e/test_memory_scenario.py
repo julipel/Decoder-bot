@@ -341,6 +341,8 @@ class TestRememberAndDeleteAuditLog:
 
         assert len(audit_created) == 1
         assert audit_created[0]["record_id"] == str(record_id)
+        assert audit_created[0]["correlation_id"]
 
         assert len(audit_deleted) == 1
         assert audit_deleted[0]["record_id"] == str(record_id)
+        assert audit_deleted[0]["correlation_id"]

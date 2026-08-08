@@ -145,10 +145,11 @@ class RememberCommandHandler:
             _logger.exception("create_memory_record_unexpected_error")
             await message.reply_text(UNEXPECTED_ERROR_MESSAGE)
             return
+        else:
+            log_audit_event(_logger, "memory_record_created", record_id=str(result.record.id))
         finally:
             clear_request_context()
 
-        log_audit_event(_logger, "memory_record_created", record_id=str(result.record.id))
         await message.reply_text(REMEMBER_SAVED_MESSAGE)
 
 
@@ -225,10 +226,10 @@ class MemoryDeleteCallbackHandler:
             _logger.exception("delete_memory_record_unexpected_error")
             await query.edit_message_text(UNEXPECTED_ERROR_MESSAGE)
             return
+        else:
+            log_audit_event(_logger, "memory_record_deleted", record_id=str(delete_command.record_id))
         finally:
             clear_request_context()
-
-        log_audit_event(_logger, "memory_record_deleted", record_id=str(delete_command.record_id))
 
         bind_request_context(correlation_id=delete_command.correlation_id)
         try:
