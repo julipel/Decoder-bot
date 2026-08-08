@@ -55,7 +55,7 @@ from dekoder.presentation.telegram.mapper import (
     to_list_memory_records_command,
 )
 from dekoder.shared.errors import DekoderError
-from dekoder.shared.logging import bind_request_context, clear_request_context, get_logger
+from dekoder.shared.logging import bind_request_context, clear_request_context, get_logger, log_audit_event
 
 _logger = get_logger(__name__)
 
@@ -136,7 +136,7 @@ class RememberCommandHandler:
 
         bind_request_context(correlation_id=command.correlation_id)
         try:
-            await self._create_memory_record.execute(command)
+            result = await self._create_memory_record.execute(command)
         except DekoderError as error:
             _logger.warning("create_memory_record_failed", error_code=error.code)
             await message.reply_text(error.user_message)
@@ -148,6 +148,7 @@ class RememberCommandHandler:
         finally:
             clear_request_context()
 
+        log_audit_event(_logger, "memory_record_created", record_id=str(result.record.id))
         await message.reply_text(REMEMBER_SAVED_MESSAGE)
 
 
@@ -226,6 +227,8 @@ class MemoryDeleteCallbackHandler:
             return
         finally:
             clear_request_context()
+
+        log_audit_event(_logger, "memory_record_deleted", record_id=str(delete_command.record_id))
 
         bind_request_context(correlation_id=delete_command.correlation_id)
         try:
