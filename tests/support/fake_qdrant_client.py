@@ -10,10 +10,20 @@ Qdrant-сервер: подставляется через `app.dependency_overr
 Принимает и хранит РЕАЛЬНЫЕ объекты `qdrant_client.models.PointStruct`/
 `FilterSelector`, которые строит production-код (`QdrantVectorRepository`)
 — фейк не переопределяет их структуру, только читает нужные атрибуты.
+
+Sprint 10 (задача S10-02, ADR-10.2): `query_points()` дорабатывается до
+реального косинусного поиска по `self.points`, с фильтрацией по
+`document_id`/`tags` — ровно то подмножество `models.Filter`, которое
+строит `QdrantVectorRepository._build_filter()` (только `must`-условия,
+`MatchAny`). Раньше метод безусловно возвращал `points=[]` — структурно
+не мог подтвердить, что RAG-поиск (Сценарий 5, §18.4) что-то находит.
+Сигнатура метода и поведение `upsert`/`delete`/`get_collections` не
+меняются — только тело `query_points()` и два новых приватных хелпера.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -21,6 +31,49 @@ from typing import Any
 @dataclass
 class _QueryPointsResponse:
     points: list[Any] = field(default_factory=list)
+
+
+@dataclass
+class _FakeScoredPoint:
+    """
+    Форма, которую ожидает production `_to_search_result()`
+    (`infrastructure/qdrant/vector_repository.py`) — только `score`/
+    `payload`, ничего больше не читается вызывающим кодом.
+    """
+
+    score: float
+    payload: dict[str, Any]
+
+
+def _matches_filter(point: Any, query_filter: Any) -> bool:
+    """
+    Понимает ровно то, что строит `QdrantVectorRepository._build_filter()`
+    — `Filter(must=[FieldCondition(key=..., match=MatchAny(any=[...]))])`
+    по `document_id`/`tags`, не универсальный движок фильтрации. Без
+    фильтра (`query_filter is None`) — любая точка проходит.
+    """
+    if query_filter is None or not query_filter.must:
+        return True
+    payload = point.payload or {}
+    for condition in query_filter.must:
+        allowed = set(condition.match.any)
+        value = payload.get(condition.key)
+        if isinstance(value, list):
+            if not (set(value) & allowed):
+                return False
+        elif value not in allowed:
+            return False
+    return True
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Стандартная косинусная близость без внешних зависимостей (без `numpy`, ADR-10.2)."""
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
 
 class FakeAsyncQdrantClient:
@@ -53,7 +106,13 @@ class FakeAsyncQdrantClient:
         query_filter: Any,
         with_payload: bool,
     ) -> _QueryPointsResponse:
-        return _QueryPointsResponse(points=[])
+        candidates = [point for point in self.points.values() if _matches_filter(point, query_filter)]
+        scored = [(point, _cosine_similarity(query, list(point.vector))) for point in candidates]
+        scored = [(point, score) for point, score in scored if score >= score_threshold]
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+        return _QueryPointsResponse(
+            points=[_FakeScoredPoint(score=score, payload=point.payload or {}) for point, score in scored[:limit]]
+        )
 
     async def close(self) -> None:
         return None
