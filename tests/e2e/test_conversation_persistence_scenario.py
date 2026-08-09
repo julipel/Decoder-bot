@@ -42,6 +42,7 @@ backlog_2.md §3). Единственная подмена во всей цеп�
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -90,6 +91,7 @@ from dekoder.presentation.telegram.bot import (
 from dekoder.presentation.telegram.handlers.clear_conversation import CONVERSATION_CLEARED_MESSAGE
 from dekoder.presentation.telegram.handlers.new_conversation import NEW_CONVERSATION_STARTED_MESSAGE
 from dekoder.shared.errors import InfrastructureError, LLMProviderError
+from dekoder.shared.logging import clear_request_context, configure_logging
 
 _TEST_BOT_TOKEN = "123456:test-token"  # noqa: S105 - фиктивный токен для теста, не секрет
 
@@ -566,6 +568,42 @@ class TestLlmError:
         messages_after = await _messages_of(session_factory, conversation_id)
         assert [m.role for m in messages_after] == ["user", "user", "assistant"]
         assert [m.content for m in messages_after] == ["Привет!", "Ты тут?", "Теперь всё в порядке"]
+
+    async def test_llm_error_is_logged_with_correct_error_code_and_warning_level(
+        self,
+        repositories_factory: ConversationRepositoriesFactory,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """
+        Sprint 10, задача S10-03 (ADR-10.3) — последний недоказанный пункт
+        Сценария 6 («ошибка фиксируется в журнале»): `TextMessageHandler`
+        (`presentation/telegram/handlers/messages.py`) уже логирует
+        `_logger.warning("process_user_message_failed", error_code=error.code)`
+        с ранних спринтов — этот тест впервые читает журнал и подтверждает
+        это, тем же паттерном (`capsys`/`configure_logging(environment=
+        "test")`/`clear_request_context()`), что уже используется в
+        `tests/e2e/test_model_selection_scenario.py::
+        TestFallbackWhenSelectedModelIsUnavailable`. Продуктовый код не
+        меняется (см. докстринг ADR-10.3).
+        """
+        clear_request_context()
+        configure_logging(environment="test")
+        failing_provider = FakeLLMProvider(
+            error=LLMProviderError(message="OpenRouter недоступен", user_message="Ошибка модели, попробуйте позже.")
+        )
+        application = _build_application(_make_process_user_message(repositories_factory, failing_provider))
+        callbacks = _handler_callbacks(application)
+        update = _make_update(text="Привет!", user_id=702)
+
+        await callbacks["text"](update, MagicMock())  # type: ignore[operator]
+
+        log_lines = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines() if line.strip()]
+        failure_entries = [line for line in log_lines if line.get("event") == "process_user_message_failed"]
+        assert len(failure_entries) == 1
+        # `LLMProviderError.code` (`shared/errors.py`) — точное значение, свереное перед написанием теста.
+        assert failure_entries[0]["error_code"] == "LLM_PROVIDER_ERROR"
+        assert failure_entries[0]["level"] == "warning"
+        clear_request_context()
 
 
 def _make_faulty_repositories_factory(
