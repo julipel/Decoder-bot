@@ -266,6 +266,12 @@ class TestRagScenario:
         assert _RELEVANT_DOCUMENT_TEXT in system_prompt
         assert _IRRELEVANT_DOCUMENT_TEXT not in system_prompt
 
+        # --- §18.6, критерий «RAG возвращает источники»: секция 5 промпта (`_format_knowledge_fragment`,
+        # `application/conversation/use_cases/process_user_message.py`) обязана нести указание источника,
+        # не только сырой текст фрагмента — иначе ассистент не сможет сослаться на документ в ответе.
+        assert "Источник:" in system_prompt
+        assert "Гарантия на смартфон X500" in system_prompt  # title загруженного релевантного документа
+
         # --- ответ пользователю построен на основе найденного контекста ---
         update.effective_message.reply_text.assert_awaited_once_with(_LLM_REPLY_TEXT)
 
