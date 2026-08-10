@@ -89,14 +89,30 @@ class DatabaseSettings(BaseSettings):
     url: str = "sqlite+aiosqlite:///./data/app.db"
 
 
-class OpenRouterSettings(BaseSettings):
+class LLMProviderSettings(BaseSettings):
+    """
+    Настройки дженерик OpenAI-Chat-Completions-совместимого LLM-провайдера
+    (Sprint 11, задача S11-01, ADR-11.1) — заменяет прежний
+    `OpenRouterSettings`, зафиксированный на конкретном вендоре.
+
+    `base_url`/`default_model` намеренно БЕЗ значения по умолчанию (было
+    `"https://openrouter.ai/api/v1"`/`"openai/gpt-4o-mini"`) — у дженерик
+    провайдера нет корректного универсального значения, тихий фолбэк на
+    прежний OpenRouter URL был бы хуже, чем явная ошибка `Settings()` при
+    старте (тот же fail-fast принцип, что уже применён к секретам).
+    `provider_id` — не секрет, дефолт `"custom"` достаточен; README учит
+    задавать осмысленное значение (например, `proxyapi`/`vsegpt`) для
+    читаемости логов и `LLMResponse.provider_id`.
+    """
+
     model_config = SettingsConfigDict(
-        env_prefix="OPENROUTER_", env_file=_ENV_FILES, env_file_encoding="utf-8", extra="ignore"
+        env_prefix="LLM_PROVIDER_", env_file=_ENV_FILES, env_file_encoding="utf-8", extra="ignore"
     )
 
     api_key: SecretStr
-    base_url: str = "https://openrouter.ai/api/v1"
-    default_model: str = "openai/gpt-4o-mini"
+    base_url: str
+    default_model: str
+    provider_id: str = "custom"
 
 
 class PromptSettings(BaseSettings):
@@ -108,7 +124,7 @@ class PromptSettings(BaseSettings):
     (`application/prompt/services/token_budget.py::estimate_size` —
     количество символов, не реальные токены модели, ADR-4.4). Значение
     по умолчанию (12000 символов) — намеренно консервативно относительно
-    типичного контекстного окна моделей OpenRouter по умолчанию
+    типичного контекстного окна моделей выбранного агрегатора по умолчанию
     (десятки тысяч токенов) именно потому, что символы и токены не
     совпадают 1:1 (обычно 1 токен ≈ 3-4 символа для смешанного
     ru/en-текста) — это не точный расчёт, а осторожный запас.
@@ -144,9 +160,10 @@ class OpenAiSettings(BaseSettings):
     """
     Настройки провайдера эмбеддингов (Sprint 6, задача S6-02, ADR-6.3).
 
-    Отдельная группа от `OpenRouterSettings` — OpenRouter (основной
-    чат-провайдер) не отдаёт embeddings API; эмбеддинги считаются через
-    OpenAI напрямую, независимо от того, какая модель выбрана для чата.
+    Отдельная группа от `LLMProviderSettings` — основной чат-провайдер
+    (настраиваемый через `LLM_PROVIDER_*`) не гарантированно отдаёт
+    embeddings API; эмбеддинги считаются через OpenAI напрямую, независимо
+    от того, какая модель выбрана для чата.
     """
 
     model_config = SettingsConfigDict(
@@ -224,7 +241,7 @@ class AdminSettings(BaseSettings):
     S8-02, ADR-8.3, скоуп-решение пользователя №1: статичный ключ в
     HTTP-заголовке, не login/session/JWT).
 
-    `api_key` — прямой прецедент `OpenRouterSettings.api_key`/
+    `api_key` — прямой прецедент `LLMProviderSettings.api_key`/
     `OpenAiSettings.api_key`: `SecretStr` без значения по умолчанию,
     отсутствие в окружении останавливает процесс на этапе создания
     `Settings()` (fail-fast). `health_check_timeout` — таймаут одного
@@ -251,12 +268,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=_ENV_FILES, env_file_encoding="utf-8", extra="ignore")
 
     application: ApplicationSettings = Field(default_factory=ApplicationSettings)
-    # required SecretStr fields make TelegramSettings/OpenRouterSettings'
+    # required SecretStr fields make TelegramSettings/LLMProviderSettings'
     # generated __init__ take required args from mypy's perspective, even
     # though pydantic-settings fills them from the environment at runtime.
     telegram: TelegramSettings = Field(default_factory=TelegramSettings)  # type: ignore[arg-type]
     llm: LLMSettings = Field(default_factory=LLMSettings)
-    openrouter: OpenRouterSettings = Field(default_factory=OpenRouterSettings)  # type: ignore[arg-type]
+    llm_provider: LLMProviderSettings = Field(default_factory=LLMProviderSettings)  # type: ignore[arg-type]
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     prompt: PromptSettings = Field(default_factory=PromptSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)

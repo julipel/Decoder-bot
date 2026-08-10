@@ -1,7 +1,8 @@
 """
 Минимальные доменные value objects первого вертикального среза — только то,
 что нужно для одного сообщения к модели (текст, модель, провайдер). Ноль
-зависимостей от Pydantic/FastAPI/Telegram/OpenRouter — чистый Python.
+зависимостей от Pydantic/FastAPI/Telegram/конкретного LLM-провайдера —
+чистый Python.
 
 `User`/`Conversation`/`Message` (агрегаты, объединяющие эти value objects
 в историю диалога) сюда не входят — следующий спринт.
@@ -51,7 +52,7 @@ class ModelId:
 
 @dataclass(frozen=True, slots=True)
 class ProviderId:
-    """Идентификатор поставщика модели (например, `openrouter`)."""
+    """Идентификатор поставщика модели (например, "custom"/значение LLM_PROVIDER_PROVIDER_ID)."""
 
     value: str
 

@@ -2,11 +2,11 @@
 `OpenAiEmbeddingProvider` — реализация `EmbeddingProvider` поверх OpenAI
 Embeddings API (`POST /embeddings`, Sprint 6, задача S6-05, ADR-6.3).
 
-Стиль — как `OpenRouterLLMAdapter`: `httpx.AsyncClient` внедряется через
-конструктор и переиспользуется, адаптер не знает базовый URL (настройка
-клиента, bootstrap-слой) и не создаёт клиент сам. Не связан с
-`OpenRouterLLMAdapter`/`OpenRouterSettings` — независимый провайдер
-(ADR-6.3): OpenRouter не отдаёт embeddings API.
+Стиль — как `OpenAiCompatibleLLMAdapter`: `httpx.AsyncClient` внедряется
+через конструктор и переиспользуется, адаптер не знает базовый URL
+(настройка клиента, bootstrap-слой) и не создаёт клиент сам. Не связан с
+`OpenAiCompatibleLLMAdapter`/`LLMProviderSettings` — независимый провайдер
+(ADR-6.3): основной чат-провайдер не гарантированно отдаёт embeddings API.
 
 `data[].index` в ответе OpenAI гарантированно соответствует порядку
 `input` — тем не менее сортируется явно перед сборкой результата

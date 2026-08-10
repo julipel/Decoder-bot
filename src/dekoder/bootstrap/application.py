@@ -6,7 +6,7 @@ create_application — фабрика FastAPI-приложения (bootstrap-с
 Жизненный цикл `httpx.AsyncClient` управляется через FastAPI lifespan:
 клиент создаётся при старте приложения (внутри `async with` в
 `_lifespan`) и закрывается при остановке (выход из `async with`) — не
-при импорте модуля и не внутри `OpenRouterLLMAdapter.generate()`.
+при импорте модуля и не внутри `OpenAiCompatibleLLMAdapter.generate()`.
 
 С задачи S2-01 `_lifespan` также инициализирует постоянное хранилище
 данных (`bootstrap/database.py::init_database`) до того, как приложение
@@ -25,9 +25,10 @@ FastAPI завершить запуск (fail-fast), а не проявляет�
 
 С задачи S6-08 (Sprint 6) `_lifespan` дополнительно открывает второй
 `httpx.AsyncClient` (для `OpenAiEmbeddingProvider`, независимый от
-клиента OpenRouter — другой `base_url`, ADR-6.3) и `AsyncQdrantClient`, и
-закрывает оба при остановке — тем же `async with`, что и клиент
-OpenRouter. В отличие от `init_database`, `ensure_collection` здесь НЕ
+клиента LLM-провайдера — другой `base_url`, ADR-6.3) и
+`AsyncQdrantClient`, и закрывает оба при остановке — тем же `async with`,
+что и клиент LLM-провайдера. В отличие от `init_database`,
+`ensure_collection` здесь НЕ
 fail-fast: RAG — дополнение к базовому диалогу (ADR ProcessUserMessage.
 _search_knowledge, тот же принцип), не его предпосылка — недоступность
 Qdrant при старте логируется и не мешает приложению принять трафик;
@@ -109,7 +110,7 @@ def create_application(settings: Settings) -> FastAPI:
                 _logger.error("qdrant_collection_unavailable_at_startup", error=str(error))
             async with (
                 httpx.AsyncClient(
-                    base_url=settings.openrouter.base_url,
+                    base_url=settings.llm_provider.base_url,
                     timeout=settings.llm.timeout,
                 ) as http_client,
                 # timeout переиспользует LLMSettings.timeout — тот же
@@ -178,7 +179,7 @@ def get_container(request: Request) -> ApplicationContainer:
 def get_process_user_message(request: Request) -> ProcessUserMessage:
     """
     Единственный способ для driving-адаптеров (Telegram и др.) получить
-    `ProcessUserMessage` — без импорта `OpenRouterLLMAdapter` напрямую.
+    `ProcessUserMessage` — без импорта `OpenAiCompatibleLLMAdapter` напрямую.
     """
     return get_container(request).process_user_message
 

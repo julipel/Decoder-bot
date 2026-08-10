@@ -35,7 +35,7 @@ from structlog.typing import EventDict, Processor
 _SENSITIVE_KEYS: frozenset[str] = frozenset(
     {
         "api_key",
-        "openrouter_api_key",
+        "llm_provider_api_key",
         "yandexgpt_api_key",
         "openai_api_key",
         "bot_token",

@@ -10,7 +10,7 @@ ApplicationContainer — контейнер зависимостей верти�
 
 `build_container()` — единственное место, которому разрешено знать
 одновременно про `Settings`, конкретный `LLMProvider`
-(`OpenRouterLLMAdapter`) и (с задачи S2-06) конкретную фабрику
+(`OpenAiCompatibleLLMAdapter`) и (с задачи S2-06) конкретную фабрику
 репозиториев (`bootstrap/repositories.py::
 build_conversation_repositories_factory`). Ни Telegram-слой, ни любой
 другой driving-адаптер не импортирует адаптер или репозитории напрямую —
@@ -78,8 +78,8 @@ Telegram-сценария в Sprint 5 (ADR-5.9), контейнер не соз�
 С задачи S6-08 (Sprint 6, ADR-6.4) контейнер также собирает
 `SemanticSearchService` (`application/knowledge/services/
 semantic_search_service.py`) — композицию `OpenAiEmbeddingProvider`
-(поверх отдельного `openai_http_client`, независимого от
-`http_client`/OpenRouter, ADR-6.3) и `QdrantVectorRepository` (поверх
+(поверх отдельного `openai_http_client`, независимого от `http_client`/
+LLM-провайдера, ADR-6.3) и `QdrantVectorRepository` (поверх
 `qdrant_client`) — и внедряет её в `ProcessUserMessage` как
 `knowledge_search`, параллельно `llm_provider`. `IndexKnowledgeDocumentUseCase`/
 `DeleteKnowledgeDocumentUseCase` здесь НЕ собираются — индексация не
@@ -122,10 +122,10 @@ config_repository.py`, парсит `catalog.json` один раз при пос
 С задачи S8-09 (Sprint 8, ADR-8.9) контейнер также собирает
 `CheckExternalServicesHealthUseCase` (`application/health/use_cases/
 check_external_services.py`) поверх трёх адаптеров `ServiceHealthCheck`
-(`infrastructure/health/*`) — `QdrantHealthCheck`/`OpenRouterHealthCheck`/
+(`infrastructure/health/*`) — `QdrantHealthCheck`/`OpenAiCompatibleHealthCheck`/
 `OpenAiHealthCheck`, каждый переиспользует уже готовые `qdrant_client`/
 `http_client`/`openai_http_client` (те же самые объекты, что уже
-используются `SemanticSearchService`/`OpenRouterLLMAdapter`/
+используются `SemanticSearchService`/`OpenAiCompatibleLLMAdapter`/
 `OpenAiEmbeddingProvider` — новые клиенты не создаются). Таймаут одного
 probe — `settings.admin.health_check_timeout` (S8-02), не
 `LLMSettings.timeout`.
@@ -160,13 +160,13 @@ from dekoder.application.profile.use_cases.update_profile import UpdateProfile
 from dekoder.application.prompt.services.prompt_builder import DeterministicPromptBuilder
 from dekoder.application.prompt.services.token_budget import estimate_size
 from dekoder.bootstrap.repositories import build_conversation_repositories_factory
-from dekoder.domain.conversation.value_objects import ModelId
+from dekoder.domain.conversation.value_objects import ModelId, ProviderId
 from dekoder.domain.prompt.policies import TokenBudgetPolicy
 from dekoder.infrastructure.embeddings.openai_embedding_provider import OpenAiEmbeddingProvider
+from dekoder.infrastructure.health.openai_compatible_health_check import OpenAiCompatibleHealthCheck
 from dekoder.infrastructure.health.openai_health_check import OpenAiHealthCheck
-from dekoder.infrastructure.health.openrouter_health_check import OpenRouterHealthCheck
 from dekoder.infrastructure.health.qdrant_health_check import QdrantHealthCheck
-from dekoder.infrastructure.llm.openrouter_adapter import OpenRouterLLMAdapter
+from dekoder.infrastructure.llm.openai_compatible_adapter import OpenAiCompatibleLLMAdapter
 from dekoder.infrastructure.model_catalog.config_repository import ConfigModelCatalogRepository
 from dekoder.infrastructure.prompts.file_template_repository import FileTemplateRepository
 from dekoder.infrastructure.qdrant.vector_repository import QdrantVectorRepository
@@ -211,12 +211,13 @@ def build_container(
     же `repositories_factory`, что и `ProcessUserMessage` — не отдельную
     фабрику. `openai_http_client`/`qdrant_client` (задача S6-08) — уже
     готовые клиенты для `SemanticSearchService`, тем же приёмом, что и
-    `http_client` для `OpenRouterLLMAdapter`: контейнер не отвечает за их
-    подключение/закрытие.
+    `http_client` для `OpenAiCompatibleLLMAdapter`: контейнер не отвечает
+    за их подключение/закрытие.
     """
-    llm_provider = OpenRouterLLMAdapter(
+    llm_provider = OpenAiCompatibleLLMAdapter(
         client=http_client,
-        api_key=settings.openrouter.api_key.get_secret_value(),
+        api_key=settings.llm_provider.api_key.get_secret_value(),
+        provider_id=ProviderId(settings.llm_provider.provider_id),
         x_title=settings.application.name,
     )
     repositories_factory = build_conversation_repositories_factory(db_session_factory)
@@ -249,7 +250,7 @@ def build_container(
         prompt_builder=prompt_builder,
         knowledge_search=knowledge_search,
         model_catalog=model_catalog,
-        default_model=ModelId(settings.openrouter.default_model),
+        default_model=ModelId(settings.llm_provider.default_model),
         temperature=settings.llm.temperature,
         max_tokens=settings.llm.max_tokens,
         max_relevant_memory=settings.memory.max_relevant_records,
@@ -273,9 +274,10 @@ def build_container(
     check_external_services_health = CheckExternalServicesHealthUseCase(
         checks=[
             QdrantHealthCheck(client=qdrant_client, timeout=health_check_timeout),
-            OpenRouterHealthCheck(
+            OpenAiCompatibleHealthCheck(
                 client=http_client,
-                api_key=settings.openrouter.api_key.get_secret_value(),
+                api_key=settings.llm_provider.api_key.get_secret_value(),
+                service_name=settings.llm_provider.provider_id,
                 timeout=health_check_timeout,
             ),
             OpenAiHealthCheck(

@@ -57,8 +57,9 @@ register_memory_handlers`) регистрируются тоже внутри `p
 `container.delete_memory_record`.
 
 С задачи S6-08 (Sprint 6) `post_init` дополнительно открывает второй
-`httpx.AsyncClient` (для `OpenAiEmbeddingProvider`, ADR-6.3) и
-`AsyncQdrantClient` до регистрации обработчиков; оба закрываются в
+`httpx.AsyncClient` (для `OpenAiEmbeddingProvider`, независимый от
+клиента LLM-провайдера, ADR-6.3) и `AsyncQdrantClient` до регистрации
+обработчиков; оба закрываются в
 `_shutdown`. В отличие от `init_database`, `ensure_collection` НЕ
 fail-fast (см. `bootstrap/application.py` — тот же принцип для обоих
 процессов): RAG — дополнение к диалогу, недоступность Qdrant при старте
@@ -104,7 +105,7 @@ def main() -> None:
     )
 
     http_client = httpx.AsyncClient(
-        base_url=settings.openrouter.base_url,
+        base_url=settings.llm_provider.base_url,
         timeout=settings.llm.timeout,
     )
     # timeout переиспользует LLMSettings.timeout — см. bootstrap/application.py.

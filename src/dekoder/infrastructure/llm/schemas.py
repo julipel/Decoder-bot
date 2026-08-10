@@ -1,5 +1,6 @@
 """
-Схемы внешнего JSON-контракта OpenRouter Chat Completions API.
+Схемы внешнего JSON-контракта OpenAI Chat Completions API (или
+совместимого с ним агрегатора, настраиваемого через `LLM_PROVIDER_*`).
 
 Живут только в `infrastructure/` — это wire-формат конкретного
 провайдера, application-слой его никогда не видит (возвращается уже
@@ -14,37 +15,37 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
-class OpenRouterChatMessage(BaseModel):
+class ChatCompletionRequestMessage(BaseModel):
     role: str
     content: str
 
 
-class OpenRouterChatCompletionRequest(BaseModel):
+class ChatCompletionRequest(BaseModel):
     model: str
-    messages: list[OpenRouterChatMessage]
+    messages: list[ChatCompletionRequestMessage]
     temperature: float
     max_tokens: int
 
 
-class OpenRouterResponseMessage(BaseModel):
+class ChatCompletionResponseMessage(BaseModel):
     role: str
     content: str
 
 
-class OpenRouterChoice(BaseModel):
+class ChatCompletionChoice(BaseModel):
     index: int
-    message: OpenRouterResponseMessage
+    message: ChatCompletionResponseMessage
     finish_reason: str | None = None
 
 
-class OpenRouterUsage(BaseModel):
+class ChatCompletionUsage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int | None = None
 
 
-class OpenRouterChatCompletionResponse(BaseModel):
+class ChatCompletionResponse(BaseModel):
     id: str | None = None
     model: str | None = None
-    choices: list[OpenRouterChoice] = Field(default_factory=list)
-    usage: OpenRouterUsage | None = None
+    choices: list[ChatCompletionChoice] = Field(default_factory=list)
+    usage: ChatCompletionUsage | None = None

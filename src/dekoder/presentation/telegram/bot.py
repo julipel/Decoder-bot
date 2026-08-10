@@ -3,7 +3,7 @@ Telegram driving adapter — регистрирует `/start` и обработ
 сообщений поверх уже собранного `ProcessUserMessage`. `ProcessUserMessage`
 передаётся параметром (dependency injection из bootstrap-слоя) — этот
 модуль не создаёт use case, не создаёт `AsyncSession`/репозитории и не
-импортирует `OpenRouterLLMAdapter`.
+импортирует `OpenAiCompatibleLLMAdapter`.
 
 Только сборка `telegram.ext.Application` с обработчиками — запуск
 (polling/webhook) остаётся вне объёма этой задачи (Docker/деплой).

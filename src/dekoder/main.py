@@ -6,7 +6,7 @@ ASGI-точка входа процесса (например, uvicorn dekoder.m
 
 Переключено с `composition.bootstrap.create_app` на
 `bootstrap.application.create_application`: первый вертикальный срез
-(Telegram → ProcessUserMessage → LLMProvider → OpenRouter → ответ)
+(Telegram → ProcessUserMessage → LLMProvider → внешний агрегатор → ответ)
 собирается через новый, более простой bootstrap-слой. `composition/`
 не удалён — это отдельное, более крупное дерево заглушек прежней
 миграции, которое сейчас этим приложением не используется.

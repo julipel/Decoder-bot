@@ -12,7 +12,7 @@ S6-02, Этап 8 «Плана реализации.md»).
 `QdrantVectorRepository` (`infrastructure/qdrant/vector_repository.py`,
 задача S6-05) получает уже созданный `AsyncQdrantClient` через конструктор
 и не отвечает за его подключение/закрытие — тем же приёмом, что
-`OpenRouterLLMAdapter` получает `httpx.AsyncClient`.
+`OpenAiCompatibleLLMAdapter` получает `httpx.AsyncClient`.
 """
 
 from __future__ import annotations

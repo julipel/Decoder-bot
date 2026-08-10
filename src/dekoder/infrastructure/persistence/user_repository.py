@@ -3,7 +3,7 @@ SQLAlchemy-реализация `UserRepository` (Infrastructure Layer, зада
 S2-03) поверх `UserORM`/`mappers.py` (S2-02).
 
 Реализует `dekoder.application.user.ports.UserRepository` структурно
-(Protocol) — без явного наследования, как и `OpenRouterLLMAdapter`
+(Protocol) — без явного наследования, как и `OpenAiCompatibleLLMAdapter`
 реализует `LLMProvider`. Не раскрывает `UserORM` наружу: каждый публичный
 метод возвращает доменный `User | None`/`User`, преобразование выполняют
 `user_to_orm`/`user_to_domain`.

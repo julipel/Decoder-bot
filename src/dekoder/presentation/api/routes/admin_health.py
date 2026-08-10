@@ -1,6 +1,6 @@
 """
 `admin_health_router` — защищённый `GET /admin/health` с реальными
-проверками Qdrant/OpenRouter/OpenAI (Sprint 8, задача S8-09, ADR-8.9).
+проверками Qdrant/LLM-провайдера/OpenAI (Sprint 8, задача S8-09, ADR-8.9).
 
 Не путать с публичным `GET /health` (`composition/health.py`) — тот
 остаётся дешёвым, без auth, без сети (Docker healthcheck опрашивает его
