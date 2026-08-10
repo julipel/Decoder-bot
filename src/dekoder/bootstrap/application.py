@@ -92,7 +92,11 @@ _logger = get_logger(__name__)
 def create_application(settings: Settings) -> FastAPI:
     configure_logging(
         environment=settings.application.environment,
-        level="DEBUG" if settings.application.debug else "INFO",
+        # APP_DEBUG=true остаётся строго приоритетнее APP_LOG_LEVEL — тот
+        # же безусловный форсинг DEBUG, что и раньше (обратная
+        # совместимость); APP_LOG_LEVEL даёт гранулярность только когда
+        # debug=False (Sprint 11, S11-04, ADR-11.5).
+        level="DEBUG" if settings.application.debug else settings.application.log_level,
     )
 
     @asynccontextmanager

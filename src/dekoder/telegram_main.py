@@ -101,7 +101,10 @@ def main() -> None:
     settings = Settings()
     configure_logging(
         environment=settings.application.environment,
-        level="DEBUG" if settings.application.debug else "INFO",
+        # APP_DEBUG=true остаётся строго приоритетнее APP_LOG_LEVEL — см.
+        # bootstrap/application.py (тот же принцип, отдельная точка вызова
+        # для второго процесса, Sprint 11, S11-04, ADR-11.5).
+        level="DEBUG" if settings.application.debug else settings.application.log_level,
     )
 
     http_client = httpx.AsyncClient(

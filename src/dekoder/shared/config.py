@@ -50,6 +50,12 @@ class ApplicationSettings(BaseSettings):
     debug: bool = False
     host: str = "0.0.0.0"
     port: int = Field(default=8000, ge=1, le=65535)
+    # DEBUG/INFO/WARNING/ERROR — гранулярность логирования в проде, где
+    # `debug=False` (Sprint 11, S11-04, ADR-11.5). Независимо от `debug`:
+    # `debug=True` продолжает безусловно форсировать уровень DEBUG (обратная
+    # совместимость, см. `bootstrap/application.py`/`telegram_main.py`) —
+    # это поле применяется только когда `debug=False`.
+    log_level: str = "INFO"
 
 
 class TelegramSettings(BaseSettings):

@@ -1,0 +1,95 @@
+# Production-оверлей (Sprint 11, S11-04, ADR-11.5) — применяется ВМЕСТЕ с
+# базовым docker-compose.yml, никогда отдельно:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Только override/добавление сервисов — не дублирует базовый файл целиком.
+# Базовый docker-compose.yml (миграции/healthcheck telegram-bot/volumes) не
+# трогается этим файлом, чисто аддитивно поверх него.
+services:
+  # Reverse proxy — автоматический HTTPS через Let's Encrypt (или локально
+  # доверенный сертификат внутреннего CA Caddy для DOMAIN=localhost, см.
+  # deploy/Caddyfile). Admin API (`api`) больше не достижим напрямую по
+  # :8000 в проде — единственная точка входа 443 через Caddy.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+  api:
+    # Override ЗАМЕНЯЕТ (не сливает) список ports базового сервиса —
+    # убирает прямую публикацию :8000 хосту (проверено эмпирически через
+    # `docker compose -f ... -f ... config`). Docker healthcheck
+    # api::healthcheck (urllib.request на localhost:8000/health) продолжает
+    # работать — он выполняется внутри контейнера, через internal-сеть, не
+    # через host-порт, поэтому этот override его не ломает.
+    ports: !reset []
+    # ports: !reset [] (не голое `[]`) — эмпирическая проверка через
+    # `docker compose ... config` показала, что `ports` — поле "multi-value"
+    # (та же категория, что `expose`/`dns`/`tmpfs`), Compose ПО УМОЛЧАНИЮ
+    # объединяет (union) такие списки между файлами, а не заменяет —
+    # `ports: []` в оверлее реально был no-op: `8000:8000` из базового
+    # docker-compose.yml оставался в отрендеренном конфиге (ADR-11.5
+    # ошибочно предполагал replace-семантику без проверки). `!reset` —
+    # явный YAML-тег merge-контроля Compose (docs.docker.com/reference/
+    # compose-file/merge, начиная с Compose v2.24) — принудительно
+    # очищает поле независимо от типа слияния по умолчанию.
+    # ADR-11.5 задаёт этот ключ как `LOG_LEVEL`; исправлено на
+    # `APP_LOG_LEVEL` — `ApplicationSettings` (shared/config.py) читает
+    # `env_prefix="APP_"`, то есть поле `log_level` резолвится ТОЛЬКО из
+    # переменной `APP_LOG_LEVEL` (pydantic-settings вычисляет имя как
+    # prefix + имя поля для каждого поля отдельно). Голый `LOG_LEVEL` не
+    # долетел бы до настроек вообще — Settings() продолжил бы использовать
+    # дефолт "INFO" независимо от значения хоста, тихо сводя на нет цель
+    # этого override (см. .env.example/APP_LOG_LEVEL).
+    environment:
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  telegram-bot:
+    environment:
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  qdrant:
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1024M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  caddy_data:
+  caddy_config:

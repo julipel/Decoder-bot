@@ -9,7 +9,15 @@ repos:
         exclude: ^docs/
       - id: end-of-file-fixer
         exclude: ^docs/
+      # --unsafe: syntax-only check (не полное конструирование объектов) —
+      # docker-compose.prod.yml (Sprint 11, S11-04) использует
+      # Compose-специфичный merge-control тег `!reset` (docs.docker.com/
+      # reference/compose-file/merge), не входящий в стандартный YAML;
+      # обычный safe_load PyYAML не может его сконструировать и падает
+      # false-positive `could not determine a constructor for the tag
+      # '!reset'`, хотя файл синтаксически корректен и валиден для Compose.
       - id: check-yaml
+        args: [--unsafe]
       - id: check-toml
       - id: check-added-large-files
       - id: check-merge-conflict
