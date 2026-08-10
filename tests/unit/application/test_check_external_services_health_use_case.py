@@ -43,7 +43,7 @@ class TestAllHealthyCombination:
         use_case = CheckExternalServicesHealthUseCase(
             checks=[
                 _FakeServiceHealthCheck("qdrant", healthy=True),
-                _FakeServiceHealthCheck("openrouter", healthy=True),
+                _FakeServiceHealthCheck("test-provider", healthy=True),
                 _FakeServiceHealthCheck("openai", healthy=True),
             ]
         )
@@ -59,7 +59,7 @@ class TestAllUnhealthyCombination:
         use_case = CheckExternalServicesHealthUseCase(
             checks=[
                 _FakeServiceHealthCheck("qdrant", healthy=False),
-                _FakeServiceHealthCheck("openrouter", healthy=False),
+                _FakeServiceHealthCheck("test-provider", healthy=False),
                 _FakeServiceHealthCheck("openai", healthy=False),
             ]
         )
@@ -76,7 +76,7 @@ class TestAllUnhealthyCombination:
 )
 async def test_all_healthy_is_false_for_every_mixed_combination(healthy_flags: tuple[bool, bool, bool]) -> None:
     """Все 8 комбинаций healthy/unhealthy: all_healthy — конъюнкция, а не «хотя бы один здоров»."""
-    names = ("qdrant", "openrouter", "openai")
+    names = ("qdrant", "test-provider", "openai")
     use_case = CheckExternalServicesHealthUseCase(
         checks=[_FakeServiceHealthCheck(name, healthy=flag) for name, flag in zip(names, healthy_flags, strict=True)]
     )

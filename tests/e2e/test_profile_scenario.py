@@ -6,7 +6,7 @@ test_conversation_persistence_scenario.py` (Sprint 2, S2-11): реальный
 telegram/`, реальные SQLAlchemy-репозитории (`bootstrap/repositories.py`)
 поверх временной SQLite (`tmp_path`, схема — `Base.metadata.
 create_all()`), единственная подмена — `FakeLLMProvider` (без сети, без
-реального Telegram API, без `OpenRouterLLMAdapter`).
+реального Telegram API, без `OpenAiCompatibleLLMAdapter`).
 
 `Base.metadata.create_all()` создаёт только схему, без сид-данных (сид-
 профили вносятся исключительно Alembic-миграцией S3-04, ADR-3.4) —
@@ -76,7 +76,7 @@ _TEST_BOT_TOKEN = "123456:test-token"  # noqa: S105 - фиктивный ток�
 
 
 class FakeLLMProvider:
-    """Единственная подмена во всей цепочке — без сети, без OpenRouterLLMAdapter."""
+    """Единственная подмена во всей цепочке — без сети, без OpenAiCompatibleLLMAdapter."""
 
     def __init__(self, response: LLMResponse | None = None) -> None:
         self._response = response
@@ -91,7 +91,7 @@ class FakeLLMProvider:
 def _response(text: str = "Здравствуйте!") -> LLMResponse:
     return LLMResponse(
         text=text,
-        provider_id=ProviderId("openrouter"),
+        provider_id=ProviderId("test-provider"),
         model_id=ModelId("openai/gpt-4o-mini"),
         input_tokens=10,
         output_tokens=5,

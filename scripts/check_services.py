@@ -9,7 +9,7 @@ S8-10, ADR-8.9/8.11) — тонкая обёртка над `CheckExternalServic
 Использование:
     python scripts/check_services.py
 
-Печатает статус каждого сервиса (Qdrant/OpenRouter/OpenAI), exit code
+Печатает статус каждого сервиса (Qdrant/LLM-провайдер/OpenAI), exit code
 `0`, если все здоровы (`all_healthy`), иначе `1` — пригодно для
 скриптования (`python scripts/check_services.py; echo $?`,
 health-проверка в CI/деплое).
@@ -27,8 +27,8 @@ import sys
 import httpx
 
 from dekoder.application.health.use_cases.check_external_services import CheckExternalServicesHealthUseCase
+from dekoder.infrastructure.health.openai_compatible_health_check import OpenAiCompatibleHealthCheck
 from dekoder.infrastructure.health.openai_health_check import OpenAiHealthCheck
-from dekoder.infrastructure.health.openrouter_health_check import OpenRouterHealthCheck
 from dekoder.infrastructure.health.qdrant_health_check import QdrantHealthCheck
 from dekoder.infrastructure.qdrant.client import build_qdrant_client
 from dekoder.shared.config import Settings
@@ -42,14 +42,17 @@ async def _run_check(settings: Settings) -> int:
     timeout = settings.admin.health_check_timeout
     try:
         async with (
-            httpx.AsyncClient(base_url=settings.openrouter.base_url, timeout=settings.llm.timeout) as http_client,
+            httpx.AsyncClient(base_url=settings.llm_provider.base_url, timeout=settings.llm.timeout) as http_client,
             httpx.AsyncClient(base_url=settings.openai.base_url, timeout=settings.llm.timeout) as openai_http_client,
         ):
             use_case = CheckExternalServicesHealthUseCase(
                 checks=[
                     QdrantHealthCheck(client=qdrant_client, timeout=timeout),
-                    OpenRouterHealthCheck(
-                        client=http_client, api_key=settings.openrouter.api_key.get_secret_value(), timeout=timeout
+                    OpenAiCompatibleHealthCheck(
+                        client=http_client,
+                        api_key=settings.llm_provider.api_key.get_secret_value(),
+                        service_name=settings.llm_provider.provider_id,
+                        timeout=timeout,
                     ),
                     OpenAiHealthCheck(
                         client=openai_http_client, api_key=settings.openai.api_key.get_secret_value(), timeout=timeout

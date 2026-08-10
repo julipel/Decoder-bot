@@ -78,13 +78,13 @@ class TestRequiredFields:
 class TestOptionalRequestFields:
     def test_bound_request_fields_appear_in_log_entry(self, capsys: pytest.CaptureFixture[str]) -> None:
         configure_logging(environment="test")
-        bind_request_context(correlation_id="corr-123", provider="openrouter", model="gpt-4o-mini", duration=1.23)
+        bind_request_context(correlation_id="corr-123", provider="test-provider", model="gpt-4o-mini", duration=1.23)
         get_logger("dekoder.test").info("model_call_completed")
 
         entry = _read_last_log_line(capsys)
 
         assert entry["correlation_id"] == "corr-123"
-        assert entry["provider"] == "openrouter"
+        assert entry["provider"] == "test-provider"
         assert entry["model"] == "gpt-4o-mini"
         assert entry["duration"] == 1.23
 
@@ -116,7 +116,7 @@ class TestSensitiveFieldsAreRedacted:
         ("key", "value"),
         [
             ("api_key", "sk-real-secret-value"),
-            ("openrouter_api_key", "sk-real-secret-value"),
+            ("llm_provider_api_key", "sk-real-secret-value"),
             ("bot_token", "123456:real-telegram-token"),
             ("telegram_bot_token", "123456:real-telegram-token"),
             ("authorization", "Bearer real-token-value"),

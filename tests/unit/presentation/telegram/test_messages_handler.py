@@ -78,7 +78,7 @@ def _make_process_user_message(provider: FakeLLMProvider) -> ProcessUserMessage:
 def _make_response(text: str = "Здравствуйте!") -> LLMResponse:
     return LLMResponse(
         text=text,
-        provider_id=ProviderId("openrouter"),
+        provider_id=ProviderId("test-provider"),
         model_id=ModelId("openai/gpt-4o-mini"),
         input_tokens=10,
         output_tokens=5,
@@ -208,7 +208,7 @@ class TestDekoderErrorHandling:
 
     async def test_llm_provider_error_shows_its_safe_user_message(self) -> None:
         safe_message = "Не удалось получить ответ от модели, попробуйте позже."
-        provider = FakeLLMProvider(error=LLMProviderError(message="OpenRouter boom", user_message=safe_message))
+        provider = FakeLLMProvider(error=LLMProviderError(message="LLM provider boom", user_message=safe_message))
         handler = TextMessageHandler(_make_process_user_message(provider))
         update = _make_update()
 

@@ -90,14 +90,14 @@ class TestModelId:
 
 class TestProviderId:
     def test_creates_with_valid_value(self) -> None:
-        provider_id = ProviderId("openrouter")
+        provider_id = ProviderId("test-provider")
 
-        assert provider_id.value == "openrouter"
+        assert provider_id.value == "test-provider"
 
     def test_strips_leading_and_trailing_whitespace(self) -> None:
-        provider_id = ProviderId("  openrouter  ")
+        provider_id = ProviderId("  test-provider  ")
 
-        assert provider_id.value == "openrouter"
+        assert provider_id.value == "test-provider"
 
     def test_empty_value_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="не может быть пустым"):
@@ -108,7 +108,7 @@ class TestProviderId:
             ProviderId("   ")
 
     def test_is_immutable(self) -> None:
-        provider_id = ProviderId("openrouter")
+        provider_id = ProviderId("test-provider")
 
         with pytest.raises(dataclasses.FrozenInstanceError):
             provider_id.value = "another-provider"  # type: ignore[misc]

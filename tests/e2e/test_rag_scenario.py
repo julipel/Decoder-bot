@@ -65,7 +65,8 @@ from dekoder.shared.logging import clear_request_context, configure_logging
 
 _ADMIN_KEY_HEADER = {"X-Admin-Api-Key": "e2e-admin-api-key"}
 _EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
-_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
+_LLM_PROVIDER_BASE_URL = "https://example-aggregator.test/v1"
+_CHAT_COMPLETIONS_URL = f"{_LLM_PROVIDER_BASE_URL}/chat/completions"
 _TEST_BOT_TOKEN = "123456:test-token"  # noqa: S105 - фиктивный токен для теста, не секрет
 
 # Детерминированный bag-of-words словарь (ADR-10.2): документ о гарантии и
@@ -117,7 +118,9 @@ def _profile_orm(*, name: str = "Дефолт", is_default: bool = True) -> Prof
 async def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Settings:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "e2e-token")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "e2e-webhook-secret")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "e2e-openrouter-key")
+    monkeypatch.setenv("LLM_PROVIDER_API_KEY", "e2e-llm-provider-key")
+    monkeypatch.setenv("LLM_PROVIDER_BASE_URL", _LLM_PROVIDER_BASE_URL)
+    monkeypatch.setenv("LLM_PROVIDER_DEFAULT_MODEL", "test-model")
     monkeypatch.setenv("OPENAI_API_KEY", "e2e-openai-key")
     monkeypatch.setenv("ADMIN_API_KEY", "e2e-admin-api-key")
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'e2e-rag.db'}"

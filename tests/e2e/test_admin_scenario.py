@@ -12,7 +12,7 @@ documents.py`, S8-05) и `ApplicationContainer` (S8-07/S8-09) реально
 отдельности (уже покрыто `test_admin_documents.py`/`test_admin_profiles.py`/
 `test_admin_health.py`).
 
-Внешние сервисы: OpenAI embeddings/OpenRouter/OpenAI `/models` —
+Внешние сервисы: OpenAI embeddings/дженерик LLM-провайдер/OpenAI `/models` —
 `respx`; Qdrant — `FakeAsyncQdrantClient` через
 `app.dependency_overrides[get_qdrant_client]` для документного конвейера
 (работает для `presentation/api/dependencies/documents.py`, per-request
@@ -44,7 +44,8 @@ from dekoder.shared.config import Settings
 
 _ADMIN_KEY_HEADER = {"X-Admin-Api-Key": "e2e-admin-api-key"}
 _EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
-_OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+_LLM_PROVIDER_BASE_URL = "https://example-aggregator.test/v1"
+_LLM_PROVIDER_MODELS_URL = f"{_LLM_PROVIDER_BASE_URL}/models"
 _OPENAI_MODELS_URL = "https://api.openai.com/v1/models"
 _QDRANT_COLLECTIONS_URL = "http://localhost:6333/collections"
 _QDRANT_COLLECTION_EXISTS_URL = "http://localhost:6333/collections/dekoder_knowledge/exists"
@@ -77,7 +78,9 @@ def _profile_orm(*, name: str, is_default: bool) -> ProfileORM:
 async def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Settings:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "e2e-token")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "e2e-webhook-secret")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "e2e-openrouter-key")
+    monkeypatch.setenv("LLM_PROVIDER_API_KEY", "e2e-llm-provider-key")
+    monkeypatch.setenv("LLM_PROVIDER_BASE_URL", _LLM_PROVIDER_BASE_URL)
+    monkeypatch.setenv("LLM_PROVIDER_DEFAULT_MODEL", "test-model")
     monkeypatch.setenv("OPENAI_API_KEY", "e2e-openai-key")
     monkeypatch.setenv("ADMIN_API_KEY", "e2e-admin-api-key")
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'e2e-admin.db'}"
@@ -237,7 +240,7 @@ class TestFullAdminVerticalSlice:
             assert default_archive_attempt.json()["error"]["code"] == "PROFILE_ARCHIVE_DEFAULT_FORBIDDEN"
 
             # --- 3. Health check: healthy scenario within the same run ---
-            respx.get(_OPENROUTER_MODELS_URL).mock(return_value=httpx.Response(200, json={"data": []}))
+            respx.get(_LLM_PROVIDER_MODELS_URL).mock(return_value=httpx.Response(200, json={"data": []}))
             respx.get(_OPENAI_MODELS_URL).mock(return_value=httpx.Response(200, json={"data": []}))
             respx.get(_QDRANT_COLLECTIONS_URL).mock(
                 return_value=httpx.Response(200, json={"result": {"collections": []}, "status": "ok", "time": 0.0})
@@ -247,7 +250,7 @@ class TestFullAdminVerticalSlice:
             assert healthy.json()["all_healthy"] is True
 
             # --- 4. Health check: unhealthy scenario, still within the same run ---
-            respx.get(_OPENROUTER_MODELS_URL).mock(return_value=httpx.Response(503))
+            respx.get(_LLM_PROVIDER_MODELS_URL).mock(return_value=httpx.Response(503))
             respx.get(_OPENAI_MODELS_URL).mock(return_value=httpx.Response(503))
             respx.get(_QDRANT_COLLECTIONS_URL).mock(return_value=httpx.Response(503))
             unhealthy = client.get("/admin/health", headers=_ADMIN_KEY_HEADER)

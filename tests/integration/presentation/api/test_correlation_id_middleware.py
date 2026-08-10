@@ -21,7 +21,8 @@ from dekoder.bootstrap.application import create_application
 from dekoder.presentation.api.middleware import CORRELATION_ID_HEADER
 from dekoder.shared.config import Settings
 
-_OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+_LLM_PROVIDER_BASE_URL = "https://example-aggregator.test/v1"
+_LLM_PROVIDER_MODELS_URL = f"{_LLM_PROVIDER_BASE_URL}/models"
 _OPENAI_MODELS_URL = "https://api.openai.com/v1/models"
 _QDRANT_COLLECTIONS_URL = "http://localhost:6333/collections"
 _ADMIN_KEY_HEADER = {"X-Admin-Api-Key": "test-admin-api-key"}
@@ -33,7 +34,9 @@ _QDRANT_HEALTHY_BODY = {"result": {"collections": []}, "status": "ok", "time": 0
 def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Settings:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "test-webhook-secret")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-api-key")
+    monkeypatch.setenv("LLM_PROVIDER_API_KEY", "test-api-key")
+    monkeypatch.setenv("LLM_PROVIDER_BASE_URL", _LLM_PROVIDER_BASE_URL)
+    monkeypatch.setenv("LLM_PROVIDER_DEFAULT_MODEL", "test-model")
     monkeypatch.setenv("OPENAI_API_KEY", "test-embedding-api-key")
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-api-key")
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'test-app.db'}")
@@ -95,7 +98,7 @@ class TestAdminRoute:
     @respx.mock
     def test_admin_route_without_header_receives_a_new_correlation_id(self, settings: Settings) -> None:
         _mock_lifespan_collection_exists_check()
-        respx.get(_OPENROUTER_MODELS_URL).mock(return_value=httpx.Response(200, json={"data": []}))
+        respx.get(_LLM_PROVIDER_MODELS_URL).mock(return_value=httpx.Response(200, json={"data": []}))
         respx.get(_OPENAI_MODELS_URL).mock(return_value=httpx.Response(200, json={"data": []}))
         respx.get(_QDRANT_COLLECTIONS_URL).mock(return_value=httpx.Response(200, json=_QDRANT_HEALTHY_BODY))
         client = _client(settings)
@@ -109,7 +112,7 @@ class TestAdminRoute:
     @respx.mock
     def test_admin_route_with_header_echoes_the_same_correlation_id(self, settings: Settings) -> None:
         _mock_lifespan_collection_exists_check()
-        respx.get(_OPENROUTER_MODELS_URL).mock(return_value=httpx.Response(200, json={"data": []}))
+        respx.get(_LLM_PROVIDER_MODELS_URL).mock(return_value=httpx.Response(200, json={"data": []}))
         respx.get(_OPENAI_MODELS_URL).mock(return_value=httpx.Response(200, json={"data": []}))
         respx.get(_QDRANT_COLLECTIONS_URL).mock(return_value=httpx.Response(200, json=_QDRANT_HEALTHY_BODY))
         client = _client(settings)

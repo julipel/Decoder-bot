@@ -43,7 +43,9 @@ _ADMIN_KEY_HEADER = {"X-Admin-Api-Key": "test-admin-api-key"}
 async def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Settings:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "test-webhook-secret")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-api-key")
+    monkeypatch.setenv("LLM_PROVIDER_API_KEY", "test-api-key")
+    monkeypatch.setenv("LLM_PROVIDER_BASE_URL", "https://example-aggregator.test/v1")
+    monkeypatch.setenv("LLM_PROVIDER_DEFAULT_MODEL", "test-model")
     monkeypatch.setenv("OPENAI_API_KEY", "test-embedding-api-key")
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-api-key")
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'test-app.db'}"

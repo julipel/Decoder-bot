@@ -8,7 +8,7 @@ test_profile_scenario.py`: реальный `telegram.ext.Application`, реал
 (боевой сид-каталог `infrastructure/model_catalog/catalog.json`, не
 fixture) — единственная подмена, как и в остальных e2e Sprint 1-6,
 `FakeLLMProvider` (без сети, без реального Telegram API, без
-`OpenRouterLLMAdapter`): детерминированная проверка `LLMRequest.model_id`/
+`OpenAiCompatibleLLMAdapter`): детерминированная проверка `LLMRequest.model_id`/
 `temperature`/`max_tokens`, не реальный вызов LLM — тот же приём, что
 S5-08 проверял `PromptBuildResult.system_prompt`.
 
@@ -90,7 +90,7 @@ _UNAVAILABLE_MODEL_ID = ModelId("anthropic/claude-3-haiku")
 
 
 class FakeLLMProvider:
-    """Единственная подмена во всей цепочке — без сети, без OpenRouterLLMAdapter."""
+    """Единственная подмена во всей цепочке — без сети, без OpenAiCompatibleLLMAdapter."""
 
     def __init__(self, response: LLMResponse | None = None) -> None:
         self._response = response
@@ -105,7 +105,7 @@ class FakeLLMProvider:
 def _response(text: str = "Здравствуйте!") -> LLMResponse:
     return LLMResponse(
         text=text,
-        provider_id=ProviderId("openrouter"),
+        provider_id=ProviderId("test-provider"),
         model_id=_DEFAULT_MODEL_ID,
         input_tokens=10,
         output_tokens=5,

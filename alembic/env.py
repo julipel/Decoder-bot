@@ -34,7 +34,7 @@ target_metadata = Base.metadata
 # settings), а не второй независимый способ читать `.env`, и без
 # захардкоженного абсолютного пути. Используется только `DatabaseSettings`
 # (не весь агрегирующий `Settings`) — миграции не должны требовать
-# TELEGRAM_BOT_TOKEN/OPENROUTER_API_KEY, они не имеют отношения к схеме
+# TELEGRAM_BOT_TOKEN/LLM_PROVIDER_API_KEY, они не имеют отношения к схеме
 # базы данных. `sqlalchemy.url` из `alembic.ini` осознанно перезаписывается
 # здесь — единственный источник истины для строки подключения — Settings.
 config.set_main_option("sqlalchemy.url", DatabaseSettings().url)

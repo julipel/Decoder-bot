@@ -1,7 +1,7 @@
 """
 Тесты адаптеров `ServiceHealthCheck` (infrastructure/health/*, Sprint 8,
-задача S8-09, ADR-8.9) — OpenRouter/OpenAI через `respx` (реальный
-сетевой вызов никогда не происходит), Qdrant — через минимальный
+задача S8-09, ADR-8.9) — дженерик LLM-провайдер/OpenAI через `respx`
+(реальный сетевой вызов никогда не происходит), Qdrant — через минимальный
 duck-typed фейк с `get_collections()`.
 """
 
@@ -13,8 +13,8 @@ import httpx
 import pytest
 import respx
 
+from dekoder.infrastructure.health.openai_compatible_health_check import OpenAiCompatibleHealthCheck
 from dekoder.infrastructure.health.openai_health_check import OpenAiHealthCheck
-from dekoder.infrastructure.health.openrouter_health_check import OpenRouterHealthCheck
 from dekoder.infrastructure.health.qdrant_health_check import QdrantHealthCheck
 
 
@@ -54,21 +54,25 @@ class TestQdrantHealthCheck:
         assert "connection refused" in status.detail
 
 
-class TestOpenRouterHealthCheck:
+class TestOpenAiCompatibleHealthCheck:
     @respx.mock
     async def test_healthy_on_200(self, http_client: httpx.AsyncClient) -> None:
         respx.get("https://example.test/models").mock(return_value=httpx.Response(200, json={"data": []}))
-        check = OpenRouterHealthCheck(client=http_client, api_key="sk-test", timeout=1.0)
+        check = OpenAiCompatibleHealthCheck(
+            client=http_client, api_key="sk-test", service_name="test-provider", timeout=1.0
+        )
 
         status = await check.check()
 
         assert status.healthy is True
-        assert status.name == "openrouter"
+        assert status.name == "test-provider"
 
     @respx.mock
     async def test_unhealthy_on_500(self, http_client: httpx.AsyncClient) -> None:
         respx.get("https://example.test/models").mock(return_value=httpx.Response(500))
-        check = OpenRouterHealthCheck(client=http_client, api_key="sk-test", timeout=1.0)
+        check = OpenAiCompatibleHealthCheck(
+            client=http_client, api_key="sk-test", service_name="test-provider", timeout=1.0
+        )
 
         status = await check.check()
 
@@ -78,7 +82,9 @@ class TestOpenRouterHealthCheck:
     @respx.mock
     async def test_unhealthy_on_connection_error(self, http_client: httpx.AsyncClient) -> None:
         respx.get("https://example.test/models").mock(side_effect=httpx.ConnectError("refused"))
-        check = OpenRouterHealthCheck(client=http_client, api_key="sk-test", timeout=1.0)
+        check = OpenAiCompatibleHealthCheck(
+            client=http_client, api_key="sk-test", service_name="test-provider", timeout=1.0
+        )
 
         status = await check.check()
 

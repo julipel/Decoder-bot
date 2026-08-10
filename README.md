@@ -18,7 +18,7 @@ Qdrant), Sprint 7 (выбор AI-модели пользователем) и Spr
 Telegram → ProcessUserMessage → (модель + профиль + память + история + RAG) → PromptContext → PromptBuilder → PromptBuildResult
                  │                                                                                                    │
                  ├── User/Conversation/Message/выбор модели сохраняются в SQLite                                     │
-                 └──────────────────────────────────────────────────────────────── LLMRequest.model_id → LLMProvider → OpenRouterLLMAdapter → ответ
+                 └──────────────────────────────────────────────────────────────── LLMRequest.model_id → LLMProvider → OpenAiCompatibleLLMAdapter → ответ
 
 Telegram /new      → StartNewConversation → закрывает текущий диалог, создаёт новый (память не трогает)
 Telegram /clear    → ClearConversation    → удаляет историю, диалог остаётся активным (память не трогает)
@@ -36,7 +36,7 @@ Telegram /model    → ListAvailableModels/GetSelectedModel/SelectModel → вы
 истёкшие, отсортированные по значимости и свежести, Sprint 5) и
 разрешается активная AI-модель (Sprint 7: явный override →
 персональный выбор пользователя, `ModelSelectionRepository.get_selected` →
-`OPENROUTER_DEFAULT_MODEL`; недоступная/отсутствующая в каталоге модель
+`LLM_PROVIDER_DEFAULT_MODEL`; недоступная/отсутствующая в каталоге модель
 — тихий логируемый откат на умолчание, без диалога с пользователем),
 сообщение пользователя сохраняется → история диалога читается из базы →
 выполняется семантический поиск по базе знаний (Sprint 6: эмбеддинг
@@ -52,7 +52,7 @@ Telegram /model    → ListAvailableModels/GetSelectedModel/SelectModel → вы
 текущий запрос, требования к формату ответа), исключая пустые секции и
 ограничивая суммарный объём эвристическим `TokenBudgetPolicy` (обрезает
 старую историю первой, если она есть; текущий запрос и системные секции
-неприкосновенны) → адаптер `OpenRouterLLMAdapter` вызывается с
+неприкосновенны) → адаптер `OpenAiCompatibleLLMAdapter` вызывается с
 разрешённой моделью и её `temperature`/`max_tokens` из каталога (если
 модель в нём есть — иначе `LLM_TEMPERATURE`/`LLM_MAX_TOKENS`) → ответ
 модели сохраняется как сообщение ассистента и возвращается пользователю
@@ -73,12 +73,12 @@ Telegram /model    → ListAvailableModels/GetSelectedModel/SelectModel → вы
 пользователь никогда не видит и не может удалить факты другого
 (`user_id`-изоляция на уровне `MemoryRepository`, не только Telegram-слоя);
 `/model` показывает статичный каталог AI-моделей (`infrastructure/
-model_catalog/catalog.json`, 6 моделей OpenRouter из 4 семейств
-поставщиков) с отметкой текущей выбранной и явной пометкой «(недоступна)»
+model_catalog/catalog.json`, 6 иллюстративных моделей из 4 семейств
+поставщиков, см. раздел «Каталог AI-моделей» ниже) с отметкой текущей выбранной и явной пометкой «(недоступна)»
 у моделей, помеченных в каталоге неактивными — выбор такой модели
 отклоняется на уровне use case, не только UI; переключение влияет только
 на будущие сообщения и не затрагивает других пользователей.
-Реальных прямых (не через OpenRouter) адаптеров провайдеров и
+Реальных прямых (не через настроенный `LLM_PROVIDER_BASE_URL`) адаптеров провайдеров и
 интеллектуальной авто-маршрутизации между моделями ещё нет — они
 добавляются по следующим спринтам/этапам (`claude.md`, §33).
 Автоматическое извлечение фактов AI из диалога не реализовано и
@@ -90,7 +90,7 @@ Sprint 8 добавляет защищённый административны�
 `X-Admin-Api-Key`) поверх той же архитектуры: CRUD документов базы
 знаний (список/детали/загрузка+индексация/удаление/переиндексация),
 CRUD профилей (список/создание/редактирование/архивация) и реальные
-проверки доступности Qdrant/OpenRouter/OpenAI (`GET /admin/health`) —
+проверки доступности Qdrant/LLM-провайдера/OpenAI (`GET /admin/health`) —
 без единого изменения в `ProcessUserMessage`, Prompt Engine или
 Telegram-командах. Подробности — раздел «Admin API» ниже.
 
@@ -135,7 +135,7 @@ src/dekoder/
 │   └── model_catalog/               # ModelCatalogRepository/ModelSelectionRepository (порты, S7-03/S7-04), DTO,
 │                                     #   use_cases/{list_models,get_selected_model,select_model}.py (S7-05)
 ├── infrastructure/
-│   ├── llm/                         # OpenRouterLLMAdapter
+│   ├── llm/                         # OpenAiCompatibleLLMAdapter (дженерик, Sprint 11, ADR-11.1)
 │   ├── persistence/                 # base.py/engine.py/session.py (SQLAlchemy async, S2-01) +
 │   │                                 #   user_orm.py/conversation_orm.py/message_orm.py + mappers.py (S2-02) +
 │   │                                 #   user_repository.py/conversation_repository.py/message_repository.py (S2-03..S2-05) +
@@ -149,7 +149,7 @@ src/dekoder/
 │   ├── embeddings/                  # openai_embedding_provider.py::OpenAiEmbeddingProvider (Sprint 6, S6-05)
 │   ├── qdrant/                      # client.py, vector_repository.py::QdrantVectorRepository (Sprint 6, S6-02/S6-05)
 │   ├── filesystem/                  # local_document_storage.py — хранилище исходных файлов документов (Sprint 6, S6-05)
-│   └── model_catalog/               # catalog.json (сид, 6 моделей OpenRouter/4 поставщика) +
+│   └── model_catalog/               # catalog.json (сид, 6 иллюстративных моделей/4 поставщика) +
 │                                     #   config_repository.py::ConfigModelCatalogRepository (Sprint 7, S7-03)
 ├── presentation/telegram/           # /start, /new, /clear, /profile, /remember, /memory (S5-07), /model (S7-07),
 │                                     #   обработчик текстовых сообщений, mapper.py, bot.py
@@ -230,14 +230,17 @@ Prompt Engine (Sprint 4) не добавляет ни одной новой за
 С Sprint 6 подключены `qdrant-client` (векторное хранилище для RAG,
 отдельный сервис `qdrant` в `docker-compose.yml`), `python-docx`/`pypdf`
 (парсинг документов `.docx`/`.pdf` базы знаний) — эмбеддинги считаются
-через OpenAI напрямую (`OPENAI_API_KEY`, отдельно от `OPENROUTER_*` —
-OpenRouter не отдаёт embeddings API), а не через OpenRouter.
+через OpenAI напрямую (`OPENAI_API_KEY`, отдельно от `LLM_PROVIDER_*` —
+выбранный LLM-агрегатор не гарантированно отдаёт embeddings API), а не
+через настроенный LLM-провайдер.
 Каталог AI-моделей (Sprint 7) не добавляет ни одной новой зависимости —
 статичный JSON-файл (`infrastructure/model_catalog/catalog.json`),
-парсится через уже используемый `pydantic` (ADR-7.4); OpenRouter
-остаётся единственным реальным LLM-провайдером — выбор модели меняет
-только значение `LLMRequest.model_id`, отправляемое тому же
-`OpenRouterLLMAdapter`, не добавляет второй HTTP-клиент/адаптер.
+парсится через уже используемый `pydantic` (ADR-7.4); с Sprint 11
+(ADR-11.1) LLM-провайдер — дженерик OpenAI-Chat-Completions-совместимый
+адаптер, настраиваемый через `LLM_PROVIDER_*` (не зафиксирован на одном
+вендоре) — выбор модели меняет только значение `LLMRequest.model_id`,
+отправляемое тому же `OpenAiCompatibleLLMAdapter`, не добавляет второй
+HTTP-клиент/адаптер.
 Sprint 8 (admin REST) добавляет ровно одну новую рантайм-зависимость —
 `python-multipart` (обязательна для FastAPI `Form`/`UploadFile` в `POST
 /admin/documents`, без неё запрос падает `500` на рантайме); авторизация
@@ -252,7 +255,9 @@ health-check переиспользует уже подключённые `httpx
 - Python 3.11+;
 - [uv](https://docs.astral.sh/uv/);
 - токен Telegram-бота (создать через [@BotFather](https://t.me/BotFather));
-- API-ключ [OpenRouter](https://openrouter.ai/keys).
+- API-ключ любого OpenAI-Chat-Completions-совместимого LLM-агрегатора
+  (например, [OpenRouter](https://openrouter.ai/keys) — не единственный
+  вариант, см. `LLM_PROVIDER_*` ниже, ADR-11.1).
 
 ```powershell
 git clone <URL этого репозитория>
@@ -261,7 +266,7 @@ cd Decoder
 uv venv
 uv pip install -e ".[dev]"
 
-cp .env.example .env.local   # заполнить TELEGRAM_BOT_TOKEN и OPENROUTER_API_KEY
+cp .env.example .env.local   # заполнить TELEGRAM_BOT_TOKEN, LLM_PROVIDER_API_KEY/BASE_URL/DEFAULT_MODEL
 uv run pre-commit install
 
 uv run pytest   # должно пройти без реальных секретов — внешние вызовы замоканы
@@ -285,7 +290,8 @@ uv run alembic upgrade head
 ```
 
 После этого можно написать боту `/start`, затем любое текстовое
-сообщение — оно уйдёт в OpenRouter, а сам диалог (пользователь, диалог,
+сообщение — оно уйдёт настроенному через `LLM_PROVIDER_BASE_URL`
+провайдеру, а сам диалог (пользователь, диалог,
 оба сообщения) сохранится в SQLite. Дальнейшие сообщения того же
 пользователя продолжают тот же диалог — LLM получает всю историю.
 
@@ -317,7 +323,7 @@ uv run alembic upgrade head
   попытку, не только UI); выбор влияет на модель, которой генерируются
   ответы этого пользователя при каждом следующем сообщении, не
   затрагивает других пользователей; без выбора используется
-  `OPENROUTER_DEFAULT_MODEL`.
+  `LLM_PROVIDER_DEFAULT_MODEL`.
 
 `.env` и `.env.local` поддерживаются оба, `.env.local` имеет приоритет
 (см. `src/dekoder/shared/config.py`); ни один из них не коммитится.
@@ -414,7 +420,7 @@ upgrade head` перед первым стартом приложения — с
 | `ApplicationSettings` | `APP_` | — | `APP_NAME`, `APP_ENVIRONMENT`, `APP_DEBUG`, `APP_HOST`, `APP_PORT` |
 | `TelegramSettings` | `TELEGRAM_` | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` | — |
 | `LLMSettings` | `LLM_` | — | `LLM_TIMEOUT`, `LLM_MAX_TOKENS`, `LLM_TEMPERATURE` |
-| `OpenRouterSettings` | `OPENROUTER_` | `OPENROUTER_API_KEY` | `OPENROUTER_BASE_URL`, `OPENROUTER_DEFAULT_MODEL` |
+| `LLMProviderSettings` | `LLM_PROVIDER_` | `LLM_PROVIDER_API_KEY`, `LLM_PROVIDER_BASE_URL`, `LLM_PROVIDER_DEFAULT_MODEL` (Sprint 11, ADR-11.1 — дженерик-провайдер без универсального дефолта) | `LLM_PROVIDER_PROVIDER_ID` (по умолчанию `custom`) |
 | `DatabaseSettings` | `DATABASE_` | — | `DATABASE_URL` |
 | `PromptSettings` | `PROMPT_` | — | `PROMPT_TOKEN_BUDGET` (эвристический бюджет `TokenBudgetPolicy`, ADR-4.4) |
 | `MemorySettings` | `MEMORY_` | — | `MEMORY_MAX_RELEVANT_RECORDS` (лимит `MemoryRepository.find_relevant`, по умолчанию 5, ADR-5.6) |
@@ -433,6 +439,26 @@ upgrade head` перед первым стартом приложения — с
 `secrets.compare_digest` (защита от timing-атак); ни ожидаемое, ни
 переданное значение никогда не попадают в логи (`shared/logging.py::
 _SENSITIVE_KEYS`).
+
+### Каталог AI-моделей
+
+`infrastructure/model_catalog/catalog.json` — статичный сид-файл
+(Sprint 7, ADR-7.4), 6 записей в конвенции id `vendor/model-name`
+(например, `openai/gpt-4o-mini`) — это конвенция OpenRouter, оставленная
+как иллюстративный дефолт (Sprint 11, ADR-11.2), а не проверяемый
+формат: `ModelId` (`domain/conversation/value_objects.py`) — format-
+agnostic value object, код нигде не валидирует форму строки, она
+отправляется как есть в поле `model` запроса к `LLM_PROVIDER_BASE_URL`.
+
+**При смене `LLM_PROVIDER_BASE_URL` на другого реального агрегатора
+отредактируйте `model_id` каждой записи `catalog.json` вручную** под id
+моделей, реально поддерживаемые выбранным сервисом — ничто в коде не
+делает это автоматически и не предупреждает заранее. Несоответствие
+проявится не при старте приложения, а только на первом сообщении с этой
+моделью — адаптер получит ошибку от LLM-провайдера, которая превратится
+в `LLM_PROVIDER_CLIENT_ERROR`/`LLM_PROVIDER_MALFORMED_RESPONSE`
+(`shared/errors.py`), с понятным пользователю сообщением, но без
+проактивной проверки.
 
 ## Admin API
 
@@ -467,7 +493,7 @@ _SENSITIVE_KEYS`).
 
 | Метод | Путь | Действие | Код успеха |
 |---|---|---|---|
-| `GET` | `/admin/health` | Реальные проверки доступности Qdrant/OpenRouter/OpenAI | `200` (всегда — `all_healthy=false`, не `5xx`, если сервисы недоступны) |
+| `GET` | `/admin/health` | Реальные проверки доступности Qdrant/LLM-провайдера/OpenAI | `200` (всегда — `all_healthy=false`, не `5xx`, если сервисы недоступны) |
 
 Пример запроса:
 
@@ -526,14 +552,14 @@ tests/
 ├── unit/            # domain, application use cases (включая admin: profile CRUD,
 │                    #   knowledge list/get/reindex, CheckExternalServicesHealthUseCase),
 │                    #   presentation-мапперы/require_admin_api_key, health-check адаптеры, shared
-├── integration/     # OpenRouter adapter через respx, /health endpoint, Alembic-миграции,
+├── integration/     # OpenAiCompatibleLLMAdapter через respx, /health endpoint, Alembic-миграции,
 │                    #   репозитории/persistence-потоки ProcessUserMessage/StartNewConversation/
 │                    #   ClearConversation/ProfileRepository (включая admin CRUD)/MemoryRepository/
 │                    #   KnowledgeDocumentRepository (включая list_all)/ModelSelectionRepository/
 │                    #   ConfigModelCatalogRepository поверх временной SQLite (без сети);
 │                    #   presentation/api/ — test_admin_documents.py/test_admin_profiles.py/
 │                    #   test_admin_health.py/test_error_handlers.py — через реальный
-│                    #   create_application() lifespan (OpenAI/OpenRouter — respx, Qdrant — fake-клиент
+│                    #   create_application() lifespan (OpenAI/LLM-провайдер — respx, Qdrant — fake-клиент
 │                    #   или respx-перехват реального REST-эндпоинта, см. докстринги файлов)
 └── e2e/             # test_admin_scenario.py (Sprint 8, S8-11) — один continuous-прогон через
                      #   реальный create_application() lifespan: auth на всех трёх admin-роутерах,
@@ -598,7 +624,7 @@ LLM или реальному Qdrant/OpenAI — единственные под�
 (`QDRANT_HOST=qdrant`, переопределяется в `docker-compose.yml` поверх
 дефолтного `localhost` в `.env`) — на этом основан `GET /admin/health`
 (Sprint 8): подтверждено эмпирически при финальной интеграции (S8-11)
-реальным запросом изнутри контейнера с реальными `OPENROUTER_API_KEY`/
+реальным запросом изнутри контейнера с реальными `LLM_PROVIDER_API_KEY`/
 `OPENAI_API_KEY`, все три сервиса вернулись `healthy: true`.
 
 Секреты не хранятся в `docker-compose.yml` и не копируются в образ —

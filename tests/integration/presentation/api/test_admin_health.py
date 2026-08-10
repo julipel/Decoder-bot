@@ -3,8 +3,9 @@
 ADR-8.9) — через реальный `create_application(settings)` (полный
 lifespan), тот же приём, что `test_admin_documents.py`.
 
-Все три внешних сервиса перехватываются `respx`: OpenRouter/OpenAI
-`/models` — обычные HTTP-роуты; Qdrant — `GET /collections` (реальный
+Все три внешних сервиса перехватываются `respx`: дженерик LLM-провайдер
+(`LLM_PROVIDER_*`)/OpenAI `/models` — обычные HTTP-роуты; Qdrant —
+`GET /collections` (реальный
 REST-эндпоинт, который `AsyncQdrantClient.get_collections()` вызывает
 под капотом через `httpx`, задействованный `QdrantHealthCheck`,
 ADR-8.9). `app.dependency_overrides[get_qdrant_client]` здесь НЕ
@@ -29,7 +30,8 @@ from fastapi.testclient import TestClient
 from dekoder.bootstrap.application import create_application
 from dekoder.shared.config import Settings
 
-_OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+_LLM_PROVIDER_BASE_URL = "https://example-aggregator.test/v1"
+_LLM_PROVIDER_MODELS_URL = f"{_LLM_PROVIDER_BASE_URL}/models"
 _OPENAI_MODELS_URL = "https://api.openai.com/v1/models"
 _QDRANT_COLLECTIONS_URL = "http://localhost:6333/collections"
 _QDRANT_COLLECTION_EXISTS_URL = "http://localhost:6333/collections/dekoder_knowledge/exists"
@@ -42,7 +44,10 @@ _QDRANT_HEALTHY_BODY = {"result": {"collections": []}, "status": "ok", "time": 0
 def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Settings:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "test-webhook-secret")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-api-key")
+    monkeypatch.setenv("LLM_PROVIDER_API_KEY", "test-api-key")
+    monkeypatch.setenv("LLM_PROVIDER_BASE_URL", _LLM_PROVIDER_BASE_URL)
+    monkeypatch.setenv("LLM_PROVIDER_DEFAULT_MODEL", "test-model")
+    monkeypatch.setenv("LLM_PROVIDER_PROVIDER_ID", "test-provider")
     monkeypatch.setenv("OPENAI_API_KEY", "test-embedding-api-key")
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-api-key")
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'test-app.db'}")
@@ -71,7 +76,7 @@ class TestAllServicesHealthy:
     @respx.mock
     def test_returns_200_with_all_healthy_true(self, settings: Settings) -> None:
         _mock_lifespan_collection_exists_check()
-        respx.get(_OPENROUTER_MODELS_URL).mock(return_value=httpx.Response(200, json={"data": []}))
+        respx.get(_LLM_PROVIDER_MODELS_URL).mock(return_value=httpx.Response(200, json={"data": []}))
         respx.get(_OPENAI_MODELS_URL).mock(return_value=httpx.Response(200, json={"data": []}))
         respx.get(_QDRANT_COLLECTIONS_URL).mock(return_value=httpx.Response(200, json=_QDRANT_HEALTHY_BODY))
         client = _client(settings)
@@ -84,7 +89,7 @@ class TestAllServicesHealthy:
         assert body["all_healthy"] is True
         assert len(body["services"]) == 3
         assert all(service["healthy"] for service in body["services"])
-        assert {service["name"] for service in body["services"]} == {"qdrant", "openrouter", "openai"}
+        assert {service["name"] for service in body["services"]} == {"qdrant", "test-provider", "openai"}
 
 
 class TestAllServicesUnavailable:
@@ -92,7 +97,7 @@ class TestAllServicesUnavailable:
     def test_returns_200_with_all_healthy_false_not_5xx(self, settings: Settings) -> None:
         """AC-1: недоступность внешних сервисов -> 200, all_healthy=false — не 5xx."""
         _mock_lifespan_collection_exists_check()
-        respx.get(_OPENROUTER_MODELS_URL).mock(return_value=httpx.Response(503))
+        respx.get(_LLM_PROVIDER_MODELS_URL).mock(return_value=httpx.Response(503))
         respx.get(_OPENAI_MODELS_URL).mock(return_value=httpx.Response(503))
         respx.get(_QDRANT_COLLECTIONS_URL).mock(return_value=httpx.Response(503))
         client = _client(settings)
@@ -112,7 +117,7 @@ class TestMixedAvailability:
     @respx.mock
     def test_partial_unavailability_reflected_per_service(self, settings: Settings) -> None:
         _mock_lifespan_collection_exists_check()
-        respx.get(_OPENROUTER_MODELS_URL).mock(return_value=httpx.Response(200, json={"data": []}))
+        respx.get(_LLM_PROVIDER_MODELS_URL).mock(return_value=httpx.Response(200, json={"data": []}))
         respx.get(_OPENAI_MODELS_URL).mock(return_value=httpx.Response(500))
         respx.get(_QDRANT_COLLECTIONS_URL).mock(return_value=httpx.Response(200, json=_QDRANT_HEALTHY_BODY))
         client = _client(settings)
@@ -125,7 +130,7 @@ class TestMixedAvailability:
         assert body["all_healthy"] is False
         by_name = {service["name"]: service["healthy"] for service in body["services"]}
         assert by_name["qdrant"] is True
-        assert by_name["openrouter"] is True
+        assert by_name["test-provider"] is True
         assert by_name["openai"] is False
 
 

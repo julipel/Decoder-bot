@@ -12,7 +12,7 @@
     Telegram Reply
 
 Единственная подмена во всей цепочке — `FakeLLMProvider` (никакого
-реального OpenRouter/Telegram API). Всё остальное — реальный код:
+реального LLM-провайдера/Telegram API). Всё остальное — реальный код:
 `presentation.telegram.bot.build_telegram_application` собирает
 настоящий `telegram.ext.Application` с настоящими `CommandHandler`/
 `MessageHandler`, а обработчики получают настоящий `ProcessUserMessage`.
@@ -69,7 +69,7 @@ _TEST_BOT_TOKEN = "123456:test-token"  # noqa: S105 - фиктивный ток�
 
 
 class FakeLLMProvider:
-    """Единственная подмена во всей цепочке — реальный OpenRouterLLMAdapter сюда не подключается."""
+    """Единственная подмена во всей цепочке — реальный OpenAiCompatibleLLMAdapter сюда не подключается."""
 
     def __init__(self, response: LLMResponse | None = None, error: Exception | None = None) -> None:
         self._response = response
@@ -126,7 +126,7 @@ def _make_update(text: str | None = "Привет!", user_id: int = 12345) -> Ma
 def _response(text: str = "Здравствуйте!") -> LLMResponse:
     return LLMResponse(
         text=text,
-        provider_id=ProviderId("openrouter"),
+        provider_id=ProviderId("test-provider"),
         model_id=ModelId("openai/gpt-4o-mini"),
         input_tokens=10,
         output_tokens=5,
@@ -207,7 +207,7 @@ class TestFullConversationScenario:
 
     async def test_provider_error_is_translated_to_its_safe_user_message(self) -> None:
         safe_message = "Не удалось получить ответ от модели, попробуйте позже."
-        provider = FakeLLMProvider(error=LLMProviderError(message="OpenRouter boom", user_message=safe_message))
+        provider = FakeLLMProvider(error=LLMProviderError(message="LLM provider boom", user_message=safe_message))
         application = _build_application(_make_process_user_message(provider))
         _, message_callback = _handlers(application)
         update = _make_update()

@@ -39,7 +39,7 @@
 * подключение различных AI-провайдеров;
 * дальнейшее подключение голоса, изображений, аналитики и внешних сервисов.
 
-Основная задача разработки — создать расширяемую систему, в которой бизнес-логика не зависит от Telegram, FastAPI, OpenRouter, конкретной базы данных или конкретной AI-модели.
+Основная задача разработки — создать расширяемую систему, в которой бизнес-логика не зависит от Telegram, FastAPI, конкретного LLM-провайдера, конкретной базы данных или конкретной AI-модели.
 
 ---
 
@@ -60,7 +60,7 @@ ProcessUserMessage
     ↓
 LLMProvider
     ↓
-OpenRouter Adapter
+OpenAiCompatibleLLMAdapter (дженерик, LLM_PROVIDER_*)
     ↓
 AI-модель
     ↓
@@ -194,14 +194,14 @@ bootstrap
 ```text
 domain → FastAPI
 domain → Telegram
-domain → OpenRouter
+domain → LLM-провайдер
 domain → SQLAlchemy
 domain → Qdrant
 domain → LangChain
 
 application → Telegram
 application → FastAPI
-application → OpenRouter
+application → LLM-провайдер
 application → httpx
 application → SQLAlchemy
 application → Qdrant
@@ -352,7 +352,7 @@ Application содержит:
 * `SearchKnowledge`;
 * `SelectModel`.
 
-Application определяет, **что** должна выполнить система, но не знает, **как технически** вызывается Telegram, OpenRouter, SQLite или Qdrant.
+Application определяет, **что** должна выполнить система, но не знает, **как технически** вызывается Telegram, настроенный LLM-провайдер, SQLite или Qdrant.
 
 ---
 
@@ -360,7 +360,7 @@ Application определяет, **что** должна выполнить с�
 
 Infrastructure содержит реализации портов:
 
-* OpenRouter Adapter;
+* OpenAiCompatibleLLMAdapter (дженерик OpenAI-Chat-Completions-совместимый, ADR-11.1);
 * другие LLM-адаптеры;
 * SQLAlchemy repositories;
 * Qdrant repository;
@@ -371,7 +371,7 @@ Infrastructure содержит реализации портов:
 
 Infrastructure не должна содержать бизнес-решения.
 
-Например, OpenRouter Adapter не решает:
+Например, `OpenAiCompatibleLLMAdapter` не решает:
 
 * какой профиль выбрать;
 * какую память включить;
@@ -497,7 +497,7 @@ GenerationSettings
 
 Application не должен принимать или возвращать:
 
-* OpenRouter JSON;
+* JSON-формат Chat Completions конкретного LLM-провайдера;
 * OpenAI SDK objects;
 * LangChain messages;
 * `httpx.Response`;
@@ -506,7 +506,7 @@ Application не должен принимать или возвращать:
 Первая реализация:
 
 ```text
-OpenRouterLLMAdapter
+OpenAiCompatibleLLMAdapter
 ```
 
 В дальнейшем могут быть добавлены:
@@ -595,7 +595,7 @@ Prompt Engine:
 Промпты не должны формироваться:
 
 * в Telegram handlers;
-* в OpenRouter Adapter;
+* в `OpenAiCompatibleLLMAdapter`;
 * в FastAPI routes;
 * в случайных участках use cases.
 
@@ -755,7 +755,7 @@ Prompt Engine
 
 Внутри системы используется собственный идентификатор модели.
 
-Бизнес-логика не должна напрямую оперировать внешними строками OpenRouter.
+Бизнес-логика не должна напрямую оперировать внешними строками конкретного LLM-провайдера.
 
 Пример:
 
@@ -789,7 +789,7 @@ internal model id → provider adapter → external model id
 * ApplicationSettings;
 * TelegramSettings;
 * LLMSettings;
-* OpenRouterSettings;
+* LLMProviderSettings (Sprint 11, ADR-11.1 — ранее `OpenRouterSettings`, см. §32 «Текущий спринт (обновление 7)»);
 * DatabaseSettings;
 * QdrantSettings;
 * LoggingSettings;
@@ -925,7 +925,7 @@ Handler:
 
 Handler не должен:
 
-* вызывать OpenRouter напрямую;
+* вызывать LLM-провайдера напрямую;
 * читать `.env`;
 * обращаться к SQLAlchemy;
 * обращаться к Qdrant;
@@ -1045,7 +1045,7 @@ Unit tests не вызывают реальные API.
 * Telegram handlers;
 * FastAPI routes.
 
-Для OpenRouter использовать `respx` или эквивалент.
+Для LLM-провайдера использовать `respx` или эквивалент.
 
 ## Acceptance tests
 
@@ -1102,7 +1102,7 @@ BuildConversationContext
 FindRelevantMemory
 SelectProfile
 SearchKnowledge
-OpenRouterLLMAdapter
+OpenAiCompatibleLLMAdapter
 ConversationRepository
 ```
 
@@ -2539,6 +2539,30 @@ OpenRouter/OpenAI, CLI-паритет — завершён (S8-01…S8-11).**
   Новая бизнес-функциональность в этой задаче не добавлялась — только
   верификация и документация.
 
+## Текущий спринт (обновление 7)
+
+**Спринт 11: производственное развёртывание (Этап 13) + генерализация
+LLM-провайдера (ADR-11.1/11.2) — LLM-часть выполнена (S11-01/S11-02).**
+
+Начиная отсюда — `LLMProviderSettings`/`OpenAiCompatibleLLMAdapter`/
+`OpenAiCompatibleHealthCheck`; ранее в этом документе (все записи выше,
+Sprint 1–8) — `OpenRouterSettings`/`OpenRouterLLMAdapter`/
+`OpenRouterHealthCheck` — переименовано в Sprint 11 (задачи S11-01/
+S11-02), см. `backlog_11.md` ADR-11.1. Причина: OpenRouter недоступен
+пользователю географически, LLM-адаптер стал дженерик OpenAI-Chat-
+Completions-совместимым, настраиваемым только через `.env`
+(`LLM_PROVIDER_*`) — ни один класс не хардкодит конкретного вендора.
+Исторические записи выше (этот раздел «Текущий спринт»…«обновление 6»,
+§33 «Спринт 1»…«Спринт 8», §36 «Реализовано») описывают фактическое
+состояние кода на момент соответствующего спринта под тогдашним именем
+и намеренно не переписаны задним числом.
+
+`catalog.json` (ADR-11.2) — id моделей остаются иллюстративным дефолтом
+в конвенции OpenRouter (`vendor/model-name`), данные не редактируются
+в Sprint 11 (реальный агрегатор пользователем ещё не выбран); README и
+`.env.example` явно предупреждают о необходимости ручной правки при
+смене `LLM_PROVIDER_BASE_URL` на другой реальный сервис.
+
 ---
 
 # 33. План следующих спринтов
@@ -2638,7 +2662,7 @@ OpenRouter/OpenAI, CLI-паритет — завершён (S8-01…S8-11).**
 
 1. Проект — модульный монолит, не микросервисы.
 2. Бизнес-логика не зависит от Telegram и FastAPI.
-3. Бизнес-логика не зависит от OpenRouter.
+3. Бизнес-логика не зависит от конкретного LLM-провайдера.
 4. AI-провайдеры подключаются через `LLMProvider`.
 5. Инфраструктурные реализации создаются в bootstrap.
 6. Промпты формируются централизованно через Prompt Engine.
@@ -2658,7 +2682,7 @@ OpenRouter/OpenAI, CLI-паритет — завершён (S8-01…S8-11).**
 
 Если предыдущий контекст недоступен, продолжать работу исходя из следующего:
 
-> «Декодер» — персональный AI-ассистент на Python 3.11. Архитектура: Modular Monolith + Clean Architecture + Ports and Adapters. Основной интерфейс MVP — Telegram. Application не зависит от Telegram, FastAPI, OpenRouter, SQLAlchemy или Qdrant. AI вызывается через порт `LLMProvider`; первая реализация — `OpenRouterLLMAdapter`. Все зависимости собираются в bootstrap. Разработка идёт вертикальными срезами. Текущий первый срез: Telegram → `ProcessUserMessage` → `LLMProvider` → OpenRouter → ответ. Не добавлять память, RAG, профили, SQLAlchemy и Qdrant до соответствующего спринта. Перед завершением изменений запускать Ruff, MyPy и pytest.
+> «Декодер» — персональный AI-ассистент на Python 3.11. Архитектура: Modular Monolith + Clean Architecture + Ports and Adapters. Основной интерфейс MVP — Telegram. Application не зависит от Telegram, FastAPI, конкретного LLM-провайдера, SQLAlchemy или Qdrant. AI вызывается через порт `LLMProvider`; реализация — `OpenAiCompatibleLLMAdapter` (дженерик OpenAI-Chat-Completions-совместимый, настраивается через `LLM_PROVIDER_*`, Sprint 11, ADR-11.1 — ранее `OpenRouterLLMAdapter`). Все зависимости собираются в bootstrap. Разработка идёт вертикальными срезами. Не добавлять функциональность раньше соответствующего спринта. Перед завершением изменений запускать Ruff, MyPy и pytest.
 
 ---
 

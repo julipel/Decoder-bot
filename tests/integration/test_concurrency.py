@@ -12,7 +12,7 @@
     2. Event loop не блокируется одним медленным запросом — то же (общее
        время << N * delay доказывает отсутствие блокировки).
     3. Тайм-аут внешнего API — НЕ дублируется здесь, уже покрыт
-       `tests/integration/llm/test_openrouter_adapter.py::
+       `tests/integration/llm/test_openai_compatible_adapter.py::
        test_timeout_raises_llm_provider_error` (см. таблицу трассируемости
        Спринт 10_отчёт.md).
     4. Корректное освобождение соединений с БД —
@@ -21,7 +21,7 @@
        (скоуп-решение №4 `backlog_10.md`: в коде проекта такой функции нет
        и не планировалось ни в одном из этапов 1–11; трактуется как
        graceful-обработка HTTP 429 от AI-провайдера, уже покрыто
-       `test_openrouter_adapter.py::test_rate_limit_raises_llm_provider_error`).
+       `test_openai_compatible_adapter.py::test_rate_limit_raises_llm_provider_error`).
     6. Поведение при длинном ответе — НЕ дублируется, уже покрыто
        `tests/unit/presentation/telegram/test_mapper.py::split_message`.
 
@@ -100,7 +100,7 @@ class _DelayedFakeLLMProvider:
 def _response(text: str = "Ответ") -> LLMResponse:
     return LLMResponse(
         text=text,
-        provider_id=ProviderId("openrouter"),
+        provider_id=ProviderId("test-provider"),
         model_id=ModelId("openai/gpt-4o-mini"),
         input_tokens=10,
         output_tokens=5,
@@ -276,7 +276,7 @@ class TestConcurrentProviderErrorsDoNotCrashApp:
         n = 5
         provider = _DelayedFakeLLMProvider(
             delay=0.05,
-            error=LLMProviderError(message="OpenRouter недоступен", user_message="Ошибка модели, попробуйте позже."),
+            error=LLMProviderError(message="LLM провайдер недоступен", user_message="Ошибка модели, попробуйте позже."),
         )
         application = _build_application(_make_process_user_message(repositories_factory, provider))
         callback = _text_handler_callback(application)

@@ -89,10 +89,10 @@ class TestOptionalFields:
         error = LLMProviderError(
             "provider returned 503",
             "Модель временно недоступна, попробуйте позже.",
-            metadata={"provider": "openrouter", "correlation_id": "corr-1"},
+            metadata={"provider": "test-provider", "correlation_id": "corr-1"},
         )
 
-        assert error.metadata == {"provider": "openrouter", "correlation_id": "corr-1"}
+        assert error.metadata == {"provider": "test-provider", "correlation_id": "corr-1"}
 
     def test_metadata_default_is_not_shared_between_instances(self) -> None:
         first = ApplicationError("a", "a")
@@ -106,7 +106,7 @@ class TestOptionalFields:
 class TestSafeUserMessageIsIndependentOfTechnicalMessage:
     def test_user_message_does_not_have_to_match_technical_message(self) -> None:
         error = LLMProviderError(
-            message="OpenRouter API key sk-real-secret-value rejected with 401",
+            message="LLM provider API key sk-real-secret-value rejected with 401",
             user_message="Не удалось получить ответ модели. Попробуйте позже.",
         )
 

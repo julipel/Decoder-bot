@@ -4,7 +4,7 @@
 временной SQLite (`tmp_path`, схема через `Base.metadata.create_all()`,
 единственное допустимое исключение для тестового окружения,
 backlog_2.md §3), fake `LLMProvider` (без сетевого вызова, без
-`OpenRouterLLMAdapter`).
+`OpenAiCompatibleLLMAdapter`).
 
 Проверяет ровно то, что требует backlog_2_tasks.md (S2-06, «Добавь
 интеграционный тест полного persistence-потока»):
@@ -43,7 +43,7 @@ from dekoder.shared.domain.identifiers import CorrelationId
 
 
 class FakeLLMProvider:
-    """Fake без сетевого вызова — реальный OpenRouterLLMAdapter сюда не подключается."""
+    """Fake без сетевого вызова — реальный OpenAiCompatibleLLMAdapter сюда не подключается."""
 
     def __init__(self) -> None:
         self.received_requests: list[LLMRequest] = []
@@ -54,7 +54,7 @@ class FakeLLMProvider:
         self._reply_counter += 1
         return LLMResponse(
             text=f"Ответ {self._reply_counter}",
-            provider_id=ProviderId("openrouter"),
+            provider_id=ProviderId("test-provider"),
             model_id=request.model_id,
             input_tokens=10,
             output_tokens=5,

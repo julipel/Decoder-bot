@@ -226,7 +226,7 @@ def _make_repositories_factory(
 def _make_response(text: str = "Здравствуйте!", model_id: str = "openai/gpt-4o-mini") -> LLMResponse:
     return LLMResponse(
         text=text,
-        provider_id=ProviderId("openrouter"),
+        provider_id=ProviderId("test-provider"),
         model_id=ModelId(model_id),
         input_tokens=10,
         output_tokens=5,
@@ -606,7 +606,7 @@ class TestLLMError:
 
     async def test_provider_error_propagates(self) -> None:
         error = LLMProviderError(
-            message="OpenRouter timeout",
+            message="LLM provider timeout",
             user_message="Не удалось получить ответ от модели, попробуйте позже.",
         )
         provider = FakeLLMProvider(error=error)

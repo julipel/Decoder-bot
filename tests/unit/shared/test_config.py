@@ -19,9 +19,9 @@ from dekoder.shared.config import (
     AdminSettings,
     ApplicationSettings,
     DatabaseSettings,
+    LLMProviderSettings,
     LLMSettings,
     ModelCatalogSettings,
-    OpenRouterSettings,
     PromptSettings,
     Settings,
     TelegramSettings,
@@ -191,9 +191,9 @@ class TestSecretsHaveNoDefaults:
         with pytest.raises(ValidationError):
             TelegramSettings(_env_file=None)
 
-    def test_openrouter_settings_require_api_key(self) -> None:
+    def test_llm_provider_settings_require_api_key(self) -> None:
         with pytest.raises(ValidationError):
-            OpenRouterSettings(_env_file=None)
+            LLMProviderSettings(_env_file=None)
 
 
 class TestSecretsAreNotExposed:
@@ -210,10 +210,12 @@ class TestSecretsAreNotExposed:
         # значение остаётся доступным явным вызовом, а не через str()/repr()
         assert settings.bot_token.get_secret_value() == "super-secret-bot-token"
 
-    def test_openrouter_api_key_not_shown_in_repr_or_str(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("OPENROUTER_API_KEY", "super-secret-api-key")
+    def test_llm_provider_api_key_not_shown_in_repr_or_str(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_PROVIDER_API_KEY", "super-secret-api-key")
+        monkeypatch.setenv("LLM_PROVIDER_BASE_URL", "https://example-aggregator.test/v1")
+        monkeypatch.setenv("LLM_PROVIDER_DEFAULT_MODEL", "test-model")
 
-        settings = OpenRouterSettings(_env_file=None)
+        settings = LLMProviderSettings(_env_file=None)
 
         assert "super-secret-api-key" not in str(settings)
         assert "super-secret-api-key" not in repr(settings)
@@ -224,7 +226,9 @@ class TestSettingsAggregation:
     def test_settings_combines_all_groups(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
         monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "webhook-secret")
-        monkeypatch.setenv("OPENROUTER_API_KEY", "api-key")
+        monkeypatch.setenv("LLM_PROVIDER_API_KEY", "api-key")
+        monkeypatch.setenv("LLM_PROVIDER_BASE_URL", "https://example-aggregator.test/v1")
+        monkeypatch.setenv("LLM_PROVIDER_DEFAULT_MODEL", "test-model")
         monkeypatch.setenv("OPENAI_API_KEY", "embedding-api-key")
         monkeypatch.setenv("ADMIN_API_KEY", "admin-api-key")
         monkeypatch.setenv("APP_PORT", "8080")
@@ -235,14 +239,14 @@ class TestSettingsAggregation:
         assert isinstance(settings.application, ApplicationSettings)
         assert isinstance(settings.telegram, TelegramSettings)
         assert isinstance(settings.llm, LLMSettings)
-        assert isinstance(settings.openrouter, OpenRouterSettings)
+        assert isinstance(settings.llm_provider, LLMProviderSettings)
         assert isinstance(settings.database, DatabaseSettings)
         assert isinstance(settings.prompt, PromptSettings)
         assert isinstance(settings.admin, AdminSettings)
         assert settings.application.port == 8080
         assert settings.llm.temperature == 0.3
         assert settings.telegram.bot_token.get_secret_value() == "token"
-        assert settings.openrouter.api_key.get_secret_value() == "api-key"
+        assert settings.llm_provider.api_key.get_secret_value() == "api-key"
         assert settings.database.url == "sqlite+aiosqlite:///./data/app.db"
         assert settings.prompt.token_budget == 12000
         assert settings.admin.api_key.get_secret_value() == "admin-api-key"

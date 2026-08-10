@@ -18,7 +18,7 @@ in-memory fake-репозиториев (`tests/support/fake_conversation_reposi
 схема — `Base.metadata.create_all()`, то же допустимое исключение для
 тестового окружения, что и в `tests/integration/test_*_persistence.py`,
 backlog_2.md §3). Единственная подмена во всей цепочке — `FakeLLMProvider`
-(без сети, без реального Telegram API и без `OpenRouterLLMAdapter`).
+(без сети, без реального Telegram API и без `OpenAiCompatibleLLMAdapter`).
 
 Восемь обязательных сценариев (backlog_2_tasks.md, S2-11):
 
@@ -97,7 +97,7 @@ _TEST_BOT_TOKEN = "123456:test-token"  # noqa: S105 - фиктивный ток�
 
 
 class FakeLLMProvider:
-    """Единственная подмена во всей цепочке — без сети, без OpenRouterLLMAdapter."""
+    """Единственная подмена во всей цепочке — без сети, без OpenAiCompatibleLLMAdapter."""
 
     def __init__(self, response: LLMResponse | None = None, error: Exception | None = None) -> None:
         self._response = response
@@ -117,7 +117,7 @@ class FakeLLMProvider:
 def _response(text: str = "Здравствуйте!") -> LLMResponse:
     return LLMResponse(
         text=text,
-        provider_id=ProviderId("openrouter"),
+        provider_id=ProviderId("test-provider"),
         model_id=ModelId("openai/gpt-4o-mini"),
         input_tokens=10,
         output_tokens=5,
@@ -539,7 +539,7 @@ class TestLlmError:
         repositories_factory: ConversationRepositoriesFactory,
     ) -> None:
         failing_provider = FakeLLMProvider(
-            error=LLMProviderError(message="OpenRouter недоступен", user_message="Ошибка модели, попробуйте позже.")
+            error=LLMProviderError(message="LLM провайдер недоступен", user_message="Ошибка модели, попробуйте позже.")
         )
         application = _build_application(_make_process_user_message(repositories_factory, failing_provider))
         callbacks = _handler_callbacks(application)
@@ -589,7 +589,7 @@ class TestLlmError:
         clear_request_context()
         configure_logging(environment="test")
         failing_provider = FakeLLMProvider(
-            error=LLMProviderError(message="OpenRouter недоступен", user_message="Ошибка модели, попробуйте позже.")
+            error=LLMProviderError(message="LLM провайдер недоступен", user_message="Ошибка модели, попробуйте позже.")
         )
         application = _build_application(_make_process_user_message(repositories_factory, failing_provider))
         callbacks = _handler_callbacks(application)

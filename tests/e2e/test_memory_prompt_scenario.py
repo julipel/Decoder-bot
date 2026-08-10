@@ -84,7 +84,7 @@ _TEST_BOT_TOKEN = "123456:test-token"  # noqa: S105 - фиктивный ток�
 
 
 class FakeLLMProvider:
-    """Единственная подмена во всей цепочке — без сети, без OpenRouterLLMAdapter."""
+    """Единственная подмена во всей цепочке — без сети, без OpenAiCompatibleLLMAdapter."""
 
     def __init__(self, response: LLMResponse | None = None) -> None:
         self._response = response
@@ -99,7 +99,7 @@ class FakeLLMProvider:
 def _response(text: str = "Здравствуйте!") -> LLMResponse:
     return LLMResponse(
         text=text,
-        provider_id=ProviderId("openrouter"),
+        provider_id=ProviderId("test-provider"),
         model_id=ModelId("openai/gpt-4o-mini"),
         input_tokens=10,
         output_tokens=5,

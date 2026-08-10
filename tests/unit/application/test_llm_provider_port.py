@@ -34,7 +34,7 @@ def _make_request() -> LLMRequest:
 def _make_response() -> LLMResponse:
     return LLMResponse(
         text="Здравствуйте!",
-        provider_id=ProviderId("openrouter"),
+        provider_id=ProviderId("test-provider"),
         model_id=ModelId("openai/gpt-4o-mini"),
         input_tokens=10,
         output_tokens=5,
