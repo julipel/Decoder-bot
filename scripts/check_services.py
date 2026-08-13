@@ -43,7 +43,9 @@ async def _run_check(settings: Settings) -> int:
     try:
         async with (
             httpx.AsyncClient(base_url=settings.llm_provider.base_url, timeout=settings.llm.timeout) as http_client,
-            httpx.AsyncClient(base_url=settings.openai.base_url, timeout=settings.llm.timeout) as openai_http_client,
+            httpx.AsyncClient(
+                base_url=settings.embedding_provider.base_url, timeout=settings.llm.timeout
+            ) as embedding_http_client,
         ):
             use_case = CheckExternalServicesHealthUseCase(
                 checks=[
@@ -55,7 +57,9 @@ async def _run_check(settings: Settings) -> int:
                         timeout=timeout,
                     ),
                     OpenAiHealthCheck(
-                        client=openai_http_client, api_key=settings.openai.api_key.get_secret_value(), timeout=timeout
+                        client=embedding_http_client,
+                        api_key=settings.embedding_provider.api_key.get_secret_value(),
+                        timeout=timeout,
                     ),
                 ]
             )

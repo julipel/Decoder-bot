@@ -71,10 +71,12 @@ async def _run_index(
         await ensure_collection(qdrant_client, settings.qdrant)
         # timeout переиспользует LLMSettings.timeout — см. bootstrap/application.py.
         async with (
-            httpx.AsyncClient(base_url=settings.openai.base_url, timeout=settings.llm.timeout) as openai_http_client,
+            httpx.AsyncClient(
+                base_url=settings.embedding_provider.base_url, timeout=settings.llm.timeout
+            ) as embedding_http_client,
             session_scope(db_session_factory) as session,
         ):
-            use_case = build_index_document_use_case(settings, session, openai_http_client, qdrant_client)
+            use_case = build_index_document_use_case(settings, session, embedding_http_client, qdrant_client)
             try:
                 result = await use_case.execute(
                     IndexDocumentCommand(
@@ -161,10 +163,12 @@ async def _run_reindex(args: argparse.Namespace, settings: Settings) -> int:
     try:
         await ensure_collection(qdrant_client, settings.qdrant)
         async with (
-            httpx.AsyncClient(base_url=settings.openai.base_url, timeout=settings.llm.timeout) as openai_http_client,
+            httpx.AsyncClient(
+                base_url=settings.embedding_provider.base_url, timeout=settings.llm.timeout
+            ) as embedding_http_client,
             session_scope(db_session_factory) as session,
         ):
-            use_case = build_reindex_document_use_case(settings, session, openai_http_client, qdrant_client)
+            use_case = build_reindex_document_use_case(settings, session, embedding_http_client, qdrant_client)
             result = await use_case.execute(document_id)
     finally:
         await qdrant_client.close()
