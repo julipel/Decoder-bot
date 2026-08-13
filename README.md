@@ -167,50 +167,34 @@ alembic/                             # users/conversations/messages (S2-02) + pr
 scripts/index_document.py            # CLI-скрипт индексации/удаления документов базы знаний (Sprint 6, S6-09)
 ```
 
-> В репозитории также существует более крупное, отдельное от этого
-> среза дерево-заглушка — `composition/`, `interfaces/`, а также модули
-> `ai_core`, `admin`, `session`, `skills`, `knowledge_base`, `rag` под
-> `domain/`/`application/`. Это результат более ранней миграции по
-> документам `docs/versions/*_v2.0.md`, построенной по другой архитектуре
-> (`interfaces/`+`composition/` вместо `presentation/`+`bootstrap/`).
-> Реально запускаемое приложение (`main.py`, `telegram_main.py`) его не
-> использует — почти весь код там оканчивается `raise
-> NotImplementedError`. Реконсиляция оставшихся модулей — сознательно
-> отложенное решение, подробности в `claude.md`, §36. Мёртвый скелет
-> `domain/profile/`/`application/profile/*` из этого дерева был удалён в
-> Sprint 3 (задача S3-01) — он конфликтовал по имени/форме с реальным
-> `UserProfile`, который этот срез теперь использует. Мёртвый
-> `infrastructure/logging/`/`application/logging/*`/`domain/logging/*`
-> (v2.0-логгер, не используемый реальными composition root'ами — они
-> используют `shared/logging.py`) и мёртвый `application/prompt_engine/`/
-> `application/ai_core/internal_services/prompt_assembler.py` (второй,
-> нерабочий «построитель промпта») были удалены в Sprint 4 (задача
-> S4-01) — оба создавали прямой риск путаницы именно в момент, когда
-> строился настоящий Prompt Engine (`domain/prompt/`, `application/
-> prompt/`, `infrastructure/prompts/`). Мёртвый узел памяти
-> (`application/memory/*` со старой формой `DialogueEntry`/`MemoryFact`/
-> `MemoryFactDraft`, `domain/memory/*`, `infrastructure/persistence/
-> sqlite_memory_repository.py`, `application/ai_core/internal_services/
-> memory_collector.py`) был удалён в Sprint 5 (задача S5-01), мёртвый
-> узел базы знаний/RAG (`domain/knowledge_base/`, `application/
-> knowledge_base/`, `domain/rag/`, `application/rag/`,
-> `infrastructure/vector_storage/`, `interfaces/admin_http/`) — в
-> Sprint 6 (задача S6-01), а мёртвый узел каталога моделей
-> (`domain/model_catalog/model_definition.py` — плоский `ModelDefinition`,
-> `application/model_catalog/*` со старой формой `list_compatible(...)`,
-> `application/model_gateway/`, `infrastructure/model_gateway/`,
-> `infrastructure/persistence/sqlite_model_catalog_repository.py`) — в
-> Sprint 7 (задача S7-01, ADR-7.1) — той же логикой: прямой риск
-> путаницы именно в момент, когда строилась настоящая версия каждой
-> подсистемы (реальная память — `domain/memory/`; реальная база знаний —
-> `domain/knowledge/`; реальный каталог моделей — `domain/model_catalog/`
-> с формой `AIModel`/`AIProvider`/`ModelCapability`/`ModelAvailability`/
-> `GenerationSettings`, использующий живой `ModelId` из
-> `domain/conversation/value_objects.py`, а не мёртвый из
-> `shared/domain/identifiers.py`). Остальной v2.0-скелет (`admin`, `rag`,
-> `session`, `skills`, `interfaces/`, `composition/`) по-прежнему не
-> тронут — признан нежизнеспособным, но его зачистка вынесена в
-> отдельную будущую задачу (ADR-4.10/5.1/6.x/7.1).
+> **Параллельное дерево-заглушка v2.0 полностью удалено.** До прочтения
+> `claude.md` (в отдельной, более ранней сессии) была выполнена большая
+> миграция по документам `docs/versions/*_v2.0.md` — `composition/`,
+> `interfaces/`, и модули `ai_core`, `admin`, `session`, `skills`,
+> `knowledge_base`, `rag` под `domain/`/`application/`, построенная по
+> другой архитектуре (`interfaces/`+`composition/` вместо
+> `presentation/`+`bootstrap/`); реально запускаемое приложение
+> (`main.py`, `telegram_main.py`) её никогда не использовало — почти
+> весь код там оканчивался `raise NotImplementedError`. Каждый спринт по
+> мере построения настоящего аналога того или иного узла точечно удалял
+> пересекающуюся часть: `domain/profile/`/`application/profile/*` — в
+> Sprint 3 (S3-01); `infrastructure/logging/`/`application/logging/*`/
+> `domain/logging/*` и `application/prompt_engine/` — в Sprint 4 (S4-01);
+> узел памяти — в Sprint 5 (S5-01); узел базы знаний/RAG (`admin`,
+> `knowledge_base`, `rag`) — в Sprint 6 (S6-01); узел каталога моделей
+> (`model_gateway`) — в Sprint 7 (S7-01, ADR-7.1). Остаток
+> (`composition/{bootstrap,container}.py`, весь `interfaces/`,
+> `application/ai_core/`, `domain+application/session/`,
+> `domain+application/skills/`, соответствующие `sqlite_*_repository.py`,
+> полностью-мёртвые части `shared/domain/`/`shared/application/`) был
+> проверен грепом реальных импортов по всему `src`/`tests` (не по
+> журналу — тот успел отстать от кода) и удалён целиком по явному
+> запросу пользователя. Единственное, что осталось от этого дерева:
+> `composition/health.py` — не мёртвый код, а реальный роутер `/health`,
+> который импортирует `bootstrap/application.py` (архитектурно
+> осознанное исключение); `shared/domain/identifiers.py` урезан до
+> единственного живого типа `CorrelationId` (Sprint 9). Подробности —
+> `claude.md`, §36 «Известные расхождения».
 
 ## Технологический стек
 
