@@ -284,20 +284,34 @@ src/
 `presentation/{telegram,api}`, `bootstrap/`, `shared/`. Подробности по
 слоям — см. §32/§36.
 
-Отдельно, **параллельно и не используется реально запускаемым
-приложением**, в репозитории по-прежнему существует более крупное
-дерево-заглушка (`composition/`, `interfaces/`, а также остатки
-`domain/`/`application/`-модулей `ai_core`, `admin`, `rag`, `session`,
-`skills`, `knowledge_base`, `infrastructure/model_gateway`,
-`infrastructure/vector_storage`, `shared/domain/identifiers.py`) —
-результат отдельной, более ранней и гораздо более крупной миграции по
-документам `docs/versions/*_v2.0.md`, выполненной **до** прочтения этого
-файла, по своей собственной, отличной от Sprint 1+ архитектуре
-(`interfaces/`+`composition/` вместо `presentation/`+`bootstrap/`).
-Каждый спринт по мере построения настоящего аналога точечно удаляет
-пересекающийся узел этого дерева (см. §36 «Известные расхождения») —
-полная реконсиляция остального по-прежнему осознанно отложена, не
-предпринимать её без явного запроса.
+**Параллельное дерево-заглушка v2.0 удалено (2026-08-13, по явному
+запросу пользователя).** До прочтения этого файла (в отдельной, более
+ранней сессии) была выполнена большая миграция по
+`docs/versions/*_v2.0.md` — `composition/`, `interfaces/`, и остатки
+`domain/`/`application/`-модулей `ai_core`, `session`, `skills`,
+`infrastructure/{model_gateway,vector_storage}`, часть
+`shared/domain/identifiers.py`/`shared/domain/value_objects.py`/
+`shared/domain/errors.py`/`shared/application/execution_context.py` —
+построенная по архитектуре, отличной от этого файла (`interfaces/`+
+`composition/` вместо `presentation/`+`bootstrap/`). Каждый спринт по
+мере построения настоящего аналога точечно удалял пересекающийся узел
+(S4-01/S5-01/S6-01/S7-01/S8-01); `admin`/`rag`/`knowledge_base` были
+удалены этим путём ранее. Остаток (`composition/{bootstrap,container}.py`,
+`interfaces/`, `application/ai_core`, `domain+application/session`,
+`domain+application/skills`, `infrastructure/persistence/sqlite_{session,
+content_skill}_repository.py`, полностью-мёртвые части `shared/domain/`
+и `shared/application/`) — проверен грепом импортов по всему `src`/
+`tests` (не по журналу — тот успел устареть) и удалён целиком; удалён и
+`tests/integration/test_health_endpoint.py` (тестировал только
+удалённый `composition.bootstrap.create_app()`, покрытие `/health`
+полностью дублируется `test_application_bootstrap.py`, который бьёт по
+реальному `create_application`). Единственное, что осталось от этого
+дерева: `composition/health.py` (реальный, живой роутер `/health`,
+импортируется `bootstrap/application.py` — не мёртвый код, архитектурно
+осознанное исключение) и `shared/domain/identifiers.py`, урезанный до
+одного живого `CorrelationId` (Sprint 9). Реконсиляция полностью
+завершена — этот абзац можно удалить при следующей значительной правке
+CLAUDE.md, если новых расхождений не появится.
 
 ---
 
@@ -981,9 +995,7 @@ Sprint 11: LLM-провайдер генерализован (S11-01/S11-02), pr
 
 ## Известные расхождения
 
-**В репозитории одновременно существуют два несовместимых дерева исходного кода.** До прочтения этого файла (в отдельной, более ранней сессии) была выполнена большая миграция по `docs/versions/*_v2.0.md`: `composition/`, `interfaces/`, и остатки `domain/`/`application/`-модулей `ai_core`, `admin`, `rag`, `session`, `skills`, `knowledge_base`, `infrastructure/model_gateway`, `infrastructure/vector_storage`, `shared/domain/identifiers.py` — построены по архитектуре, отличной от этого файла (`interfaces/`+`composition/`, не `presentation/`+`bootstrap/`).
-
-Осознанное решение пользователя: **не реконсилировать целиком**. Каждый спринт, добавляя настоящий аналог того или иного узла (профили, память, prompt engine, каталог моделей, admin), точечно удаляет пересекающуюся часть старого дерева и любые dangling-импорты на неё (задокументировано в сообщениях коммитов каждого спринта: S4-01, S5-01, S6-01 (по факту), S7-01, S8-01) — но не идёт дальше своего непосредственного пересечения. На момент Sprint 8 остаются нетронутыми: `rag`, `session`, `skills`, `knowledge_base`, `shared/domain/identifiers.py`, `interfaces/`, и большая часть `composition/`. Полная реконсиляция — решение, которое нужно принимать явно и отдельно (см. §31), не предпринимать без явного запроса.
+**Устранено (2026-08-13).** Параллельное дерево-заглушка `docs/versions/*_v2.0.md` реконсилировано полностью — по явному запросу пользователя, вне рамок обычного «спринт удаляет только свой пересекающийся узел». Проверка велась грепом реальных импортов по `src`/`tests`, а не по этому журналу (он успел отстать от кода — см. находку в §7 про `composition/health.py`, которая journal ошибочно относил к мёртвому дереву). Удалено целиком: `composition/{bootstrap,container}.py`, `interfaces/` (весь пакет), `application/ai_core/`, `domain/session/`+`application/session/`, `domain/skills/`+`application/skills/`, `infrastructure/persistence/sqlite_{session,content_skill}_repository.py`, `shared/domain/{errors,value_objects}.py`, `shared/application/execution_context.py`, `tests/integration/test_health_endpoint.py` (дублировал покрытие `test_application_bootstrap.py`). `shared/domain/identifiers.py` урезан до единственного живого типа `CorrelationId`. Оставлено осознанно: `composition/health.py` — не мёртвый код, реальный роутер `/health`, импортируется `bootstrap/application.py`. `admin`/`rag`/`knowledge_base` были удалены раньше, отдельными спринтами (S6-01/S8-01). Если появится новый параллельный узел — реагировать тем же способом (грep импортов, не полагаться на журнал).
 
 ## Известные технические нюансы (не самоочевидны из кода)
 
