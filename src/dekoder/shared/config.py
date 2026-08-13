@@ -162,18 +162,26 @@ class MemorySettings(BaseSettings):
     max_relevant_records: int = Field(default=5, gt=0)
 
 
-class OpenAiSettings(BaseSettings):
+class EmbeddingProviderSettings(BaseSettings):
     """
-    Настройки провайдера эмбеддингов (Sprint 6, задача S6-02, ADR-6.3).
+    Настройки провайдера эмбеддингов (Sprint 6, задача S6-02, ADR-6.3;
+    переименовано из `OpenAiSettings` и параметризовано в Sprint 12,
+    ADR-12.1 — тот же приём, что ADR-11.1 для LLM-провайдера).
 
     Отдельная группа от `LLMProviderSettings` — основной чат-провайдер
     (настраиваемый через `LLM_PROVIDER_*`) не гарантированно отдаёт
-    embeddings API; эмбеддинги считаются через OpenAI напрямую, независимо
-    от того, какая модель выбрана для чата.
+    embeddings API; эмбеддинги настраиваются отдельно, через свой
+    `base_url`/`api_key` (`EMBEDDING_PROVIDER_*`).
+
+    Дефолт `base_url` — прямой OpenAI, как и раньше (обратная
+    совместимость с поведением до Sprint 12). В отличие от
+    `LLMProviderSettings.base_url` (без дефолта, ADR-11.1) — здесь дефолт
+    корректен и раньше, так как эмбеддинги и до этого шли напрямую в
+    OpenAI, а не через выбранный пользователем чат-агрегатор.
     """
 
     model_config = SettingsConfigDict(
-        env_prefix="OPENAI_", env_file=_ENV_FILES, env_file_encoding="utf-8", extra="ignore"
+        env_prefix="EMBEDDING_PROVIDER_", env_file=_ENV_FILES, env_file_encoding="utf-8", extra="ignore"
     )
 
     api_key: SecretStr
@@ -193,9 +201,9 @@ class QdrantSettings(BaseSettings):
     collection_name: str = "dekoder_knowledge"
     # Размерность вектора OpenAI `text-embedding-3-small` — 1536. Вынесено
     # в настройки (не хардкод внутри QdrantVectorRepository), чтобы смена
-    # embedding_model в OpenAiSettings была видна рядом с тем, что должно
-    # измениться синхронно — иначе upsert молча упадёт на несовпадении
-    # размерности вектора с уже созданной коллекцией.
+    # embedding_model в EmbeddingProviderSettings была видна рядом с тем,
+    # что должно измениться синхронно — иначе upsert молча упадёт на
+    # несовпадении размерности вектора с уже созданной коллекцией.
     vector_size: int = Field(default=1536, gt=0)
 
 
@@ -248,7 +256,7 @@ class AdminSettings(BaseSettings):
     HTTP-заголовке, не login/session/JWT).
 
     `api_key` — прямой прецедент `LLMProviderSettings.api_key`/
-    `OpenAiSettings.api_key`: `SecretStr` без значения по умолчанию,
+    `EmbeddingProviderSettings.api_key`: `SecretStr` без значения по умолчанию,
     отсутствие в окружении останавливает процесс на этапе создания
     `Settings()` (fail-fast). `health_check_timeout` — таймаут одного
     probe `GET /admin/health` (ADR-8.9), не переиспользует
@@ -283,7 +291,7 @@ class Settings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     prompt: PromptSettings = Field(default_factory=PromptSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
-    openai: OpenAiSettings = Field(default_factory=OpenAiSettings)  # type: ignore[arg-type]
+    embedding_provider: EmbeddingProviderSettings = Field(default_factory=EmbeddingProviderSettings)  # type: ignore[arg-type]
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
     knowledge: KnowledgeSettings = Field(default_factory=KnowledgeSettings)
     model_catalog: ModelCatalogSettings = Field(default_factory=ModelCatalogSettings)

@@ -58,7 +58,8 @@ register_memory_handlers`) регистрируются тоже внутри `p
 
 С задачи S6-08 (Sprint 6) `post_init` дополнительно открывает второй
 `httpx.AsyncClient` (для `OpenAiEmbeddingProvider`, независимый от
-клиента LLM-провайдера, ADR-6.3) и `AsyncQdrantClient` до регистрации
+клиента LLM-провайдера, ADR-6.3; настройки переименованы и
+параметризованы в Sprint 12, ADR-12.1) и `AsyncQdrantClient` до регистрации
 обработчиков; оба закрываются в
 `_shutdown`. В отличие от `init_database`, `ensure_collection` НЕ
 fail-fast (см. `bootstrap/application.py` — тот же принцип для обоих
@@ -112,8 +113,8 @@ def main() -> None:
         timeout=settings.llm.timeout,
     )
     # timeout переиспользует LLMSettings.timeout — см. bootstrap/application.py.
-    openai_http_client = httpx.AsyncClient(
-        base_url=settings.openai.base_url,
+    embedding_http_client = httpx.AsyncClient(
+        base_url=settings.embedding_provider.base_url,
         timeout=settings.llm.timeout,
     )
     qdrant_client = build_qdrant_client(settings.qdrant)
@@ -137,7 +138,7 @@ def main() -> None:
             # Не fail-fast — см. докстринг модуля/bootstrap/application.py.
             _logger.error("qdrant_collection_unavailable_at_startup", error=str(error))
 
-        container = build_container(settings, http_client, openai_http_client, qdrant_client, db_session_factory)
+        container = build_container(settings, http_client, embedding_http_client, qdrant_client, db_session_factory)
         register_message_handler(app, container.process_user_message)
         register_new_conversation_handler(app, container.start_new_conversation)
         register_clear_conversation_handler(app, container.clear_conversation)
@@ -161,7 +162,7 @@ def main() -> None:
         # реально закрываются.
         _logger.info("telegram_polling_stopping")
         await http_client.aclose()
-        await openai_http_client.aclose()
+        await embedding_http_client.aclose()
         await qdrant_client.close()
         db_engine = db_engine_holder.get("engine")
         if db_engine is not None:

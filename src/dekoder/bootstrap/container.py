@@ -78,8 +78,9 @@ Telegram-сценария в Sprint 5 (ADR-5.9), контейнер не соз�
 С задачи S6-08 (Sprint 6, ADR-6.4) контейнер также собирает
 `SemanticSearchService` (`application/knowledge/services/
 semantic_search_service.py`) — композицию `OpenAiEmbeddingProvider`
-(поверх отдельного `openai_http_client`, независимого от `http_client`/
-LLM-провайдера, ADR-6.3) и `QdrantVectorRepository` (поверх
+(поверх отдельного `embedding_http_client`, независимого от `http_client`/
+LLM-провайдера, ADR-6.3; переименовано из `openai_http_client` в
+Sprint 12, ADR-12.1) и `QdrantVectorRepository` (поверх
 `qdrant_client`) — и внедряет её в `ProcessUserMessage` как
 `knowledge_search`, параллельно `llm_provider`. `IndexKnowledgeDocumentUseCase`/
 `DeleteKnowledgeDocumentUseCase` здесь НЕ собираются — индексация не
@@ -124,7 +125,7 @@ config_repository.py`, парсит `catalog.json` один раз при пос
 check_external_services.py`) поверх трёх адаптеров `ServiceHealthCheck`
 (`infrastructure/health/*`) — `QdrantHealthCheck`/`OpenAiCompatibleHealthCheck`/
 `OpenAiHealthCheck`, каждый переиспользует уже готовые `qdrant_client`/
-`http_client`/`openai_http_client` (те же самые объекты, что уже
+`http_client`/`embedding_http_client` (те же самые объекты, что уже
 используются `SemanticSearchService`/`OpenAiCompatibleLLMAdapter`/
 `OpenAiEmbeddingProvider` — новые клиенты не создаются). Таймаут одного
 probe — `settings.admin.health_check_timeout` (S8-02), не
@@ -198,7 +199,7 @@ class ApplicationContainer:
 def build_container(
     settings: Settings,
     http_client: httpx.AsyncClient,
-    openai_http_client: httpx.AsyncClient,
+    embedding_http_client: httpx.AsyncClient,
     qdrant_client: AsyncQdrantClient,
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> ApplicationContainer:
@@ -209,7 +210,7 @@ def build_container(
     (`bootstrap/database.py::init_database`). `StartNewConversation`
     (задача S2-08) и `ClearConversation` (задача S2-10) переиспользуют ту
     же `repositories_factory`, что и `ProcessUserMessage` — не отдельную
-    фабрику. `openai_http_client`/`qdrant_client` (задача S6-08) — уже
+    фабрику. `embedding_http_client`/`qdrant_client` (задача S6-08) — уже
     готовые клиенты для `SemanticSearchService`, тем же приёмом, что и
     `http_client` для `OpenAiCompatibleLLMAdapter`: контейнер не отвечает
     за их подключение/закрытие.
@@ -229,9 +230,9 @@ def build_container(
         budget=settings.prompt.token_budget,
     )
     embedding_provider = OpenAiEmbeddingProvider(
-        client=openai_http_client,
-        api_key=settings.openai.api_key.get_secret_value(),
-        model=settings.openai.embedding_model,
+        client=embedding_http_client,
+        api_key=settings.embedding_provider.api_key.get_secret_value(),
+        model=settings.embedding_provider.embedding_model,
     )
     vector_repository = QdrantVectorRepository(
         client=qdrant_client,
@@ -281,8 +282,8 @@ def build_container(
                 timeout=health_check_timeout,
             ),
             OpenAiHealthCheck(
-                client=openai_http_client,
-                api_key=settings.openai.api_key.get_secret_value(),
+                client=embedding_http_client,
+                api_key=settings.embedding_provider.api_key.get_secret_value(),
                 timeout=health_check_timeout,
             ),
         ]

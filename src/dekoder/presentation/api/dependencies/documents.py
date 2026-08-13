@@ -36,7 +36,7 @@ from dekoder.application.knowledge.use_cases.list_documents import ListKnowledge
 from dekoder.application.knowledge.use_cases.reindex_document import ReindexKnowledgeDocumentUseCase
 from dekoder.bootstrap.application import (
     get_db_session_factory,
-    get_openai_http_client,
+    get_embedding_http_client,
     get_qdrant_client,
     get_settings,
 )
@@ -70,13 +70,13 @@ class DocumentUseCases:
 async def get_document_use_cases(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_admin_session),
-    openai_http_client: httpx.AsyncClient = Depends(get_openai_http_client),
+    embedding_http_client: httpx.AsyncClient = Depends(get_embedding_http_client),
     qdrant_client: AsyncQdrantClient = Depends(get_qdrant_client),
 ) -> DocumentUseCases:
     return DocumentUseCases(
-        index=build_index_document_use_case(settings, session, openai_http_client, qdrant_client),
+        index=build_index_document_use_case(settings, session, embedding_http_client, qdrant_client),
         delete=build_delete_document_use_case(settings, session, qdrant_client),
         list_all=build_list_documents_use_case(session),
         get=build_get_document_use_case(session),
-        reindex=build_reindex_document_use_case(settings, session, openai_http_client, qdrant_client),
+        reindex=build_reindex_document_use_case(settings, session, embedding_http_client, qdrant_client),
     )

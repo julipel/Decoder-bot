@@ -25,7 +25,8 @@ FastAPI завершить запуск (fail-fast), а не проявляет�
 
 С задачи S6-08 (Sprint 6) `_lifespan` дополнительно открывает второй
 `httpx.AsyncClient` (для `OpenAiEmbeddingProvider`, независимый от
-клиента LLM-провайдера — другой `base_url`, ADR-6.3) и
+клиента LLM-провайдера — другой `base_url`, ADR-6.3; настройки этого
+клиента переименованы и параметризованы в Sprint 12, ADR-12.1) и
 `AsyncQdrantClient`, и закрывает оба при остановке — тем же `async with`,
 что и клиент LLM-провайдера. В отличие от `init_database`,
 `ensure_collection` здесь НЕ
@@ -39,10 +40,10 @@ Qdrant при старте логируется и не мешает прило�
 С задачи S8-03 (Sprint 8, ADR-8.2) `_lifespan` дополнительно публикует на
 `app.state` три объекта, которые уже создавались здесь и раньше, но не
 были доступны driving-адаптерам за пределами `ApplicationContainer`:
-`settings`, `openai_http_client`, `qdrant_client` (`http_client`/
+`settings`, `embedding_http_client`, `qdrant_client` (`http_client`/
 `db_engine`/`db_session_factory`/`container` уже публиковались). Четыре
 новые accessor-функции (`get_settings`/`get_db_session_factory`/
-`get_openai_http_client`/`get_qdrant_client`) — тот же приём, что уже
+`get_embedding_http_client`/`get_qdrant_client`) — тот же приём, что уже
 существующие `get_container`/`get_process_user_message`: единственный
 способ для admin REST-зависимостей (`presentation/api/dependencies/
 documents.py`, S8-05) добраться до этих объектов через `Request`, не
@@ -121,17 +122,17 @@ def create_application(settings: Settings) -> FastAPI:
                 # порядок терпимости к внешним генеративным/embedding API,
                 # отдельная настройка ради одного значения не оправдана.
                 httpx.AsyncClient(
-                    base_url=settings.openai.base_url,
+                    base_url=settings.embedding_provider.base_url,
                     timeout=settings.llm.timeout,
-                ) as openai_http_client,
+                ) as embedding_http_client,
             ):
                 app.state.container = build_container(
-                    settings, http_client, openai_http_client, qdrant_client, db_session_factory
+                    settings, http_client, embedding_http_client, qdrant_client, db_session_factory
                 )
                 app.state.db_engine = db_engine
                 app.state.db_session_factory = db_session_factory
                 app.state.settings = settings
-                app.state.openai_http_client = openai_http_client
+                app.state.embedding_http_client = embedding_http_client
                 app.state.qdrant_client = qdrant_client
                 yield
                 # Дошли сюда при остановке приложения: `async with` сейчас
@@ -207,9 +208,9 @@ def get_db_session_factory(request: Request) -> async_sessionmaker[AsyncSession]
     return session_factory
 
 
-def get_openai_http_client(request: Request) -> httpx.AsyncClient:
-    """FastAPI-зависимость: уже открытый клиент OpenAI (эмбеддинги, S8-03) — не создаёт новый клиент."""
-    client: httpx.AsyncClient = request.app.state.openai_http_client
+def get_embedding_http_client(request: Request) -> httpx.AsyncClient:
+    """FastAPI-зависимость: уже открытый клиент провайдера эмбеддингов (S8-03; переименовано в S12-01)."""
+    client: httpx.AsyncClient = request.app.state.embedding_http_client
     return client
 
 

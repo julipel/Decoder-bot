@@ -58,15 +58,15 @@ _PARSERS: dict[DocumentType, DocumentParser] = {
 def build_index_document_use_case(
     settings: Settings,
     session: AsyncSession,
-    openai_http_client: httpx.AsyncClient,
+    embedding_http_client: httpx.AsyncClient,
     qdrant_client: AsyncQdrantClient,
 ) -> IndexKnowledgeDocumentUseCase:
     document_repository = build_knowledge_document_repository(session)
     document_storage = LocalDocumentStorageAdapter(settings.knowledge.storage_path)
     embedding_provider = OpenAiEmbeddingProvider(
-        client=openai_http_client,
-        api_key=settings.openai.api_key.get_secret_value(),
-        model=settings.openai.embedding_model,
+        client=embedding_http_client,
+        api_key=settings.embedding_provider.api_key.get_secret_value(),
+        model=settings.embedding_provider.embedding_model,
     )
     vector_repository = QdrantVectorRepository(client=qdrant_client, collection_name=settings.qdrant.collection_name)
     chunker = StructuralChunker(
@@ -114,7 +114,7 @@ def build_get_document_use_case(session: AsyncSession) -> GetKnowledgeDocumentUs
 def build_reindex_document_use_case(
     settings: Settings,
     session: AsyncSession,
-    openai_http_client: httpx.AsyncClient,
+    embedding_http_client: httpx.AsyncClient,
     qdrant_client: AsyncQdrantClient,
 ) -> ReindexKnowledgeDocumentUseCase:
     """
@@ -124,7 +124,7 @@ def build_reindex_document_use_case(
     """
     document_repository = build_knowledge_document_repository(session)
     document_storage = LocalDocumentStorageAdapter(settings.knowledge.storage_path)
-    index_use_case = build_index_document_use_case(settings, session, openai_http_client, qdrant_client)
+    index_use_case = build_index_document_use_case(settings, session, embedding_http_client, qdrant_client)
     return ReindexKnowledgeDocumentUseCase(
         document_repository=document_repository,
         document_storage=document_storage,
