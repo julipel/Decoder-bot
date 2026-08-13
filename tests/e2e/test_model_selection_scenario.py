@@ -14,9 +14,10 @@ S5-08 проверял `PromptBuildResult.system_prompt`.
 
 Боевой каталог (см. `infrastructure/model_catalog/catalog.json`)
 используется как есть: `openai/gpt-4o-mini` (умолчание, AVAILABLE),
-`anthropic/claude-3.5-sonnet` (AVAILABLE, другие `temperature`/
+`anthropic/claude-sonnet-5` (AVAILABLE, другие `temperature`/
 `max_tokens`), `anthropic/claude-3-haiku` (UNAVAILABLE — уже в сид-данных,
-не создаётся тестом).
+не создаётся тестом; сохранена в каталоге как устаревшая запись именно
+для этого сценария после смены агрегатора на RouterAI).
 
 Четыре сценария (backlog_7_tasks.md, S7-08):
 
@@ -85,7 +86,7 @@ _TEST_BOT_TOKEN = "123456:test-token"  # noqa: S105 - фиктивный ток�
 
 # Значения из боевого сид-каталога (infrastructure/model_catalog/catalog.json) — см. докстринг модуля.
 _DEFAULT_MODEL_ID = ModelId("openai/gpt-4o-mini")
-_SONNET_MODEL_ID = ModelId("anthropic/claude-3.5-sonnet")
+_SONNET_MODEL_ID = ModelId("anthropic/claude-sonnet-5")
 _UNAVAILABLE_MODEL_ID = ModelId("anthropic/claude-3-haiku")
 
 
@@ -473,7 +474,7 @@ class TestFullModelSelectionCycle:
         callback_update.callback_query.edit_message_text.assert_awaited_once()
         assert callback_update.callback_query.edit_message_text.call_args.args[
             0
-        ] == MODEL_SELECTED_MESSAGE_TEMPLATE.format(name="Claude 3.5 Sonnet")
+        ] == MODEL_SELECTED_MESSAGE_TEMPLATE.format(name="Claude Sonnet 5")
 
     async def test_selecting_unavailable_model_is_rejected_and_visible_to_the_user(
         self,

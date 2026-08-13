@@ -38,6 +38,7 @@ def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Settings:
     monkeypatch.setenv("LLM_PROVIDER_BASE_URL", "https://example-aggregator.test/v1")
     monkeypatch.setenv("LLM_PROVIDER_DEFAULT_MODEL", "test-model")
     monkeypatch.setenv("EMBEDDING_PROVIDER_API_KEY", "test-embedding-api-key")
+    monkeypatch.setenv("EMBEDDING_PROVIDER_BASE_URL", "https://api.openai.com/v1")
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-api-key")
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'test-app.db'}")
     return Settings()

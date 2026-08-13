@@ -285,6 +285,7 @@ def build_container(
                 client=embedding_http_client,
                 api_key=settings.embedding_provider.api_key.get_secret_value(),
                 timeout=health_check_timeout,
+                service_name="embedding_provider",
             ),
         ]
     )

@@ -60,6 +60,7 @@ async def _run_check(settings: Settings) -> int:
                         client=embedding_http_client,
                         api_key=settings.embedding_provider.api_key.get_secret_value(),
                         timeout=timeout,
+                        service_name="embedding_provider",
                     ),
                 ]
             )

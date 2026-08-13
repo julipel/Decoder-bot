@@ -95,12 +95,12 @@ class TestOpenAiHealthCheck:
     @respx.mock
     async def test_healthy_on_200(self, http_client: httpx.AsyncClient) -> None:
         respx.get("https://example.test/models").mock(return_value=httpx.Response(200, json={"data": []}))
-        check = OpenAiHealthCheck(client=http_client, api_key="sk-test", timeout=1.0)
+        check = OpenAiHealthCheck(client=http_client, api_key="sk-test", timeout=1.0, service_name="embedding_provider")
 
         status = await check.check()
 
         assert status.healthy is True
-        assert status.name == "openai"
+        assert status.name == "embedding_provider"
 
     @respx.mock
     async def test_unhealthy_on_401(self, http_client: httpx.AsyncClient) -> None:

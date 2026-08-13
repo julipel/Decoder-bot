@@ -49,6 +49,7 @@ def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Settings:
     monkeypatch.setenv("LLM_PROVIDER_DEFAULT_MODEL", "test-model")
     monkeypatch.setenv("LLM_PROVIDER_PROVIDER_ID", "test-provider")
     monkeypatch.setenv("EMBEDDING_PROVIDER_API_KEY", "test-embedding-api-key")
+    monkeypatch.setenv("EMBEDDING_PROVIDER_BASE_URL", "https://api.openai.com/v1")
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-api-key")
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'test-app.db'}")
     monkeypatch.setenv("ADMIN_HEALTH_CHECK_TIMEOUT", "2.0")
@@ -89,7 +90,7 @@ class TestAllServicesHealthy:
         assert body["all_healthy"] is True
         assert len(body["services"]) == 3
         assert all(service["healthy"] for service in body["services"])
-        assert {service["name"] for service in body["services"]} == {"qdrant", "test-provider", "openai"}
+        assert {service["name"] for service in body["services"]} == {"qdrant", "test-provider", "embedding_provider"}
 
 
 class TestAllServicesUnavailable:
@@ -131,7 +132,7 @@ class TestMixedAvailability:
         by_name = {service["name"]: service["healthy"] for service in body["services"]}
         assert by_name["qdrant"] is True
         assert by_name["test-provider"] is True
-        assert by_name["openai"] is False
+        assert by_name["embedding_provider"] is False
 
 
 class TestAdminHealthAuth:

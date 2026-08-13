@@ -122,6 +122,7 @@ async def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Settings:
     monkeypatch.setenv("LLM_PROVIDER_BASE_URL", _LLM_PROVIDER_BASE_URL)
     monkeypatch.setenv("LLM_PROVIDER_DEFAULT_MODEL", "test-model")
     monkeypatch.setenv("EMBEDDING_PROVIDER_API_KEY", "e2e-openai-key")
+    monkeypatch.setenv("EMBEDDING_PROVIDER_BASE_URL", "https://api.openai.com/v1")
     monkeypatch.setenv("ADMIN_API_KEY", "e2e-admin-api-key")
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'e2e-rag.db'}"
     monkeypatch.setenv("DATABASE_URL", database_url)
