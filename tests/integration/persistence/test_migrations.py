@@ -192,7 +192,10 @@ class TestProfileCatalogSeedMigration:
         rows = _profile_rows(db_path)
         default_rows = [row for row in rows if row[2] == 1]
         assert len(default_rows) == 1
-        assert default_rows[0][1] == "Деловой"
+        # С ревизии 6f3debd9552c (data-миграция поверх S3-04) дефолтный
+        # профиль называется "Личный ассистент" — тот же id (PROFILE_
+        # BUSINESS_ID), только обновлённый текст персоны.
+        assert default_rows[0][1] == "Личный ассистент"
 
     def test_downgrade_to_pre_seed_removes_only_seed_rows_not_schema(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -392,10 +395,12 @@ class TestUserActiveModelsSchemaMigration:
         table_names_before = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
         assert "user_active_models" in table_names_before
 
-        # user_active_models — текущий head (ed5701d2f683): "-1" здесь
-        # безопасен ровно до следующей миграции поверх него (как и было
-        # ранее для knowledge_documents, см. класс выше).
-        command.downgrade(config, "-1")
+        # user_active_models больше не head после 6f3debd9552c (data-
+        # миграция персон профилей поверх S3-04) — целимся явно в ревизию
+        # перед user_active_models (82d9884e32a2), не в относительный "-1"
+        # от head (тот же урок про сдвиг head, что и в комментариях выше
+        # для knowledge_documents/memory_records).
+        command.downgrade(config, "82d9884e32a2")
 
         table_names_after = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
         assert "user_active_models" not in table_names_after
@@ -411,3 +416,71 @@ class TestUserActiveModelsSchemaMigration:
 
         table_names = {name for type_, name, _ in _schema_objects(db_path) if type_ == "table"}
         assert "user_active_models" in table_names
+
+
+class TestProfileCatalogPersonaMigration:
+    """
+    Тесты data-миграции персон профилей (`6f3debd9552c`, поверх сид-
+    миграции S3-04 `27c4e9f2a103`) — `UPDATE` содержимого тех же 4 строк
+    по `id`, без изменения схемы, `id` и `is_default`-слота.
+    """
+
+    def test_upgrade_head_produces_new_persona_names_with_one_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = tmp_path / "persona-upgrade.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+
+        rows = _profile_rows(db_path)
+        names = {row[1] for row in rows}
+        assert names == {"Честный друг", "Психолог-наставник", "Личный ассистент", "Контент-стратег"}
+
+        default_rows = [row for row in rows if row[2] == 1]
+        assert len(default_rows) == 1
+        assert default_rows[0][1] == "Личный ассистент"
+
+    def test_downgrade_to_pre_persona_migration_restores_original_names(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = tmp_path / "persona-downgrade.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+
+        # Явный целевой ревижн "ed5701d2f683" (последняя ревизия перед
+        # 6f3debd9552c), а не относительный "-1" — тот же урок про сдвиг
+        # head, что и в комментариях выше по файлу: если поверх
+        # 6f3debd9552c появится новая миграция, "-1" откатит уже не эту.
+        command.downgrade(config, "ed5701d2f683")
+
+        rows = _profile_rows(db_path)
+        assert len(rows) == 4
+        names = {row[1] for row in rows}
+        assert names == {"Экспертный", "Дружелюбный", "Деловой", "Креативный"}
+
+        default_rows = [row for row in rows if row[2] == 1]
+        assert len(default_rows) == 1
+        assert default_rows[0][1] == "Деловой"
+
+    def test_upgrade_head_after_downgrade_reproduces_new_names_with_stable_ids(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = tmp_path / "persona-cycle.db"
+        config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
+
+        command.upgrade(config, "head")
+        ids_before = {row[0] for row in _profile_rows(db_path)}
+
+        # См. комментарий выше — явный ревижн, не относительный "-1".
+        command.downgrade(config, "ed5701d2f683")
+        command.upgrade(config, "head")
+
+        rows_after = _profile_rows(db_path)
+        ids_after = {row[0] for row in rows_after}
+        names_after = {row[1] for row in rows_after}
+
+        assert ids_after == ids_before
+        assert len(ids_after) == 4
+        assert names_after == {"Честный друг", "Психолог-наставник", "Личный ассистент", "Контент-стратег"}
