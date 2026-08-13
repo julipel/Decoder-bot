@@ -229,7 +229,7 @@ class TestSettingsAggregation:
         monkeypatch.setenv("LLM_PROVIDER_API_KEY", "api-key")
         monkeypatch.setenv("LLM_PROVIDER_BASE_URL", "https://example-aggregator.test/v1")
         monkeypatch.setenv("LLM_PROVIDER_DEFAULT_MODEL", "test-model")
-        monkeypatch.setenv("OPENAI_API_KEY", "embedding-api-key")
+        monkeypatch.setenv("EMBEDDING_PROVIDER_API_KEY", "embedding-api-key")
         monkeypatch.setenv("ADMIN_API_KEY", "admin-api-key")
         monkeypatch.setenv("APP_PORT", "8080")
         monkeypatch.setenv("LLM_TEMPERATURE", "0.3")

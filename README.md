@@ -230,9 +230,12 @@ Prompt Engine (Sprint 4) не добавляет ни одной новой за
 С Sprint 6 подключены `qdrant-client` (векторное хранилище для RAG,
 отдельный сервис `qdrant` в `docker-compose.yml`), `python-docx`/`pypdf`
 (парсинг документов `.docx`/`.pdf` базы знаний) — эмбеддинги считаются
-через OpenAI напрямую (`OPENAI_API_KEY`, отдельно от `LLM_PROVIDER_*` —
+через настроенный `EMBEDDING_PROVIDER_BASE_URL` (по умолчанию — прямой
+OpenAI, `EMBEDDING_PROVIDER_API_KEY`, отдельно от `LLM_PROVIDER_*` —
 выбранный LLM-агрегатор не гарантированно отдаёт embeddings API), а не
-через настроенный LLM-провайдер.
+через настроенный LLM-провайдер. С Sprint 12 (ADR-12.1) провайдер
+эмбеддингов параметризован — можно направить на OpenAI-совместимый
+агрегатор (например RouterAI), не только на прямой OpenAI.
 Каталог AI-моделей (Sprint 7) не добавляет ни одной новой зависимости —
 статичный JSON-файл (`infrastructure/model_catalog/catalog.json`),
 парсится через уже используемый `pydantic` (ADR-7.4); с Sprint 11
@@ -428,7 +431,7 @@ upgrade head` не нужно и не требуется (Sprint 11, S11-04, ADR
 | `DatabaseSettings` | `DATABASE_` | — | `DATABASE_URL` |
 | `PromptSettings` | `PROMPT_` | — | `PROMPT_TOKEN_BUDGET` (эвристический бюджет `TokenBudgetPolicy`, ADR-4.4) |
 | `MemorySettings` | `MEMORY_` | — | `MEMORY_MAX_RELEVANT_RECORDS` (лимит `MemoryRepository.find_relevant`, по умолчанию 5, ADR-5.6) |
-| `OpenAiSettings` | `OPENAI_` | `OPENAI_API_KEY` | `OPENAI_BASE_URL`, `OPENAI_EMBEDDING_MODEL` (провайдер эмбеддингов RAG, Sprint 6, ADR-6.3) |
+| `EmbeddingProviderSettings` | `EMBEDDING_PROVIDER_` | `EMBEDDING_PROVIDER_API_KEY` | `EMBEDDING_PROVIDER_BASE_URL` (по умолчанию — прямой OpenAI), `EMBEDDING_PROVIDER_EMBEDDING_MODEL` (провайдер эмбеддингов RAG, Sprint 6, ADR-6.3, параметризовано в Sprint 12, ADR-12.1) |
 | `QdrantSettings` | `QDRANT_` | — | `QDRANT_HOST`, `QDRANT_PORT`, `QDRANT_COLLECTION_NAME`, `QDRANT_VECTOR_SIZE` |
 | `KnowledgeSettings` | `KNOWLEDGE_` | — | `KNOWLEDGE_MAX_FILE_SIZE_BYTES`, `KNOWLEDGE_CHUNK_SIZE`, `KNOWLEDGE_CHUNK_OVERLAP`, `KNOWLEDGE_SEARCH_LIMIT`, `KNOWLEDGE_MIN_RELEVANCE_SCORE`, `KNOWLEDGE_STORAGE_PATH` |
 | `ModelCatalogSettings` | `MODEL_CATALOG_` | — | `MODEL_CATALOG_CATALOG_PATH` (путь к `catalog.json`, по умолчанию сид-файл внутри пакета, Sprint 7, ADR-7.4) |
@@ -637,7 +640,7 @@ LLM или реальному Qdrant/OpenAI — единственные под�
 дефолтного `localhost` в `.env`) — на этом основан `GET /admin/health`
 (Sprint 8): подтверждено эмпирически при финальной интеграции (S8-11)
 реальным запросом изнутри контейнера с реальными `LLM_PROVIDER_API_KEY`/
-`OPENAI_API_KEY`, все три сервиса вернулись `healthy: true`.
+`EMBEDDING_PROVIDER_API_KEY`, все три сервиса вернулись `healthy: true`.
 
 Секреты не хранятся в `docker-compose.yml` и не копируются в образ —
 только через `env_file: .env` (создать из `.env.example`, сам `.env` не коммитится).
@@ -680,7 +683,7 @@ Production-развёртывание (Sprint 11, S11-04, ADR-11.5) подним
 ```powershell
 cp .env.example .env
 # Заполнить реальными значениями: TELEGRAM_BOT_TOKEN, LLM_PROVIDER_API_KEY/
-# BASE_URL/DEFAULT_MODEL, OPENAI_API_KEY, ADMIN_API_KEY, APP_LOG_LEVEL
+# BASE_URL/DEFAULT_MODEL, EMBEDDING_PROVIDER_API_KEY, ADMIN_API_KEY, APP_LOG_LEVEL
 # (по умолчанию INFO — достаточно для прода), DOMAIN (публичное доменное
 # имя сервера или localhost для локальной проверки), опционально
 # RETENTION_DAYS (см. раздел «Резервное копирование и восстановление»).

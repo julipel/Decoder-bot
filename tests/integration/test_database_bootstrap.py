@@ -25,7 +25,7 @@ def _settings(monkeypatch: pytest.MonkeyPatch, database_url: str) -> Settings:
     monkeypatch.setenv("LLM_PROVIDER_API_KEY", "test-api-key")
     monkeypatch.setenv("LLM_PROVIDER_BASE_URL", "https://example-aggregator.test/v1")
     monkeypatch.setenv("LLM_PROVIDER_DEFAULT_MODEL", "test-model")
-    monkeypatch.setenv("OPENAI_API_KEY", "test-embedding-api-key")
+    monkeypatch.setenv("EMBEDDING_PROVIDER_API_KEY", "test-embedding-api-key")
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-api-key")
     monkeypatch.setenv("DATABASE_URL", database_url)
     return Settings()

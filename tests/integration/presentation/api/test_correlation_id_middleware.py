@@ -37,7 +37,7 @@ def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Settings:
     monkeypatch.setenv("LLM_PROVIDER_API_KEY", "test-api-key")
     monkeypatch.setenv("LLM_PROVIDER_BASE_URL", _LLM_PROVIDER_BASE_URL)
     monkeypatch.setenv("LLM_PROVIDER_DEFAULT_MODEL", "test-model")
-    monkeypatch.setenv("OPENAI_API_KEY", "test-embedding-api-key")
+    monkeypatch.setenv("EMBEDDING_PROVIDER_API_KEY", "test-embedding-api-key")
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-api-key")
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'test-app.db'}")
     monkeypatch.setenv("ADMIN_HEALTH_CHECK_TIMEOUT", "2.0")

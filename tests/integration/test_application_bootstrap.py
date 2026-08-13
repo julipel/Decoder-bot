@@ -37,7 +37,7 @@ def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Settings:
     monkeypatch.setenv("LLM_PROVIDER_API_KEY", "test-api-key")
     monkeypatch.setenv("LLM_PROVIDER_BASE_URL", "https://example-aggregator.test/v1")
     monkeypatch.setenv("LLM_PROVIDER_DEFAULT_MODEL", "test-model")
-    monkeypatch.setenv("OPENAI_API_KEY", "test-embedding-api-key")
+    monkeypatch.setenv("EMBEDDING_PROVIDER_API_KEY", "test-embedding-api-key")
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-api-key")
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'test-app.db'}")
     return Settings()
@@ -86,14 +86,14 @@ def test_lifespan_initializes_database_engine_and_session_factory(settings: Sett
 
 
 def test_lifespan_publishes_settings_and_external_clients_on_app_state(settings: Settings) -> None:
-    """S8-03, ADR-8.2: settings/openai_http_client/qdrant_client должны быть доступны admin-зависимостям."""
+    """S8-03, ADR-8.2: settings/embedding_http_client/qdrant_client должны быть доступны admin-зависимостям."""
     app = create_application(settings)
 
     with TestClient(app):
         published_settings = app.state.settings
-        openai_http_client = app.state.openai_http_client
+        embedding_http_client = app.state.embedding_http_client
         qdrant_client = app.state.qdrant_client
 
     assert published_settings is settings
-    assert isinstance(openai_http_client, httpx.AsyncClient)
+    assert isinstance(embedding_http_client, httpx.AsyncClient)
     assert isinstance(qdrant_client, AsyncQdrantClient)
