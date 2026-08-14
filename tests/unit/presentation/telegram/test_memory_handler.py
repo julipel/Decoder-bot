@@ -27,7 +27,12 @@ from dekoder.application.memory.use_cases.delete_memory_record import DeleteMemo
 from dekoder.application.memory.use_cases.list_memory_records import ListMemoryRecordsUseCase
 from dekoder.domain.memory.entities import MemoryRecord
 from dekoder.domain.memory.value_objects import MemoryCategory, MemoryConfidence, MemorySource, MemoryStatus
-from dekoder.presentation.telegram.handlers.memory import MemoryDeleteCallbackHandler, RememberCommandHandler
+from dekoder.presentation.telegram.handlers.memory import (
+    PENDING_REMEMBER_KEY,
+    REMEMBER_PROMPT_MESSAGE,
+    MemoryDeleteCallbackHandler,
+    RememberCommandHandler,
+)
 from dekoder.shared.logging import clear_request_context, configure_logging
 
 
@@ -58,6 +63,11 @@ def _make_text_update(text: str, user_id: int = 111) -> MagicMock:
     return update
 
 
+def _make_context() -> MagicMock:
+    """`user_data` — настоящий `dict` (не `MagicMock`), чтобы можно было проверить выставленный флаг."""
+    return MagicMock(user_data={})
+
+
 def _make_callback_update(record_id: object, user_id: int = 222) -> MagicMock:
     update = MagicMock(spec=Update)
     update.effective_message = None
@@ -69,6 +79,38 @@ def _make_callback_update(record_id: object, user_id: int = 222) -> MagicMock:
     query.edit_message_text = AsyncMock()
     update.callback_query = query
     return update
+
+
+class TestRememberWithoutArgumentPromptsForText:
+    """
+    Sprint 12: `/remember` без аргумента больше не показывает статичную
+    ошибку — просит написать факт следующим сообщением и выставляет
+    `PENDING_REMEMBER_KEY` в `context.user_data` (завершает
+    `TextMessageHandler`, см. `test_messages_handler.py::
+    TestPendingRememberCompletion`).
+    """
+
+    async def test_prompts_for_text_and_sets_pending_flag(self) -> None:
+        create_use_case = CreateMemoryRecordUseCase(repositories=make_in_memory_repositories_factory())
+        handler = RememberCommandHandler(create_use_case)
+        update = _make_text_update("/remember")
+        context = _make_context()
+
+        await handler(update, context)
+
+        update.effective_message.reply_text.assert_awaited_once_with(REMEMBER_PROMPT_MESSAGE)
+        assert context.user_data[PENDING_REMEMBER_KEY] is True
+
+    async def test_whitespace_only_argument_also_prompts(self) -> None:
+        create_use_case = CreateMemoryRecordUseCase(repositories=make_in_memory_repositories_factory())
+        handler = RememberCommandHandler(create_use_case)
+        update = _make_text_update("/remember    ")
+        context = _make_context()
+
+        await handler(update, context)
+
+        update.effective_message.reply_text.assert_awaited_once_with(REMEMBER_PROMPT_MESSAGE)
+        assert context.user_data[PENDING_REMEMBER_KEY] is True
 
 
 class TestRememberCommandHandlerAuditLog:

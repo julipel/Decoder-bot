@@ -90,6 +90,7 @@ from dekoder.presentation.telegram.bot import (
     register_model_handlers,
     register_new_conversation_handler,
     register_profile_handlers,
+    set_bot_commands,
 )
 from dekoder.shared.config import Settings
 from dekoder.shared.errors import InfrastructureError
@@ -130,6 +131,7 @@ def main() -> None:
         # post_init вызывается после успешной Application.initialize()
         # (в т.ч. getMe) — если этот лог не появился, polling не начался.
         _logger.info("telegram_polling_started")
+        await set_bot_commands(app)
         db_engine, db_session_factory = await init_database(settings)
         db_engine_holder["engine"] = db_engine
         try:
@@ -139,7 +141,7 @@ def main() -> None:
             _logger.error("qdrant_collection_unavailable_at_startup", error=str(error))
 
         container = build_container(settings, http_client, embedding_http_client, qdrant_client, db_session_factory)
-        register_message_handler(app, container.process_user_message)
+        register_message_handler(app, container.process_user_message, container.create_memory_record)
         register_new_conversation_handler(app, container.start_new_conversation)
         register_clear_conversation_handler(app, container.clear_conversation)
         register_profile_handlers(app, container.list_profiles, container.get_active_profile, container.select_profile)
@@ -170,7 +172,9 @@ def main() -> None:
 
     application.post_init = _startup
     application.post_shutdown = _shutdown
-    application.run_polling()
+    # bootstrap_retries по умолчанию 0 — единственный неудачный запрос get_me()
+    # на нестабильной сети роняет процесс целиком до первого события polling.
+    application.run_polling(bootstrap_retries=3)
 
 
 if __name__ == "__main__":

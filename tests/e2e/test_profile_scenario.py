@@ -50,6 +50,7 @@ from tests.support.prompt_engine import make_test_prompt_builder
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
 from dekoder.application.conversation.ports import ConversationRepositoriesFactory
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
+from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.application.profile.dto import GetActiveProfileCommand, SelectProfileCommand
 from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
 from dekoder.application.profile.use_cases.list_profiles import ListProfiles
@@ -140,13 +141,21 @@ def _make_process_user_message(
 
 def _build_application(
     process_user_message: ProcessUserMessage,
+    repositories_factory: ConversationRepositoriesFactory,
     list_profiles: ListProfiles,
     get_active_profile: GetActiveProfile,
     select_profile: SelectProfile,
 ) -> Application:
-    """Собирает реальный `telegram.ext.Application`, тот же принцип, что и `telegram_main.py::_startup`."""
+    """
+    Собирает реальный `telegram.ext.Application`, тот же принцип, что и
+    `telegram_main.py::_startup`. `repositories_factory` (Sprint 12) —
+    строит `CreateMemoryRecordUseCase` для `register_message_handler`; ни
+    один сценарий этого файла не выставляет `PENDING_REMEMBER_KEY`.
+    """
     application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
-    register_message_handler(application, process_user_message)
+    register_message_handler(
+        application, process_user_message, CreateMemoryRecordUseCase(repositories=repositories_factory)
+    )
     register_profile_handlers(application, list_profiles, get_active_profile, select_profile)
     return application
 
@@ -280,7 +289,7 @@ class TestDefaultProfileWithoutSelection:
         catalog = await _seed_catalog(session_factory)
         provider = FakeLLMProvider(response=_response())
         process_user_message = _make_process_user_message(repositories_factory, provider)
-        application = _build_application(process_user_message, *use_cases)
+        application = _build_application(process_user_message, repositories_factory, *use_cases)
         callbacks = _handler_callbacks(application)
 
         await callbacks["text"](_make_text_update(user_id=1001), MagicMock())  # type: ignore[operator]
@@ -304,7 +313,7 @@ class TestProfileSwitchAffectsOnlyFuture:
         catalog = await _seed_catalog(session_factory)
         provider = FakeLLMProvider(response=_response("Ответ 1"))
         process_user_message = _make_process_user_message(repositories_factory, provider)
-        application = _build_application(process_user_message, *use_cases)
+        application = _build_application(process_user_message, repositories_factory, *use_cases)
         callbacks = _handler_callbacks(application)
 
         await callbacks["text"](_make_text_update(text="Первое сообщение", user_id=2001), MagicMock())  # type: ignore[operator]
@@ -318,12 +327,12 @@ class TestProfileSwitchAffectsOnlyFuture:
         callback_update = _make_callback_update(catalog["creative"], user_id=2001)
         await callbacks["profile_callback"](callback_update, MagicMock())  # type: ignore[operator]
         callback_update.callback_query.edit_message_text.assert_awaited_once_with(
-            PROFILE_SELECTED_MESSAGE_TEMPLATE.format(name="Креативный")
+            PROFILE_SELECTED_MESSAGE_TEMPLATE.format(name="Креативный", description="Образно, с метафорами.")
         )
 
         provider_second = FakeLLMProvider(response=_response("Ответ 2"))
         process_user_message_second = _make_process_user_message(repositories_factory, provider_second)
-        application_second = _build_application(process_user_message_second, *use_cases)
+        application_second = _build_application(process_user_message_second, repositories_factory, *use_cases)
         callbacks_second = _handler_callbacks(application_second)
 
         await callbacks_second["text"](  # type: ignore[operator]
@@ -357,7 +366,7 @@ class TestUserIsolation:
         # пользователь A выбирает "Креативный", пользователь B ничего не выбирает
         provider_bootstrap = FakeLLMProvider(response=_response())
         bootstrap_process_user_message = _make_process_user_message(repositories_factory, provider_bootstrap)
-        bootstrap_application = _build_application(bootstrap_process_user_message, *use_cases)
+        bootstrap_application = _build_application(bootstrap_process_user_message, repositories_factory, *use_cases)
         bootstrap_callbacks = _handler_callbacks(bootstrap_application)
         await bootstrap_callbacks["text"](_make_text_update(user_id=3001), MagicMock())  # type: ignore[operator]
         await bootstrap_callbacks["text"](_make_text_update(user_id=3002), MagicMock())  # type: ignore[operator]
@@ -370,8 +379,12 @@ class TestUserIsolation:
 
         provider_a = FakeLLMProvider(response=_response())
         provider_b = FakeLLMProvider(response=_response())
-        app_a = _build_application(_make_process_user_message(repositories_factory, provider_a), *use_cases)
-        app_b = _build_application(_make_process_user_message(repositories_factory, provider_b), *use_cases)
+        app_a = _build_application(
+            _make_process_user_message(repositories_factory, provider_a), repositories_factory, *use_cases
+        )
+        app_b = _build_application(
+            _make_process_user_message(repositories_factory, provider_b), repositories_factory, *use_cases
+        )
         callbacks_a = _handler_callbacks(app_a)
         callbacks_b = _handler_callbacks(app_b)
 
@@ -396,7 +409,9 @@ class TestUnknownProfileIdIsRejected:
     ) -> None:
         await _seed_catalog(session_factory)
         provider = FakeLLMProvider(response=_response())
-        application = _build_application(_make_process_user_message(repositories_factory, provider), *use_cases)
+        application = _build_application(
+            _make_process_user_message(repositories_factory, provider), repositories_factory, *use_cases
+        )
         callbacks = _handler_callbacks(application)
 
         # регистрируем пользователя первым обычным сообщением
@@ -429,7 +444,9 @@ class TestFullProfileCycle:
     ) -> None:
         catalog = await _seed_catalog(session_factory)
         provider = FakeLLMProvider(response=_response())
-        application = _build_application(_make_process_user_message(repositories_factory, provider), *use_cases)
+        application = _build_application(
+            _make_process_user_message(repositories_factory, provider), repositories_factory, *use_cases
+        )
         callbacks = _handler_callbacks(application)
 
         await callbacks["text"](_make_text_update(user_id=5001), MagicMock())  # type: ignore[operator]
@@ -447,5 +464,5 @@ class TestFullProfileCycle:
 
         callback_update.callback_query.answer.assert_awaited_once()
         callback_update.callback_query.edit_message_text.assert_awaited_once_with(
-            PROFILE_SELECTED_MESSAGE_TEMPLATE.format(name="Креативный")
+            PROFILE_SELECTED_MESSAGE_TEMPLATE.format(name="Креативный", description="Образно, с метафорами.")
         )

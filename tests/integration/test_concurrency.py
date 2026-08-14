@@ -63,6 +63,7 @@ from tests.support.prompt_engine import make_test_prompt_builder
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
 from dekoder.application.conversation.ports import ConversationRepositoriesFactory
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
+from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.bootstrap.repositories import build_conversation_repositories_factory
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
 from dekoder.infrastructure.persistence.base import Base
@@ -125,9 +126,15 @@ def _make_process_user_message(
     )
 
 
-def _build_application(process_user_message: ProcessUserMessage) -> Application:
+def _build_application(
+    process_user_message: ProcessUserMessage, repositories_factory: ConversationRepositoriesFactory
+) -> Application:
     application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
-    register_message_handler(application, process_user_message)
+    # Sprint 12: сценарии этого файла не выставляют PENDING_REMEMBER_KEY —
+    # CreateMemoryRecordUseCase здесь ни разу не исполняется.
+    register_message_handler(
+        application, process_user_message, CreateMemoryRecordUseCase(repositories=repositories_factory)
+    )
     return application
 
 
@@ -209,7 +216,9 @@ class TestConcurrentRequestsDoNotBlockEventLoop:
         delay = 0.5
         n = 5
         provider = _DelayedFakeLLMProvider(delay=delay, response=_response())
-        application = _build_application(_make_process_user_message(repositories_factory, provider))
+        application = _build_application(
+            _make_process_user_message(repositories_factory, provider), repositories_factory
+        )
         callback = _text_handler_callback(application)
         updates = [_make_update(f"Сообщение {i}", user_id=1000 + i) for i in range(n)]
 
@@ -232,7 +241,9 @@ class TestConnectionPoolIsReleased:
         self, engine: AsyncEngine, repositories_factory: ConversationRepositoriesFactory
     ) -> None:
         provider = _DelayedFakeLLMProvider(delay=0.01, response=_response())
-        application = _build_application(_make_process_user_message(repositories_factory, provider))
+        application = _build_application(
+            _make_process_user_message(repositories_factory, provider), repositories_factory
+        )
         callback = _text_handler_callback(application)
         updates = [_make_update(f"Запрос {i}", user_id=2000 + i) for i in range(5)]
 
@@ -256,7 +267,9 @@ class TestConnectionPoolIsReleased:
             session_factory, fail_on_save_call=1, error=db_error
         )
         provider = _DelayedFakeLLMProvider(delay=0.01, response=_response())
-        application = _build_application(_make_process_user_message(faulty_repositories_factory, provider))
+        application = _build_application(
+            _make_process_user_message(faulty_repositories_factory, provider), faulty_repositories_factory
+        )
         callback = _text_handler_callback(application)
         update = _make_update("Сбойный запрос", user_id=3000)
 
@@ -278,7 +291,9 @@ class TestConcurrentProviderErrorsDoNotCrashApp:
             delay=0.05,
             error=LLMProviderError(message="LLM провайдер недоступен", user_message="Ошибка модели, попробуйте позже."),
         )
-        application = _build_application(_make_process_user_message(repositories_factory, provider))
+        application = _build_application(
+            _make_process_user_message(repositories_factory, provider), repositories_factory
+        )
         callback = _text_handler_callback(application)
         updates = [_make_update(f"Вопрос {i}", user_id=4000 + i) for i in range(n)]
 

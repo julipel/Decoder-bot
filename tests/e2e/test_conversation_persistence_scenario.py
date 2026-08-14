@@ -64,6 +64,7 @@ from dekoder.application.conversation.ports import ConversationRepositories, Con
 from dekoder.application.conversation.use_cases.clear_conversation import ClearConversation
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.application.conversation.use_cases.start_new_conversation import StartNewConversation
+from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.bootstrap.repositories import (
     build_conversation_repositories_factory,
     build_conversation_repository,
@@ -153,6 +154,7 @@ def _make_process_user_message(
 
 def _build_application(
     process_user_message: ProcessUserMessage,
+    repositories_factory: ConversationRepositoriesFactory,
     start_new_conversation: StartNewConversation | None = None,
     clear_conversation: ClearConversation | None = None,
 ) -> Application:
@@ -161,9 +163,16 @@ def _build_application(
     `telegram_main.py::_startup` — только композиция обработчиков,
     поверх уже готовых use cases (никакого DI внутри этой функции самой
     по себе, кроме передачи уже собранных зависимостей дальше).
+
+    Sprint 12: `repositories_factory` строит `CreateMemoryRecordUseCase`
+    для `register_message_handler` — ни один сценарий этого файла не
+    выставляет `PENDING_REMEMBER_KEY`, значит use case здесь ни разу не
+    исполняется, но `TextMessageHandler` требует его в конструкторе.
     """
     application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
-    register_message_handler(application, process_user_message)
+    register_message_handler(
+        application, process_user_message, CreateMemoryRecordUseCase(repositories=repositories_factory)
+    )
     if start_new_conversation is not None:
         register_new_conversation_handler(application, start_new_conversation)
     if clear_conversation is not None:
@@ -281,7 +290,9 @@ class TestFirstAndSecondRequest:
         repositories_factory: ConversationRepositoriesFactory,
     ) -> None:
         provider = FakeLLMProvider(response=_response("Здравствуйте!"))
-        application = _build_application(_make_process_user_message(repositories_factory, provider))
+        application = _build_application(
+            _make_process_user_message(repositories_factory, provider), repositories_factory
+        )
         callbacks = _handler_callbacks(application)
         update = _make_update(text="Привет!", user_id=111)
 
@@ -306,7 +317,9 @@ class TestFirstAndSecondRequest:
         repositories_factory: ConversationRepositoriesFactory,
     ) -> None:
         provider = FakeLLMProvider(response=_response("Ответ"))
-        application = _build_application(_make_process_user_message(repositories_factory, provider))
+        application = _build_application(
+            _make_process_user_message(repositories_factory, provider), repositories_factory
+        )
         callbacks = _handler_callbacks(application)
 
         await callbacks["text"](_make_update(text="Сообщение 1", user_id=222), MagicMock())  # type: ignore[operator]
@@ -339,7 +352,9 @@ class TestNewCommand:
         provider = FakeLLMProvider(response=_response("Здравствуйте!"))
         process_user_message = _make_process_user_message(repositories_factory, provider)
         start_new_conversation = StartNewConversation(repositories=repositories_factory)
-        application = _build_application(process_user_message, start_new_conversation=start_new_conversation)
+        application = _build_application(
+            process_user_message, repositories_factory, start_new_conversation=start_new_conversation
+        )
         callbacks = _handler_callbacks(application)
 
         await callbacks["text"](_make_update(text="Привет!", user_id=333), MagicMock())  # type: ignore[operator]
@@ -387,7 +402,9 @@ class TestClearCommand:
         provider = FakeLLMProvider(response=_response("Здравствуйте!"))
         process_user_message = _make_process_user_message(repositories_factory, provider)
         clear_conversation = ClearConversation(repositories=repositories_factory)
-        application = _build_application(process_user_message, clear_conversation=clear_conversation)
+        application = _build_application(
+            process_user_message, repositories_factory, clear_conversation=clear_conversation
+        )
         callbacks = _handler_callbacks(application)
 
         await callbacks["text"](_make_update(text="Привет!", user_id=444), MagicMock())  # type: ignore[operator]
@@ -425,7 +442,9 @@ class TestUserIsolation:
         repositories_factory: ConversationRepositoriesFactory,
     ) -> None:
         provider = FakeLLMProvider(response=_response("Ответ"))
-        application = _build_application(_make_process_user_message(repositories_factory, provider))
+        application = _build_application(
+            _make_process_user_message(repositories_factory, provider), repositories_factory
+        )
         callbacks = _handler_callbacks(application)
 
         await callbacks["text"](_make_update(text="От первого пользователя", user_id=501), MagicMock())  # type: ignore[operator]
@@ -471,7 +490,7 @@ class TestApplicationRestart:
 
         provider_before_restart = FakeLLMProvider(response=_response("Ответ до перезапуска"))
         application_before = _build_application(
-            _make_process_user_message(first_repositories_factory, provider_before_restart)
+            _make_process_user_message(first_repositories_factory, provider_before_restart), first_repositories_factory
         )
         callbacks_before = _handler_callbacks(application_before)
         await callbacks_before["text"](  # type: ignore[operator]
@@ -504,7 +523,8 @@ class TestApplicationRestart:
             # следующее сообщение продолжает СУЩЕСТВУЮЩИЙ диалог
             provider_after_restart = FakeLLMProvider(response=_response("Ответ после перезапуска"))
             application_after = _build_application(
-                _make_process_user_message(second_repositories_factory, provider_after_restart)
+                _make_process_user_message(second_repositories_factory, provider_after_restart),
+                second_repositories_factory,
             )
             callbacks_after = _handler_callbacks(application_after)
             await callbacks_after["text"](  # type: ignore[operator]
@@ -541,7 +561,9 @@ class TestLlmError:
         failing_provider = FakeLLMProvider(
             error=LLMProviderError(message="LLM провайдер недоступен", user_message="Ошибка модели, попробуйте позже.")
         )
-        application = _build_application(_make_process_user_message(repositories_factory, failing_provider))
+        application = _build_application(
+            _make_process_user_message(repositories_factory, failing_provider), repositories_factory
+        )
         callbacks = _handler_callbacks(application)
         update = _make_update(text="Привет!", user_id=701)
 
@@ -558,7 +580,9 @@ class TestLlmError:
 
         # приложение остаётся работоспособным для следующего запроса
         working_provider = FakeLLMProvider(response=_response("Теперь всё в порядке"))
-        application_ok = _build_application(_make_process_user_message(repositories_factory, working_provider))
+        application_ok = _build_application(
+            _make_process_user_message(repositories_factory, working_provider), repositories_factory
+        )
         callbacks_ok = _handler_callbacks(application_ok)
         second_update = _make_update(text="Ты тут?", user_id=701)
 
@@ -591,7 +615,9 @@ class TestLlmError:
         failing_provider = FakeLLMProvider(
             error=LLMProviderError(message="LLM провайдер недоступен", user_message="Ошибка модели, попробуйте позже.")
         )
-        application = _build_application(_make_process_user_message(repositories_factory, failing_provider))
+        application = _build_application(
+            _make_process_user_message(repositories_factory, failing_provider), repositories_factory
+        )
         callbacks = _handler_callbacks(application)
         update = _make_update(text="Привет!", user_id=702)
 
@@ -677,7 +703,9 @@ class TestDatabaseError:
             session_factory, fail_on_save_call=1, error=db_error
         )
         provider = FakeLLMProvider(response=_response("Не должно быть вызвано"))
-        application = _build_application(_make_process_user_message(faulty_repositories_factory, provider))
+        application = _build_application(
+            _make_process_user_message(faulty_repositories_factory, provider), faulty_repositories_factory
+        )
         callbacks = _handler_callbacks(application)
         update = _make_update(text="Привет!", user_id=801)
 
@@ -698,7 +726,9 @@ class TestDatabaseError:
         # уже корректного запроса того же пользователя.
         working_repositories_factory = build_conversation_repositories_factory(session_factory)
         working_provider = FakeLLMProvider(response=_response("Теперь всё сохранилось"))
-        application_ok = _build_application(_make_process_user_message(working_repositories_factory, working_provider))
+        application_ok = _build_application(
+            _make_process_user_message(working_repositories_factory, working_provider), working_repositories_factory
+        )
         callbacks_ok = _handler_callbacks(application_ok)
         second_update = _make_update(text="Повторяю запрос", user_id=801)
 

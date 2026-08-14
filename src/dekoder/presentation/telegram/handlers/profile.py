@@ -49,7 +49,7 @@ _logger = get_logger(__name__)
 
 PROFILE_LIST_MESSAGE = "Выберите профиль:"
 PROFILE_ACTIVE_SUFFIX = " (текущий)"
-PROFILE_SELECTED_MESSAGE_TEMPLATE = "Активный профиль: {name}"
+PROFILE_SELECTED_MESSAGE_TEMPLATE = "Активный профиль: {name}\n{description}"
 NO_PREVIOUS_INTERACTION_MESSAGE = "Мы ещё не начинали диалог. Отправьте обычное сообщение, чтобы начать."
 PROFILE_NOT_FOUND_MESSAGE = "Этот профиль больше недоступен. Отправьте /profile, чтобы увидеть актуальный список."
 UNEXPECTED_ERROR_MESSAGE = "Произошла непредвиденная ошибка. Попробуйте ещё раз чуть позже."
@@ -164,4 +164,6 @@ class ProfileSelectionCallbackHandler:
             return
 
         assert result.profile is not None  # SELECTED всегда несёт профиль (application/profile/dto.py)
-        await query.edit_message_text(PROFILE_SELECTED_MESSAGE_TEMPLATE.format(name=result.profile.name))
+        await query.edit_message_text(
+            PROFILE_SELECTED_MESSAGE_TEMPLATE.format(name=result.profile.name, description=result.profile.description)
+        )

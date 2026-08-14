@@ -44,6 +44,7 @@ from tests.support.fake_model_catalog import default_test_catalog
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
 from dekoder.application.conversation.ports import ConversationRepositoriesFactory
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
+from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.application.prompt.services.prompt_builder import DeterministicPromptBuilder
 from dekoder.application.prompt.services.token_budget import estimate_size
 from dekoder.bootstrap.repositories import build_conversation_repositories_factory
@@ -122,9 +123,15 @@ def _make_process_user_message(
     )
 
 
-def _build_application(process_user_message: ProcessUserMessage) -> Application:
+def _build_application(
+    process_user_message: ProcessUserMessage, repositories_factory: ConversationRepositoriesFactory
+) -> Application:
     application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
-    register_message_handler(application, process_user_message)
+    # Sprint 12: сценарии этого файла не выставляют PENDING_REMEMBER_KEY —
+    # CreateMemoryRecordUseCase здесь ни разу не исполняется.
+    register_message_handler(
+        application, process_user_message, CreateMemoryRecordUseCase(repositories=repositories_factory)
+    )
     return application
 
 
@@ -220,10 +227,10 @@ class TestPromptVisiblyDependsOnProfile:
         provider_expert = FakeLLMProvider(response=_response())
         provider_friendly = FakeLLMProvider(response=_response())
         app_expert = _build_application(
-            _make_process_user_message(repositories_factory, provider_expert, budget=1_000_000)
+            _make_process_user_message(repositories_factory, provider_expert, budget=1_000_000), repositories_factory
         )
         app_friendly = _build_application(
-            _make_process_user_message(repositories_factory, provider_friendly, budget=1_000_000)
+            _make_process_user_message(repositories_factory, provider_friendly, budget=1_000_000), repositories_factory
         )
 
         # user 7001 получит профиль-дефолт ("Экспертный", is_default=True);
@@ -260,7 +267,7 @@ class TestLongDialogueHistoryIsTrimmed:
         # ничего уложить — это тоже допустимо, ADR-4.5, но здесь мы явно
         # хотим увидеть срабатывание тира истории, не полный тупик).
         process_user_message = _make_process_user_message(repositories_factory, provider, budget=1500)
-        application = _build_application(process_user_message)
+        application = _build_application(process_user_message, repositories_factory)
         callback = _message_callback(application)
 
         # Длинный диалог — 25 предыдущих сообщений одного пользователя.

@@ -58,6 +58,7 @@ from tests.support.prompt_engine import make_test_prompt_builder
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
 from dekoder.application.conversation.ports import ConversationRepositoriesFactory
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
+from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.application.model_catalog.dto import GetSelectedModelCommand, SelectModelCommand
 from dekoder.application.model_catalog.ports import ModelCatalogRepository
 from dekoder.application.model_catalog.use_cases.get_selected_model import GetSelectedModel
@@ -156,13 +157,21 @@ def _make_process_user_message(
 
 def _build_application(
     process_user_message: ProcessUserMessage,
+    repositories_factory: ConversationRepositoriesFactory,
     list_available_models: ListAvailableModels,
     get_selected_model: GetSelectedModel,
     select_model: SelectModel,
 ) -> Application:
-    """Собирает реальный `telegram.ext.Application`, тот же принцип, что и `telegram_main.py::_startup`."""
+    """
+    Собирает реальный `telegram.ext.Application`, тот же принцип, что и
+    `telegram_main.py::_startup`. `repositories_factory` (Sprint 12) —
+    строит `CreateMemoryRecordUseCase` для `register_message_handler`; ни
+    один сценарий этого файла не выставляет `PENDING_REMEMBER_KEY`.
+    """
     application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
-    register_message_handler(application, process_user_message)
+    register_message_handler(
+        application, process_user_message, CreateMemoryRecordUseCase(repositories=repositories_factory)
+    )
     register_model_handlers(application, list_available_models, get_selected_model, select_model)
     return application
 
@@ -285,7 +294,7 @@ class TestModelSelectionAffectsGeneration:
         _, _, select_model = use_cases
         provider = FakeLLMProvider(response=_response())
         application = _build_application(
-            _make_process_user_message(repositories_factory, provider, model_catalog), *use_cases
+            _make_process_user_message(repositories_factory, provider, model_catalog), repositories_factory, *use_cases
         )
         callbacks = _handler_callbacks(application)
 
@@ -321,7 +330,7 @@ class TestModelSelectionAffectsGeneration:
         """Регрессия: пользователь без выбора — поведение Sprint 1-6 (умолчание) не изменилось."""
         provider = FakeLLMProvider(response=_response())
         application = _build_application(
-            _make_process_user_message(repositories_factory, provider, model_catalog), *use_cases
+            _make_process_user_message(repositories_factory, provider, model_catalog), repositories_factory, *use_cases
         )
         callbacks = _handler_callbacks(application)
 
@@ -350,7 +359,7 @@ class TestFallbackWhenSelectedModelIsUnavailable:
         configure_logging(environment="test")
         provider = FakeLLMProvider(response=_response())
         application = _build_application(
-            _make_process_user_message(repositories_factory, provider, model_catalog), *use_cases
+            _make_process_user_message(repositories_factory, provider, model_catalog), repositories_factory, *use_cases
         )
         callbacks = _handler_callbacks(application)
 
@@ -385,7 +394,7 @@ class TestFallbackWhenSelectedModelIsUnavailable:
     ) -> None:
         provider = FakeLLMProvider(response=_response("Ответ несмотря на откат"))
         application = _build_application(
-            _make_process_user_message(repositories_factory, provider, model_catalog), *use_cases
+            _make_process_user_message(repositories_factory, provider, model_catalog), repositories_factory, *use_cases
         )
         callbacks = _handler_callbacks(application)
 
@@ -414,7 +423,9 @@ class TestUserIsolation:
         _, _, select_model = use_cases
         bootstrap_provider = FakeLLMProvider(response=_response())
         bootstrap_app = _build_application(
-            _make_process_user_message(repositories_factory, bootstrap_provider, model_catalog), *use_cases
+            _make_process_user_message(repositories_factory, bootstrap_provider, model_catalog),
+            repositories_factory,
+            *use_cases,
         )
         bootstrap_callbacks = _handler_callbacks(bootstrap_app)
         await bootstrap_callbacks["text"](_make_text_update(user_id=9201), MagicMock())  # type: ignore[operator]
@@ -428,10 +439,14 @@ class TestUserIsolation:
         provider_a = FakeLLMProvider(response=_response())
         provider_b = FakeLLMProvider(response=_response())
         app_a = _build_application(
-            _make_process_user_message(repositories_factory, provider_a, model_catalog), *use_cases
+            _make_process_user_message(repositories_factory, provider_a, model_catalog),
+            repositories_factory,
+            *use_cases,
         )
         app_b = _build_application(
-            _make_process_user_message(repositories_factory, provider_b, model_catalog), *use_cases
+            _make_process_user_message(repositories_factory, provider_b, model_catalog),
+            repositories_factory,
+            *use_cases,
         )
         callbacks_a = _handler_callbacks(app_a)
         callbacks_b = _handler_callbacks(app_b)
@@ -454,7 +469,7 @@ class TestFullModelSelectionCycle:
     ) -> None:
         provider = FakeLLMProvider(response=_response())
         application = _build_application(
-            _make_process_user_message(repositories_factory, provider, model_catalog), *use_cases
+            _make_process_user_message(repositories_factory, provider, model_catalog), repositories_factory, *use_cases
         )
         callbacks = _handler_callbacks(application)
 
@@ -484,7 +499,7 @@ class TestFullModelSelectionCycle:
     ) -> None:
         provider = FakeLLMProvider(response=_response())
         application = _build_application(
-            _make_process_user_message(repositories_factory, provider, model_catalog), *use_cases
+            _make_process_user_message(repositories_factory, provider, model_catalog), repositories_factory, *use_cases
         )
         callbacks = _handler_callbacks(application)
 

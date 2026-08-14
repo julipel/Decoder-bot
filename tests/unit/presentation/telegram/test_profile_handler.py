@@ -171,7 +171,9 @@ class TestProfileSelectionCallback:
         await handler(update, MagicMock())
 
         update.callback_query.answer.assert_awaited_once()
-        update.callback_query.edit_message_text.assert_awaited_once_with("Активный профиль: Креативный")
+        update.callback_query.edit_message_text.assert_awaited_once_with(
+            "Активный профиль: Креативный\nТестовый профиль по умолчанию."
+        )
 
         active = await profiles.get_active_profile((await users.get_by_telegram_user_id(555)).id)  # type: ignore[union-attr]
         assert active.id == target_profile.id

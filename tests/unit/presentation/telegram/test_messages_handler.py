@@ -6,6 +6,12 @@
 только от `LLMProvider`; см. `tests/support/fake_conversation_repositories.py`)
 — так handler-тесты проверяют реальную цепочку
 Update → Command → use case → ответ, не подменяя use case целиком.
+
+Sprint 12: `TextMessageHandler` дополнительно принимает
+`CreateMemoryRecordUseCase` (двухшаговый `/remember` без аргумента, см.
+`test_memory_handler.py`/`handlers/memory.py::PENDING_REMEMBER_KEY`) —
+`_make_context()` даёт контекст с настоящим `dict` в `user_data` (не
+`MagicMock`), чтобы можно было и проверить, и выставить этот флаг.
 """
 
 from __future__ import annotations
@@ -22,7 +28,9 @@ from tests.support.prompt_engine import make_test_prompt_builder
 
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
+from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
+from dekoder.presentation.telegram.handlers.memory import PENDING_REMEMBER_KEY, REMEMBER_SAVED_MESSAGE
 from dekoder.presentation.telegram.handlers.messages import (
     UNEXPECTED_ERROR_MESSAGE,
     TextMessageHandler,
@@ -75,6 +83,18 @@ def _make_process_user_message(provider: FakeLLMProvider) -> ProcessUserMessage:
     )
 
 
+def _make_create_memory_record() -> CreateMemoryRecordUseCase:
+    return CreateMemoryRecordUseCase(repositories=make_in_memory_repositories_factory())
+
+
+def _make_handler(
+    provider: FakeLLMProvider, create_memory_record: CreateMemoryRecordUseCase | None = None
+) -> TextMessageHandler:
+    return TextMessageHandler(
+        _make_process_user_message(provider), create_memory_record or _make_create_memory_record()
+    )
+
+
 def _make_response(text: str = "Здравствуйте!") -> LLMResponse:
     return LLMResponse(
         text=text,
@@ -95,30 +115,35 @@ def _make_update(text: str = "Привет!", user_id: int = 12345) -> MagicMock
     return update
 
 
+def _make_context(user_data: dict[str, object] | None = None) -> MagicMock:
+    """`user_data` — настоящий `dict` (не `MagicMock`), см. докстринг модуля."""
+    return MagicMock(user_data=user_data if user_data is not None else {})
+
+
 class TestSuccessfulMessage:
     async def test_replies_with_generated_response(self) -> None:
         provider = FakeLLMProvider(response=_make_response("Здравствуйте!"))
-        handler = TextMessageHandler(_make_process_user_message(provider))
+        handler = _make_handler(provider)
         update = _make_update("Привет!")
 
-        await handler(update, MagicMock())
+        await handler(update, _make_context())
 
         update.effective_message.reply_text.assert_awaited_once_with("Здравствуйте!")
 
     async def test_sends_the_users_text_through_to_the_provider(self) -> None:
         provider = FakeLLMProvider(response=_make_response())
-        handler = TextMessageHandler(_make_process_user_message(provider))
+        handler = _make_handler(provider)
 
-        await handler(_make_update(text="Как дела?"), MagicMock())
+        await handler(_make_update(text="Как дела?"), _make_context())
 
         assert provider.received_requests[0].messages[-1].content == "Как дела?"
 
     async def test_generates_a_fresh_correlation_id_per_call(self) -> None:
         provider = FakeLLMProvider(response=_make_response())
-        handler = TextMessageHandler(_make_process_user_message(provider))
+        handler = _make_handler(provider)
 
-        await handler(_make_update(), MagicMock())
-        await handler(_make_update(), MagicMock())
+        await handler(_make_update(), _make_context())
+        await handler(_make_update(), _make_context())
 
         first, second = provider.received_requests
         assert first.correlation_id != second.correlation_id
@@ -126,10 +151,10 @@ class TestSuccessfulMessage:
     async def test_splits_long_response_into_multiple_messages(self) -> None:
         long_text = "word " * (TELEGRAM_SAFE_MESSAGE_LIMIT // 4)
         provider = FakeLLMProvider(response=_make_response(long_text))
-        handler = TextMessageHandler(_make_process_user_message(provider))
+        handler = _make_handler(provider)
         update = _make_update()
 
-        await handler(update, MagicMock())
+        await handler(update, _make_context())
 
         assert update.effective_message.reply_text.await_count > 1
         for call in update.effective_message.reply_text.await_args_list:
@@ -145,9 +170,9 @@ class TestMessageProcessingCompletedLog:
         configure_logging(environment="test")
         response = _make_response("Здравствуйте!")
         provider = FakeLLMProvider(response=response)
-        handler = TextMessageHandler(_make_process_user_message(provider))
+        handler = _make_handler(provider)
 
-        await handler(_make_update("Привет!"), MagicMock())
+        await handler(_make_update("Привет!"), _make_context())
 
         entry = _read_last_log_line(capsys)
         assert entry["event"] == "message_processing_completed"
@@ -162,9 +187,9 @@ class TestMessageProcessingCompletedLog:
     async def test_does_not_log_the_event_on_failure(self, capsys: pytest.CaptureFixture[str]) -> None:
         configure_logging(environment="test")
         provider = FakeLLMProvider(error=LLMProviderError(message="boom", user_message="Ошибка."))
-        handler = TextMessageHandler(_make_process_user_message(provider))
+        handler = _make_handler(provider)
 
-        await handler(_make_update(), MagicMock())
+        await handler(_make_update(), _make_context())
 
         out = capsys.readouterr().out.strip().splitlines()
         events = [json.loads(line)["event"] for line in out]
@@ -175,22 +200,22 @@ class TestMessageProcessingCompletedLog:
 class TestIgnoresNonTextUpdates:
     async def test_ignores_update_without_message_text(self) -> None:
         provider = FakeLLMProvider(response=_make_response())
-        handler = TextMessageHandler(_make_process_user_message(provider))
+        handler = _make_handler(provider)
         update = _make_update()
         update.effective_message.text = None
 
-        await handler(update, MagicMock())
+        await handler(update, _make_context())
 
         update.effective_message.reply_text.assert_not_awaited()
         assert provider.received_requests == []
 
     async def test_ignores_update_without_message(self) -> None:
         provider = FakeLLMProvider(response=_make_response())
-        handler = TextMessageHandler(_make_process_user_message(provider))
+        handler = _make_handler(provider)
         update = _make_update()
         update.effective_message = None
 
-        await handler(update, MagicMock())
+        await handler(update, _make_context())
 
         assert provider.received_requests == []
 
@@ -198,10 +223,10 @@ class TestIgnoresNonTextUpdates:
 class TestDekoderErrorHandling:
     async def test_empty_text_shows_the_domain_safe_user_message(self) -> None:
         provider = FakeLLMProvider(response=_make_response())
-        handler = TextMessageHandler(_make_process_user_message(provider))
+        handler = _make_handler(provider)
         update = _make_update(text="   ")  # только пробелы -> ValidationError внутри execute()
 
-        await handler(update, MagicMock())
+        await handler(update, _make_context())
 
         update.effective_message.reply_text.assert_awaited_once_with("Сообщение не может быть пустым.")
         assert provider.received_requests == []
@@ -209,10 +234,10 @@ class TestDekoderErrorHandling:
     async def test_llm_provider_error_shows_its_safe_user_message(self) -> None:
         safe_message = "Не удалось получить ответ от модели, попробуйте позже."
         provider = FakeLLMProvider(error=LLMProviderError(message="LLM provider boom", user_message=safe_message))
-        handler = TextMessageHandler(_make_process_user_message(provider))
+        handler = _make_handler(provider)
         update = _make_update()
 
-        await handler(update, MagicMock())
+        await handler(update, _make_context())
 
         update.effective_message.reply_text.assert_awaited_once_with(safe_message)
 
@@ -220,21 +245,62 @@ class TestDekoderErrorHandling:
 class TestUnexpectedErrorHandling:
     async def test_unexpected_exception_shows_neutral_message(self) -> None:
         provider = FakeLLMProvider(error=RuntimeError("secret=abc123, stack trace details"))
-        handler = TextMessageHandler(_make_process_user_message(provider))
+        handler = _make_handler(provider)
         update = _make_update()
 
-        await handler(update, MagicMock())
+        await handler(update, _make_context())
 
         update.effective_message.reply_text.assert_awaited_once_with(UNEXPECTED_ERROR_MESSAGE)
 
     async def test_unexpected_exception_details_never_reach_the_user(self) -> None:
         provider = FakeLLMProvider(error=RuntimeError("secret=abc123, stack trace details"))
-        handler = TextMessageHandler(_make_process_user_message(provider))
+        handler = _make_handler(provider)
         update = _make_update()
 
-        await handler(update, MagicMock())
+        await handler(update, _make_context())
 
         sent_text = update.effective_message.reply_text.call_args.args[0]
         assert "secret=abc123" not in sent_text
         assert "RuntimeError" not in sent_text
         assert "Traceback" not in sent_text
+
+
+class TestPendingRememberCompletion:
+    """
+    Sprint 12: второй шаг `/remember` без аргумента —
+    `handlers/memory.py::RememberCommandHandler` выставляет
+    `PENDING_REMEMBER_KEY` в `context.user_data` и просит текст следующим
+    сообщением; `TextMessageHandler` должен перехватить этот текст до
+    `ProcessUserMessage`, сохранить его как факт памяти и снять флаг.
+    """
+
+    async def test_saves_the_text_as_a_memory_fact_instead_of_calling_the_llm(self) -> None:
+        provider = FakeLLMProvider(response=_make_response())
+        handler = _make_handler(provider)
+        update = _make_update(text="Люблю чай без сахара")
+        context = _make_context({PENDING_REMEMBER_KEY: True})
+
+        await handler(update, context)
+
+        update.effective_message.reply_text.assert_awaited_once_with(REMEMBER_SAVED_MESSAGE)
+        assert provider.received_requests == []
+
+    async def test_clears_the_pending_flag_after_saving(self) -> None:
+        provider = FakeLLMProvider(response=_make_response())
+        handler = _make_handler(provider)
+        update = _make_update(text="Люблю чай без сахара")
+        context = _make_context({PENDING_REMEMBER_KEY: True})
+
+        await handler(update, context)
+
+        assert PENDING_REMEMBER_KEY not in context.user_data
+
+    async def test_flag_not_set_falls_through_to_normal_chat(self) -> None:
+        provider = FakeLLMProvider(response=_make_response("Здравствуйте!"))
+        handler = _make_handler(provider)
+        update = _make_update(text="Привет!")
+
+        await handler(update, _make_context())
+
+        update.effective_message.reply_text.assert_awaited_once_with("Здравствуйте!")
+        assert len(provider.received_requests) == 1

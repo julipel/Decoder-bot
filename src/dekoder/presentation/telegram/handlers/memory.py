@@ -12,8 +12,15 @@ S5-07).
 - `RememberCommandHandler` — `CommandHandler("remember", ...)`, извлекает
   текст после команды, вызывает `CreateMemoryRecordUseCase` (`mapper.py::
   to_create_memory_record_command` — `status=CONFIRMED, source=
-  USER_EXPLICIT`, ADR-5.9); пустой текст после команды — понятная ошибка
-  пользователю, не падение;
+  USER_EXPLICIT`, ADR-5.9); `/remember` без текста не показывает ошибку, а
+  просит написать факт следующим сообщением и выставляет
+  `context.user_data[PENDING_REMEMBER_KEY] = True` — обычный текстовый
+  обработчик (`presentation/telegram/handlers/messages.py::
+  TextMessageHandler`) проверяет этот флаг раньше, чем передавать текст в
+  `ProcessUserMessage`, и при совпадении сохраняет факт тем же
+  `save_memory_record_from_text()`, которым пользуется и сам
+  `RememberCommandHandler` (Sprint 12) — единственная точка сохранения, не
+  дублирует логику аудит-лога/обработки ошибок;
 - `MemoryListCommandHandler` — `CommandHandler("memory", ...)`, вызывает
   `ListMemoryRecordsUseCase`, строит `InlineKeyboardMarkup` с кнопкой 🗑
   на каждую запись; пустой список — дружелюбное сообщение, не пустая
@@ -41,7 +48,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from uuid import UUID
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
 
 from dekoder.application.memory.dto import ListMemoryRecordsCommand
@@ -59,11 +66,17 @@ from dekoder.shared.logging import bind_request_context, clear_request_context, 
 
 _logger = get_logger(__name__)
 
-REMEMBER_EMPTY_TEXT_MESSAGE = "Укажите текст факта после команды, например:\n/remember Я работаю Python-разработчиком."
+REMEMBER_PROMPT_MESSAGE = "Напишите, что запомнить, следующим сообщением."
 REMEMBER_SAVED_MESSAGE = "Запомнил."
 MEMORY_EMPTY_MESSAGE = "У вас пока нет сохранённых фактов. Используйте /remember <текст>, чтобы сохранить факт."
 MEMORY_LIST_HEADER = "Ваши сохранённые факты (нажмите 🗑, чтобы удалить):"
 UNEXPECTED_ERROR_MESSAGE = "Произошла непредвиденная ошибка. Попробуйте ещё раз чуть позже."
+
+# Ключ в context.user_data — выставляется RememberCommandHandler, читается и
+# снимается TextMessageHandler (Sprint 12): следующее обычное текстовое
+# сообщение этого пользователя трактуется как текст факта, не как реплика в
+# ProcessUserMessage.
+PENDING_REMEMBER_KEY = "awaiting_remember_text"
 
 _CALLBACK_DATA_PREFIX = "memory_delete:"
 _DELETE_BUTTON_LABEL = "🗑"
@@ -115,6 +128,43 @@ def _parse_memory_delete_callback_data(data: str) -> UUID | None:
         return None
 
 
+async def save_memory_record_from_text(
+    create_memory_record: CreateMemoryRecordUseCase,
+    update: Update,
+    message: Message,
+    text: str,
+) -> None:
+    """
+    Общая логика сохранения факта — вызывается и `RememberCommandHandler`
+    (однострочный `/remember <текст>`), и `TextMessageHandler` (текст,
+    присланный после `/remember` без аргумента, см. `PENDING_REMEMBER_KEY`)
+    — единственное место, формирующее аудит-лог/обработку ошибок для
+    создания записи памяти, чтобы оба пути не расходились.
+    """
+    try:
+        command = to_create_memory_record_command(update, text)
+    except ValueError:
+        return
+
+    bind_request_context(correlation_id=command.correlation_id)
+    try:
+        result = await create_memory_record.execute(command)
+    except DekoderError as error:
+        _logger.warning("create_memory_record_failed", error_code=error.code)
+        await message.reply_text(error.user_message)
+        return
+    except Exception:
+        _logger.exception("create_memory_record_unexpected_error")
+        await message.reply_text(UNEXPECTED_ERROR_MESSAGE)
+        return
+    else:
+        log_audit_event(_logger, "memory_record_created", record_id=str(result.record.id))
+    finally:
+        clear_request_context()
+
+    await message.reply_text(REMEMBER_SAVED_MESSAGE)
+
+
 class RememberCommandHandler:
     def __init__(self, create_memory_record: CreateMemoryRecordUseCase) -> None:
         self._create_memory_record = create_memory_record
@@ -126,31 +176,12 @@ class RememberCommandHandler:
 
         argument_text = _extract_remember_argument(message.text)
         if not argument_text:
-            await message.reply_text(REMEMBER_EMPTY_TEXT_MESSAGE)
+            if context.user_data is not None:
+                context.user_data[PENDING_REMEMBER_KEY] = True
+            await message.reply_text(REMEMBER_PROMPT_MESSAGE)
             return
 
-        try:
-            command = to_create_memory_record_command(update, argument_text)
-        except ValueError:
-            return
-
-        bind_request_context(correlation_id=command.correlation_id)
-        try:
-            result = await self._create_memory_record.execute(command)
-        except DekoderError as error:
-            _logger.warning("create_memory_record_failed", error_code=error.code)
-            await message.reply_text(error.user_message)
-            return
-        except Exception:
-            _logger.exception("create_memory_record_unexpected_error")
-            await message.reply_text(UNEXPECTED_ERROR_MESSAGE)
-            return
-        else:
-            log_audit_event(_logger, "memory_record_created", record_id=str(result.record.id))
-        finally:
-            clear_request_context()
-
-        await message.reply_text(REMEMBER_SAVED_MESSAGE)
+        await save_memory_record_from_text(self._create_memory_record, update, message, argument_text)
 
 
 class MemoryListCommandHandler:

@@ -10,7 +10,8 @@ memory.py`, реальные SQLAlchemy-репозитории (`bootstrap/repos
 Сценарии:
 
     1. TestRememberAndList        — /remember сохраняет факт, /memory его показывает с кнопкой 🗑;
-    2. TestEmptyRememberText      — /remember без текста — понятная ошибка, не падение;
+    2. TestEmptyRememberText      — /remember без текста просит написать факт следующим
+       сообщением и выставляет PENDING_REMEMBER_KEY (Sprint 12), не падает;
     3. TestEmptyMemoryList        — /memory без сохранённых фактов — дружелюбное сообщение;
     4. TestDeleteViaCallback      — нажатие 🗑 удаляет запись, список обновляется;
     5. TestCrossUserDeleteIsRejected — пользователь A не может удалить запись пользователя B
@@ -49,7 +50,8 @@ from dekoder.infrastructure.persistence.session import create_session_factory
 from dekoder.presentation.telegram.bot import build_telegram_application, register_memory_handlers
 from dekoder.presentation.telegram.handlers.memory import (
     MEMORY_EMPTY_MESSAGE,
-    REMEMBER_EMPTY_TEXT_MESSAGE,
+    PENDING_REMEMBER_KEY,
+    REMEMBER_PROMPT_MESSAGE,
     REMEMBER_SAVED_MESSAGE,
 )
 from dekoder.shared.domain.identifiers import CorrelationId
@@ -66,6 +68,11 @@ def _make_text_update(text: str, user_id: int) -> MagicMock:
     update.effective_message.reply_text = AsyncMock()
     update.callback_query = None
     return update
+
+
+def _make_context() -> MagicMock:
+    """`user_data` — настоящий `dict` (не `MagicMock`), чтобы можно было проверить выставленный флаг."""
+    return MagicMock(user_data={})
 
 
 def _make_callback_update(record_id: UUID, user_id: int) -> MagicMock:
@@ -162,9 +169,17 @@ class TestRememberAndList:
 
 
 class TestEmptyRememberText:
-    """Сценарий 2: /remember без текста — понятная ошибка, не падение."""
+    """
+    Сценарий 2 (Sprint 12): /remember без текста просит написать факт
+    следующим сообщением и выставляет `PENDING_REMEMBER_KEY` — не падает
+    и не сохраняет пустую запись. Завершение этого сценария (следующее
+    сообщение сохраняется как факт) — `TestPendingRememberCompletion`
+    в `tests/unit/presentation/telegram/test_messages_handler.py`
+    (`TextMessageHandler` в этом файле не зарегистрирован, только
+    `register_memory_handlers`).
+    """
 
-    async def test_remember_without_text_shows_a_friendly_error(
+    async def test_remember_without_text_prompts_and_sets_pending_flag(
         self,
         use_cases: tuple[CreateMemoryRecordUseCase, ListMemoryRecordsUseCase, DeleteMemoryRecordUseCase],
     ) -> None:
@@ -172,9 +187,11 @@ class TestEmptyRememberText:
         callbacks = _handler_callbacks(application)
 
         update = _make_text_update("/remember", user_id=6002)
-        await callbacks["remember"](update, MagicMock())  # type: ignore[operator]
+        context = _make_context()
+        await callbacks["remember"](update, context)  # type: ignore[operator]
 
-        update.effective_message.reply_text.assert_awaited_once_with(REMEMBER_EMPTY_TEXT_MESSAGE)
+        update.effective_message.reply_text.assert_awaited_once_with(REMEMBER_PROMPT_MESSAGE)
+        assert context.user_data[PENDING_REMEMBER_KEY] is True
 
         _, list_memory_records, _ = use_cases
 
@@ -183,7 +200,7 @@ class TestEmptyRememberText:
         )
         assert result.records == ()
 
-    async def test_remember_with_only_whitespace_shows_a_friendly_error(
+    async def test_remember_with_only_whitespace_also_prompts(
         self,
         use_cases: tuple[CreateMemoryRecordUseCase, ListMemoryRecordsUseCase, DeleteMemoryRecordUseCase],
     ) -> None:
@@ -191,9 +208,11 @@ class TestEmptyRememberText:
         callbacks = _handler_callbacks(application)
 
         update = _make_text_update("/remember    ", user_id=6003)
-        await callbacks["remember"](update, MagicMock())  # type: ignore[operator]
+        context = _make_context()
+        await callbacks["remember"](update, context)  # type: ignore[operator]
 
-        update.effective_message.reply_text.assert_awaited_once_with(REMEMBER_EMPTY_TEXT_MESSAGE)
+        update.effective_message.reply_text.assert_awaited_once_with(REMEMBER_PROMPT_MESSAGE)
+        assert context.user_data[PENDING_REMEMBER_KEY] is True
 
 
 class TestEmptyMemoryList:

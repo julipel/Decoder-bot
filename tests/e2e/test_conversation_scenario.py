@@ -54,6 +54,7 @@ from dekoder.application.conversation.dto import (
 )
 from dekoder.application.conversation.use_cases.clear_conversation import ClearConversation
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
+from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
 from dekoder.presentation.telegram.bot import (
     build_telegram_application,
@@ -102,7 +103,11 @@ def _make_process_user_message(provider: FakeLLMProvider) -> ProcessUserMessage:
 
 def _build_application(process_user_message: ProcessUserMessage) -> Application:
     application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
-    register_message_handler(application, process_user_message)
+    # Sprint 12: ни один сценарий этого файла не выставляет PENDING_REMEMBER_KEY
+    # (см. handlers/memory.py) — этот use case тут ни разу не исполняется,
+    # но TextMessageHandler требует его в конструкторе.
+    create_memory_record = CreateMemoryRecordUseCase(repositories=make_in_memory_repositories_factory())
+    register_message_handler(application, process_user_message, create_memory_record)
     return application
 
 
@@ -282,7 +287,7 @@ class TestClearCommandRouting:
         clear_conversation = ClearConversation(repositories=factory)
 
         application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
-        register_message_handler(application, process_user_message)
+        register_message_handler(application, process_user_message, CreateMemoryRecordUseCase(repositories=factory))
         register_clear_conversation_handler(application, clear_conversation)
 
         registered = application.handlers[0]

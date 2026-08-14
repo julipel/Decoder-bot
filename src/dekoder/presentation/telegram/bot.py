@@ -60,6 +60,7 @@ Callback выбора модели регистрируется с `pattern=r"^m
 
 from __future__ import annotations
 
+from telegram import BotCommand
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -68,6 +69,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 from dekoder.application.conversation.use_cases.clear_conversation import ClearConversation
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
@@ -96,14 +98,28 @@ from dekoder.presentation.telegram.handlers.start import handle_start
 
 def build_telegram_application(bot_token: str) -> Application:
     """Собирает `Application` и регистрирует `/start` — обработчики текста и `/new` добавляются отдельно."""
-    application = ApplicationBuilder().token(bot_token).build()
+    # python-telegram-bot по умолчанию даёт connect/read_timeout=5с — недостаточно
+    # на нестабильном сетевом пути до api.telegram.org, приводит к TimedOut даже
+    # на успешно обработанных командах (ответ готов, но не успевает уйти).
+    request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
+    application = ApplicationBuilder().token(bot_token).request(request).build()
     application.add_handler(CommandHandler("start", handle_start))
     return application
 
 
-def register_message_handler(application: Application, process_user_message: ProcessUserMessage) -> None:
-    """Регистрирует обработчик обычных текстовых сообщений поверх уже собранного `ProcessUserMessage`."""
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, TextMessageHandler(process_user_message)))
+def register_message_handler(
+    application: Application,
+    process_user_message: ProcessUserMessage,
+    create_memory_record: CreateMemoryRecordUseCase,
+) -> None:
+    """
+    Регистрирует обработчик обычных текстовых сообщений поверх уже собранного
+    `ProcessUserMessage`. `create_memory_record` (Sprint 12) — завершает
+    двухшаговый `/remember` без аргумента, см. докстринг `TextMessageHandler`.
+    """
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, TextMessageHandler(process_user_message, create_memory_record))
+    )
 
 
 def register_new_conversation_handler(application: Application, start_new_conversation: StartNewConversation) -> None:
@@ -159,3 +175,19 @@ def register_model_handlers(
     application.add_handler(
         CallbackQueryHandler(ModelSelectionCallbackHandler(select_model, list_available_models), pattern=r"^model:")
     )
+
+
+_BOT_COMMANDS = (
+    BotCommand("start", "Начать работу с ботом"),
+    BotCommand("new", "Начать новый диалог"),
+    BotCommand("clear", "Очистить историю текущего диалога"),
+    BotCommand("profile", "Выбрать профиль ассистента"),
+    BotCommand("model", "Выбрать AI-модель"),
+    BotCommand("remember", "Сохранить факт в долговременную память"),
+    BotCommand("memory", "Показать сохранённые факты памяти"),
+)
+
+
+async def set_bot_commands(application: Application) -> None:
+    """Регистрирует список команд в Telegram (меню "/" в клиенте) — только подсказка UI, не влияет на обработку."""
+    await application.bot.set_my_commands(list(_BOT_COMMANDS))

@@ -136,12 +136,15 @@ def _make_process_user_message(
 def _build_application(repositories_factory: ConversationRepositoriesFactory, provider: FakeLLMProvider) -> Application:
     """Собирает реальный `telegram.ext.Application` с текстом/`/new`/`/clear`/`/remember`/`/memory`."""
     application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
-    register_message_handler(application, _make_process_user_message(repositories_factory, provider))
+    create_memory_record = CreateMemoryRecordUseCase(repositories=repositories_factory)
+    register_message_handler(
+        application, _make_process_user_message(repositories_factory, provider), create_memory_record
+    )
     register_new_conversation_handler(application, StartNewConversation(repositories=repositories_factory))
     register_clear_conversation_handler(application, ClearConversation(repositories=repositories_factory))
     register_memory_handlers(
         application,
-        CreateMemoryRecordUseCase(repositories=repositories_factory),
+        create_memory_record,
         ListMemoryRecordsUseCase(repositories=repositories_factory),
         DeleteMemoryRecordUseCase(repositories=repositories_factory),
     )
