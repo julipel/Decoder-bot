@@ -410,7 +410,7 @@ upgrade head` не нужно и не требуется (Sprint 11, S11-04, ADR
 | Группа | Префикс | Обязательные (секреты) | Есть значения по умолчанию |
 |---|---|---|---|
 | `ApplicationSettings` | `APP_` | — | `APP_NAME`, `APP_ENVIRONMENT`, `APP_DEBUG`, `APP_HOST`, `APP_PORT`, `APP_LOG_LEVEL` (Sprint 11, S11-04, ADR-11.5 — гранулярный уровень логирования; `APP_DEBUG=true` продолжает безусловно форсировать `DEBUG` независимо от этого значения) |
-| `TelegramSettings` | `TELEGRAM_` | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` | — |
+| `TelegramSettings` | `TELEGRAM_` | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` | `TELEGRAM_PROXY_URL` (SOCKS5/HTTP-прокси для api.telegram.org, нужен только если сеть сервера не имеет прямого доступа к Telegram, см. «Диагностика типовых ошибок») |
 | `LLMSettings` | `LLM_` | — | `LLM_TIMEOUT`, `LLM_MAX_TOKENS`, `LLM_TEMPERATURE` |
 | `LLMProviderSettings` | `LLM_PROVIDER_` | `LLM_PROVIDER_API_KEY`, `LLM_PROVIDER_BASE_URL`, `LLM_PROVIDER_DEFAULT_MODEL` (Sprint 11, ADR-11.1 — дженерик-провайдер без универсального дефолта) | `LLM_PROVIDER_PROVIDER_ID` (по умолчанию `custom`) |
 | `DatabaseSettings` | `DATABASE_` | — | `DATABASE_URL` |
@@ -831,6 +831,7 @@ production-деплой из CI сознательно не реализован
 | В логах `api`/`telegram-bot` — `LLM_PROVIDER_UNAUTHORIZED` или `LLM_PROVIDER_CLIENT_ERROR` (`shared/errors.py`) | Неверный `LLM_PROVIDER_BASE_URL` и/или `LLM_PROVIDER_API_KEY` | Проверьте значения в `.env` против документации выбранного агрегатора; `LLM_PROVIDER_UNAUTHORIZED` — ключ неверный/просрочен, `LLM_PROVIDER_CLIENT_ERROR` — часто несовместимый `model` id (см. раздел «Каталог AI-моделей» — при смене агрегатора `catalog.json` нужно отредактировать вручную) |
 | Caddy не выпускает сертификат, HTTPS недоступен | DNS не указывает на сервер или порты 80/443 закрыты файрволом | `docker compose logs caddy` — типичная ошибка ACME-валидации; убедитесь, что `DOMAIN` реально резолвится на IP сервера и `80`/`443` открыты снаружи (для локальной проверки без домена используйте `DOMAIN=localhost`, см. «Production-развёртывание») |
 | `docker compose ps` показывает `telegram-bot` как `unhealthy` | `TELEGRAM_BOT_TOKEN` невалиден/просрочен | Проверьте `docker compose logs telegram-bot` — если лог `telegram_polling_started` не появился, `Application.initialize()` (в т.ч. вызов `getMe`) не завершился успешно; проверьте значение `TELEGRAM_BOT_TOKEN` в `.env` через [@BotFather](https://t.me/BotFather) |
+| `telegram-bot` жив (healthcheck на `/proc`, не на API), но лог `telegram_polling_started` не появляется вообще, токен точно верный | Сеть сервера не имеет доступа к `api.telegram.org` (наблюдалось на серверах в РФ — обычный `curl`/`nc` до порта 443 может даже пройти, но SOCKS5-прокси через незашифрованный туннель тоже не спасает: DPI на пути распознаёт IP Telegram в открытом виде внутри самого протокола прокси) | Настройте `TELEGRAM_PROXY_URL=socks5://host:port` на прокси/SSH-туннель с выходом из другой сети — важно, чтобы туннель был зашифрован целиком (например, `ssh -N -D 0.0.0.0:1080 user@сервер-с-доступом`, не голый SOCKS5 через интернет), иначе тот же DPI заблокирует и его |
 
 ## Разработка
 

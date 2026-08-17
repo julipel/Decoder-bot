@@ -96,12 +96,14 @@ from dekoder.presentation.telegram.handlers.profile import ProfileCommandHandler
 from dekoder.presentation.telegram.handlers.start import handle_start
 
 
-def build_telegram_application(bot_token: str) -> Application:
+def build_telegram_application(bot_token: str, proxy_url: str | None = None) -> Application:
     """Собирает `Application` и регистрирует `/start` — обработчики текста и `/new` добавляются отдельно."""
     # python-telegram-bot по умолчанию даёт connect/read_timeout=5с — недостаточно
     # на нестабильном сетевом пути до api.telegram.org, приводит к TimedOut даже
     # на успешно обработанных командах (ответ готов, но не успевает уйти).
-    request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
+    # proxy_url — TelegramSettings.proxy_url (TELEGRAM_PROXY_URL), нужен только
+    # когда сеть развёртывания не имеет прямого доступа к Telegram.
+    request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0, proxy=proxy_url)
     application = ApplicationBuilder().token(bot_token).request(request).build()
     application.add_handler(CommandHandler("start", handle_start))
     return application

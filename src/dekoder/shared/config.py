@@ -65,6 +65,12 @@ class TelegramSettings(BaseSettings):
 
     bot_token: SecretStr
     webhook_secret: SecretStr
+    # Опционально: SOCKS5/HTTP-прокси для запросов к api.telegram.org — нужен,
+    # когда сеть развёртывания не имеет прямого доступа к Telegram (например,
+    # на некоторых серверах в РФ по той же причине, что раньше требовала
+    # генерализации LLM-провайдера, ADR-11.1). Формат — стандартный proxy URL
+    # httpx (`socks5://host:port`, `http://host:port`). Не задан по умолчанию.
+    proxy_url: str | None = None
 
 
 class LLMSettings(BaseSettings):
