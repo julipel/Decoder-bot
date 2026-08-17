@@ -276,7 +276,7 @@ src/
 
 Новые каталоги добавляются по мере появления реальной функциональности.
 
-**Текущее фактическое состояние (после Sprint 8, LLM-часть Sprint 11):**
+**Текущее фактическое состояние (после Sprint 11, S12-01…S12-03):**
 реально используется полное дерево согласно этой целевой структуре —
 `domain/{conversation,user,profile,memory,prompt,knowledge,model_catalog}`,
 `application/{conversation,user,profile,memory,prompt,knowledge,model_catalog,health}`,
@@ -284,34 +284,15 @@ src/
 `presentation/{telegram,api}`, `bootstrap/`, `shared/`. Подробности по
 слоям — см. §32/§36.
 
-**Параллельное дерево-заглушка v2.0 удалено (2026-08-13, по явному
-запросу пользователя).** До прочтения этого файла (в отдельной, более
-ранней сессии) была выполнена большая миграция по
-`docs/versions/*_v2.0.md` — `composition/`, `interfaces/`, и остатки
-`domain/`/`application/`-модулей `ai_core`, `session`, `skills`,
-`infrastructure/{model_gateway,vector_storage}`, часть
-`shared/domain/identifiers.py`/`shared/domain/value_objects.py`/
-`shared/domain/errors.py`/`shared/application/execution_context.py` —
-построенная по архитектуре, отличной от этого файла (`interfaces/`+
-`composition/` вместо `presentation/`+`bootstrap/`). Каждый спринт по
-мере построения настоящего аналога точечно удалял пересекающийся узел
-(S4-01/S5-01/S6-01/S7-01/S8-01); `admin`/`rag`/`knowledge_base` были
-удалены этим путём ранее. Остаток (`composition/{bootstrap,container}.py`,
-`interfaces/`, `application/ai_core`, `domain+application/session`,
-`domain+application/skills`, `infrastructure/persistence/sqlite_{session,
-content_skill}_repository.py`, полностью-мёртвые части `shared/domain/`
-и `shared/application/`) — проверен грепом импортов по всему `src`/
-`tests` (не по журналу — тот успел устареть) и удалён целиком; удалён и
-`tests/integration/test_health_endpoint.py` (тестировал только
-удалённый `composition.bootstrap.create_app()`, покрытие `/health`
-полностью дублируется `test_application_bootstrap.py`, который бьёт по
-реальному `create_application`). Единственное, что осталось от этого
-дерева: `composition/health.py` (реальный, живой роутер `/health`,
-импортируется `bootstrap/application.py` — не мёртвый код, архитектурно
-осознанное исключение) и `shared/domain/identifiers.py`, урезанный до
-одного живого `CorrelationId` (Sprint 9). Реконсиляция полностью
-завершена — этот абзац можно удалить при следующей значительной правке
-CLAUDE.md, если новых расхождений не появится.
+**Параллельное дерево-заглушка v2.0** (`composition/`+`interfaces/`
+вместо `presentation/`+`bootstrap/`, построено по `docs/versions/*_v2.0.md`
+до прочтения этого файла в отдельной ранней сессии) полностью удалено
+(2026-08-13, коммит `9e18834`; ход реконсиляции и найденные при ней
+дефекты — в git-истории и §36 «Известные технические нюансы»).
+Единственное, что осталось от этого дерева: `composition/health.py`
+(реальный, живой роутер `/health`, импортируется `bootstrap/application.py`
+— не мёртвый код, архитектурно осознанное исключение) и
+`shared/domain/identifiers.py`, урезанный до одного живого `CorrelationId`.
 
 ---
 
@@ -903,7 +884,7 @@ pytest
 
 # 32. Текущий этап разработки
 
-**Sprint 11 (производственное развёртывание + генерализация LLM-провайдера) — LLM-часть выполнена (S11-01/S11-02), остальное не начато.** Начиная с этого спринта — `LLMProviderSettings`/`OpenAiCompatibleLLMAdapter`/`OpenAiCompatibleHealthCheck` (ранее `OpenRouterSettings`/`OpenRouterLLMAdapter`); LLM-адаптер стал дженерик OpenAI-Chat-Completions-совместимым, настраиваемым только через `.env` (`LLM_PROVIDER_*`) — причина: OpenRouter географически недоступен пользователю. `catalog.json` id моделей остаются иллюстративным дефолтом в конвенции OpenRouter (`vendor/model-name`) — требуют ручной правки при смене `LLM_PROVIDER_BASE_URL` на другой реальный агрегатор.
+**Sprint 12 (генерализация embedding-провайдера, ADR-12.1) — в процессе (S12-01…S12-03 завершены, финальной интеграционной записи спринта нет); Sprint 11 (производственное развёртывание + генерализация LLM-провайдера) — завершён полностью (S11-01…S11-07).** Начиная с Sprint 11 — `LLMProviderSettings`/`OpenAiCompatibleLLMAdapter`/`OpenAiCompatibleHealthCheck` (ранее `OpenRouterSettings`/`OpenRouterLLMAdapter`); LLM-адаптер стал дженерик OpenAI-Chat-Completions-совместимым, настраиваемым только через `.env` (`LLM_PROVIDER_*`) — причина: OpenRouter географически недоступен пользователю. Тем же приёмом в Sprint 12 переименован эмбеддинг-провайдер: `OpenAiSettings` → `EmbeddingProviderSettings` (`EMBEDDING_PROVIDER_*` вместо `OPENAI_*`; класс `OpenAiEmbeddingProvider` не переименован — имя описывает wire-формат, не вендора). Отдельным коммитом после S12-03 пользователь также переключил сами эмбеддинги с прямого OpenAI на RouterAI — тот же агрегатор, что и LLM (миграция Qdrant-коллекции не потребовалась, размерность вектора не изменилась); `catalog.json` id моделей обновлены на реально проверенные RouterAI ID (кроме намеренно оставленной недоступной `claude-3-haiku` — нужна тесту сценария отката на модель по умолчанию). `catalog.json` по-прежнему требует ручной правки при смене агрегатора (ADR-11.2) — это не автоматизировано.
 
 Полная архитектурная спецификация каждого спринта — внешние `backlog_N.md` (не входят в этот репозиторий, содержат ADR). Итог по завершённым спринтам (все — полный вертикальный срез, ruff/mypy/pytest зелёные на каждом коммите; подробности по файлам/тестам/девиациям — `git log`/сообщения коммитов):
 
@@ -915,8 +896,11 @@ pytest
 * **Sprint 6 — база знаний и RAG (S6-01…S6-11, завершён; не задокументирован отдельной записью в момент выполнения — восстановлено по коммитам).** `domain/knowledge`, `application/knowledge`, `infrastructure/{documents,embeddings,qdrant}`; парсеры (txt/md/docx/pdf), chunking, `OpenAiEmbeddingProvider`, `SemanticSearchService`; интеграция в `ProcessUserMessage` (`_search_knowledge`, вне DB-транзакций, сбой не обрушивает ответ); `scripts/index_document.py`.
 * **Sprint 7 — выбор AI-модели (S7-01…S7-08, завершён).** `domain/model_catalog` (`AIModel`, `AIProvider`/`ModelCapability`/`ModelAvailability`/`ModelPriceTier`, `GenerationSettings`); `ConfigModelCatalogRepository` (`catalog.json`, 6 моделей — тоже потребовал `package-data`-фикса); `ModelSelection`+`ModelSelectionRepository` (upsert на пользователя); `ListAvailableModels`/`GetSelectedModel`/`SelectModel` (`SelectModel` — доменная ошибка на невалидный/недоступный выбор, не молчаливый no-op); интеграция в `ProcessUserMessage` (приоритет: explicit override → персональный выбор → default; тихий логируемый откат при недоступности); `/model` с inline-клавиатурой. Финальный аудит не нашёл новых дефектов кода (только точечная правка докстринга). 741 тест.
 * **Sprint 8 — административные функции (S8-01…S8-11, завершён).** `AdminSettings` (статичный `X-Admin-Api-Key`); глобальные FastAPI `exception_handler`'ы; `NotFoundError` (новый класс ошибок); admin REST для документов (upload/list/get/delete/reindex) и профилей (create/patch/archive/list) под `/admin/*`; `CreateProfile`/`UpdateProfile`/`DeactivateProfile`/`ListAllProfiles` (`DeactivateProfile` блокирует архивацию `is_default`); реальный health-check Qdrant/OpenRouter/OpenAI через `GET /admin/health` (всегда 200, `all_healthy`-флаг); CLI-паритет (`scripts/index_document.py list/reindex`, `scripts/check_services.py`). Финальный аудит исправил интеграционные мелочи, найденные по ходу самих задач (dangling-импорт мёртвого `AdminAuthPort` в живом `composition/container.py`; циклы импорта, потребовавшие локальных импортов роутеров внутри `create_application()`). Admin CRUD каталога моделей и admin-управление памятью cross-user — явно отклонены пользователем при планировании, не Sprint 8. 842 теста.
+* **Sprint 11 — производственное развёртывание + генерализация LLM-провайдера (S11-01…S11-07, завершён).** S11-01/S11-02: LLM-адаптер генерализован под любой OpenAI-Chat-Completions-совместимый провайдер (`LLMProviderSettings`/`OpenAiCompatibleLLMAdapter`/`OpenAiCompatibleHealthCheck`, ADR-11.1, файл — `infrastructure/llm/openai_compatible_adapter.py`), тесты/`catalog.json`/документация доведены до зелёного состояния. S11-03: production `Dockerfile` — multi-stage сборка через `uv.lock`, `HEALTHCHECK`, без dev-зависимостей. S11-04: миграции при старте без гонки, healthcheck `telegram-bot`, Caddy/HTTPS-оверлей, лимиты ресурсов, `LOG_LEVEL` — эмпирическая проверка (задача явно требовала проверять, не предполагать) нашла и исправила 4 реальных дефекта: healthcheck `telegram-bot` дублировал `/proc/` в пути (`pathlib.Path('/proc').iterdir()` уже даёт абсолютные пути) и падал всегда; `docker-compose.prod.yml`'s `api.ports: []` — no-op, т.к. Compose по умолчанию объединяет, не заменяет multi-value поля между файлами (исправлено тегом `!reset []`); прод-оверлей `LOG_LEVEL` не совпадал с `env_prefix="APP_"` (`shared/config.py`) — переименован в `APP_LOG_LEVEL`; `check-yaml` pre-commit потребовал `--unsafe` для тега `!reset`. S11-05: `deploy/backup.sh`/`deploy/restore.sh` (ADR-11.6) — volume-level tar через одноразовый alpine-контейнер, без импорта кода `dekoder`; restore drill выполнен реально сквозным прогоном (документ + диалог до бэкапа → `docker compose down -v` → restore → подтверждена та же Alembic-ревизия, документ и семантический поиск на месте). S11-06: минимальный CI (GitHub Actions) — линт/типы/тесты (включая реальный Qdrant)/сборка образа. S11-07: README — production-развёртывание, backup/restore, CI/CD, диагностика типовых ошибок. 915 тестов (7 skipped без Qdrant).
+* **Sprint 12 — генерализация embedding-провайдера (S12-01…S12-03, ADR-12.1; в процессе, финальная интеграционная запись спринта в этом журнале отсутствует).** `OpenAiSettings` → `EmbeddingProviderSettings` (`EMBEDDING_PROVIDER_*` вместо `OPENAI_*`, тот же приём, что LLM в Sprint 11); `OpenAiEmbeddingProvider` не переименован — имя описывает wire-формат, не вендора. S12-01 сделал продуктовый код намеренно красным (`shared/config.py`, `bootstrap/{container,application,knowledge_container}.py`, `telegram_main.py`, `presentation/api/dependencies/documents.py`); S12-02 довёл до зелёного (тестовые фикстуры, `.env.example`, README); S12-03 нашёл и починил пропущенный `scripts/index_document.py`/`scripts/check_services.py` — они использовали старые атрибуты `settings.openai`/`openai_http_client` и были сломаны (`AttributeError`) с момента S12-01, т.к. лежат вне `src/` и не попали ни в grep S12-01, ни в файловый список ADR-12.1 §3. 922 теста (с Qdrant) / 915 (7 skipped без Qdrant), покрытие 93%.
+* **Внеспринтовая зачистка и UX-фиксы (после S12-03, не привязаны к ADR конкретного спринта).** Отдельным коммитом эмбеддинги переключены с прямого OpenAI на RouterAI (см. вводный абзац этого параграфа) — попутно найдено и исправлено: `OpenAiHealthCheck` хардкодил `service_name="openai"` (в отличие от параметризованного ещё в Sprint 11 `OpenAiCompatibleHealthCheck`) — параметризован тем же приёмом, DI передаёт `"embedding_provider"`; 11 тестовых файлов монкипатчили только `EMBEDDING_PROVIDER_API_KEY`, не `EMBEDDING_PROVIDER_BASE_URL` — при появлении реального значения в `.env` разработчика это молча утекало бы в боевой сервис вместо `respx`-моков, добавлен явный override. Далее: полная реконсиляция мёртвого v2.0-дерева (`composition/interfaces/ai_core/session/skills` и т.д. — детали в §7); data-миграция текста 4 сид-профилей на авторские персоны (см. bullet Sprint 3 выше); Telegram UX/сетевые фиксы — таймауты `HTTPXRequest` 5с→30с, `run_polling(bootstrap_retries=3)`, `set_bot_commands()` (меню «/» в клиенте), двухшаговый `/remember` без аргумента (`PENDING_REMEMBER_KEY` в `context.user_data`), описание профиля в подтверждении `/profile`. 921 тест (7 skipped), покрытие 94%.
 
-Между записями встречаются пробелы («Sprint 6 задокументирован задним числом», «нет отдельной записи Sprint 9/10 перед Sprint 11») — это упущения процесса ведения этого файла в соответствующих сессиях, не потеря функциональности; при сомнении в фактическом состоянии кода — проверять `git log`, не полагаться только на этот файл.
+Между записями встречаются пробелы («Sprint 6 задокументирован задним числом», «нет отдельной записи Sprint 9/10», «Sprint 12 не закрыт финальной интеграционной записью») — это упущения процесса ведения этого файла в соответствующих сессиях, не потеря функциональности; при сомнении в фактическом состоянии кода — проверять `git log`, не полагаться только на этот файл.
 
 ---
 
@@ -929,7 +913,7 @@ pytest
 * полноценный просмотр/агрегация логов и метрик, полная иерархия ошибок §17.4 «Плана реализации.md» (`AccessDeniedError`/`ConfigurationError`/`KnowledgeSearchError`, сквозной `correlation_id`) — Этап 11;
 * admin CRUD каталога AI-моделей, admin-управление долговременной памятью (`MemoryRecord` cross-user) — отклонено пользователем.
 
-Sprint 11 (текущий) — производственное развёртывание (Этап 13) + генерализация LLM-провайдера; LLM-часть выполнена (§32), остальное (production deployment) не начато.
+Sprint 11 завершён полностью (§32). Sprint 12 (текущий) — генерализация embedding-провайдера (ADR-12.1) + переключение эмбеддингов на RouterAI; S12-01…S12-03 завершены, финальная интеграционная запись спринта в этом файле не закрыта (§32) — перед продолжением сверяться с `git log`.
 
 Порядок может корректироваться, но изменение должно быть зафиксировано в §32.
 
@@ -969,21 +953,22 @@ Sprint 11 (текущий) — производственное развёрты
 
 ## Реализовано
 
-Полный вертикальный срез Sprint 1–8 работает целиком, включая вход через Telegram и admin REST API. По слоям (актуальное состояние, детали по спринтам — §32):
+Полный вертикальный срез Sprint 1–11 работает целиком, включая вход через Telegram, admin REST API и production-развёртывание; Sprint 12 (генерализация embedding-провайдера) выполнен на S12-01…S12-03. По слоям (актуальное состояние, детали по спринтам — §32):
 
-* `shared/` — `Settings` (все группы §18), structlog-логирование с редактированием чувствительных полей, 6-классовая иерархия ошибок;
+* `shared/` — `Settings` (все группы §18, включая `EmbeddingProviderSettings` вместо `OpenAiSettings` с Sprint 12), structlog-логирование с редактированием чувствительных полей, 6-классовая иерархия ошибок;
 * `domain/` — `conversation` (`MessageText`/`ModelId`/`ProviderId`/`Conversation`/`Message`/`MessageRole`), `user` (`User`), `profile` (`UserProfile`/`ProfileStatus`), `prompt` (`PromptTemplate`/`PromptContext`/`PromptBuildResult`/`TokenBudgetPolicy`), `memory` (`MemoryRecord` + 4 enum), `knowledge`, `model_catalog` (`AIModel`+enum+`GenerationSettings`+`ModelSelection`) — ни один не импортирует SQLAlchemy/Telegram/FastAPI (проверяется grep'ом на каждом спринте);
 * `application/` — порты (`LLMProvider`, `UserRepository`, `ConversationRepository`/`MessageRepository`, `ProfileRepository`, `PromptBuilder`/`PromptTemplateRepository`, `MemoryRepository`, `KnowledgeDocumentRepository`, `ModelCatalogRepository`/`ModelSelectionRepository`, `ServiceHealthCheck`) + use cases по каждому домену + `ProcessUserMessage`/`StartNewConversation`/`ClearConversation` как основные сценарии диалога;
-* `infrastructure/` — `llm/openrouter_adapter.py` (`OpenAiCompatibleLLMAdapter`), `persistence/` (SQLAlchemy ORM+mappers+репозитории для всех сущностей), `prompts/` (файловые шаблоны), `model_catalog/` (файловый каталог), `documents`/`embeddings`/`qdrant` (RAG), `health/` (3 адаптера);
-* `presentation/telegram/` — `/start`, `/new`, `/clear`, `/profile`, `/remember`+`/memory`, `/model`, текстовый хендлер — единственное место, вызывающее `ProcessUserMessage`;
+* `infrastructure/` — `llm/openai_compatible_adapter.py` (`OpenAiCompatibleLLMAdapter`, дженерик, `LLM_PROVIDER_*`, Sprint 11, ADR-11.1), `persistence/` (SQLAlchemy ORM+mappers+репозитории для всех сущностей), `prompts/` (файловые шаблоны), `model_catalog/` (файловый каталог, `catalog.json` — ID моделей актуализированы под RouterAI), `documents`/`embeddings` (`openai_embedding_provider.py`, `EMBEDDING_PROVIDER_*`, Sprint 12, ADR-12.1, реально идёт через RouterAI)/`qdrant` (RAG), `health/` (`openai_compatible_health_check.py`, `openai_health_check.py` — `service_name` параметризован, `qdrant_health_check.py`);
+* `presentation/telegram/` — `/start`, `/new`, `/clear`, `/profile`, `/remember`+`/memory` (двухшаговый: без аргумента ждёт следующее сообщение), `/model`, текстовый хендлер, меню команд (`set_bot_commands()`) — единственное место, вызывающее `ProcessUserMessage`;
 * `presentation/api/` — `/health`, `/admin/health`, `/admin/documents/*`, `/admin/profiles/*`, все admin-роуты за `require_admin_api_key`;
 * `bootstrap/` — `container.py`/`repositories.py`/`knowledge_container.py`/`database.py`/`application.py` — единственная точка сборки, одна `ConversationRepositoriesFactory` на всё приложение;
-* Docker/Alembic — образ + `docker-compose.yml` (api/telegram-bot/qdrant, именованный volume для SQLite), 6+ Alembic-миграций, `alembic check` чист;
-* тесты — 842 (unit/integration/e2e), ruff/ruff format/mypy проходят.
+* Docker/Alembic — production multi-stage `Dockerfile` (через `uv.lock`, `HEALTHCHECK`), `docker-compose.yml` + `docker-compose.prod.yml` (Caddy/HTTPS-оверлей, лимиты ресурсов, healthcheck на все сервисы, именованный volume для SQLite), `deploy/backup.sh`/`deploy/restore.sh` (volume-level бэкап/restore, drill пройден вживую), минимальный CI (GitHub Actions — линт/типы/тесты с реальным Qdrant/сборка образа), 7+ Alembic-миграций, `alembic check` чист;
+* v2.0-скелет (`composition/interfaces/ai_core/session/skills`) удалён из кода целиком — деталь только историческая, см. §7;
+* тесты — 921 passed, 7 skipped (94% покрытие без Qdrant; с Qdrant — 922 passed), ruff/ruff format/mypy проходят.
 
 ## В разработке
 
-Sprint 11: LLM-провайдер генерализован (S11-01/S11-02), production deployment (Этап 13) — не начат.
+Sprint 12: генерализация embedding-провайдера выполнена (S12-01…S12-03) плюс отдельный внеспринтовый коммит переключил сами эмбеддинги на RouterAI (см. §32) — финальная интеграционная запись спринта в этом журнале не закрыта. Ветка `feature/sprint-12` (115 коммитов впереди `master`) ещё не смёржена — открыт PR #1 «Слить весь рабочий код Sprint 1-12 в master».
 
 ## Не реализовано
 
@@ -1007,7 +992,12 @@ Sprint 11: LLM-провайдер генерализован (S11-01/S11-02), pr
 * **Каталоги/шаблоны без `__init__.py` не попадают в wheel без явного `package-data`.** `infrastructure/prompts/templates/*` и `infrastructure/model_catalog/catalog.json` требуют записи в `pyproject.toml::[tool.setuptools.package-data]`, иначе `pip install .` (используется в `Dockerfile`) молча соберёт образ без них — падение обнаруживается только внутри контейнера (S4-04/S7-03).
 * **Docker-образ не даёт непривилегированному пользователю писать в `/app/data`/не копирует `alembic.ini` без явных инструкций** — `WORKDIR`/`COPY` выполняются от `root` до `USER dekoder`; нужны явные `mkdir`+`chown` и `COPY alembic.ini`/`COPY alembic` (S2-11/S3-09).
 * **Удаление узла мёртвого v2.0-дерева почти всегда тянет dangling-импорты за пределы формально названного в задаче файла** — обычно в `application/ai_core/*`, иногда в живой `composition/container.py`; каждый раз находится и точечно зачищается по ходу задачи, не откладывается (S5-01/S7-01/S8-01).
+* **`pathlib.Path('/proc').iterdir()` уже возвращает абсолютные пути** — конкатенация `f'/proc/{p}/cmdline'` в healthcheck-скрипте даёт `/proc//proc/1/cmdline` и падает всегда; использовать `p.name` (S11-04).
+* **Docker Compose объединяет, а не заменяет multi-value поля (`ports` и т.п.) между `-f` файлами по умолчанию** — переопределение вида `ports: []` в prod-оверлее молча не срабатывает, порт из базового файла остаётся; нужен явный merge-control тег `!reset []`, `check-yaml` pre-commit требует для него `--unsafe` (S11-04).
+* **Имя переменной окружения должно буквально совпадать с `env_prefix` настройки**, иначе она молча не долетает до `Settings` — прод-оверлей `LOG_LEVEL` не подхватывался `ApplicationSettings` (`env_prefix="APP_"`) до переименования в `APP_LOG_LEVEL` (S11-04).
+* **`grep`/файловый чек-лист ADR, ограниченный `src/`, не покрывает `scripts/`** — оба CLI-скрипта (`index_document.py`, `check_services.py`) обращались к переименованному в S12-01 атрибуту `settings.openai` и были сломаны (`AttributeError`) до отдельного фикса S12-03, обнаруженного только живым запуском, не тестами (они тоже не покрывают `scripts/`).
+* **Тестовый монкипатч только `*_API_KEY` без соответствующего `*_BASE_URL`** безопасен лишь пока в `.env` разработчика это поле не задано (используется Python-дефолт). Как только там появляется реальное значение, тесты без явного override `*_BASE_URL` перестают быть изолированы `respx`-моками и молча бьют в реальный сервис — обнаружено при переключении эмбеддингов на RouterAI, потребовало правки 11 тестовых файлов.
 
 ## Следующее действие
 
-Sprint 11: LLM-провайдер генерализован под дженерик OpenAI-Chat-Completions-совместимый адаптер (S11-01/S11-02, причина — географическая недоступность OpenRouter). Остаток Sprint 11 (production deployment, Этап 13 — backup/restore, CI/CD, диагностика типовых ошибок, судя по `README.md`/недавним коммитам) — в процессе, не завершён этим файлом. Перед продолжением — свериться с `git log`/текущим README на предмет фактического прогресса, этот файл мог отстать от кода (см. «Известные расхождения» про пробелы в ведении журнала).
+Sprint 11 завершён полностью (S11-01…S11-07). Sprint 12 (генерализация embedding-провайдера, ADR-12.1) выполнен на S12-01…S12-03 плюс отдельный внеспринтовый коммит переключил сами эмбеддинги на RouterAI — финальной интеграционной записи спринта в этом файле нет. Ветка `feature/sprint-12` (115 коммитов впереди `master`) не смёржена, открыт PR #1. Перед продолжением — свериться с `git log`/README на предмет фактического прогресса и решить судьбу PR #1; этот файл мог снова отстать от кода (см. «Известные расхождения» про пробелы в ведении журнала).
