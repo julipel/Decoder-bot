@@ -1,0 +1,33 @@
+"""
+Единая точка импорта всех ORM-моделей Infrastructure Layer (задача S2-02).
+
+Alembic autogenerate (`alembic/env.py`, `target_metadata = Base.metadata`)
+обнаруживает таблицы только для тех ORM-классов, которые были
+импортированы хотя бы один раз до сравнения схемы — декларативные классы
+регистрируют себя в `Base.metadata` в момент определения класса. Этот
+модуль импортируется из `alembic/env.py` и ни из какого другого места —
+единственная причина его существования — гарантировать регистрацию всех
+моделей для миграций, не заставляя `env.py` перечислять их по отдельности.
+"""
+
+from __future__ import annotations
+
+from dekoder.infrastructure.persistence.conversation_orm import ConversationORM
+from dekoder.infrastructure.persistence.knowledge_document_orm import KnowledgeDocumentORM
+from dekoder.infrastructure.persistence.memory_record_orm import MemoryRecordORM
+from dekoder.infrastructure.persistence.message_orm import MessageORM
+from dekoder.infrastructure.persistence.profile_orm import ProfileORM
+from dekoder.infrastructure.persistence.user_active_model_orm import UserActiveModelORM
+from dekoder.infrastructure.persistence.user_active_profile_orm import UserActiveProfileORM
+from dekoder.infrastructure.persistence.user_orm import UserORM
+
+__all__ = [
+    "ConversationORM",
+    "KnowledgeDocumentORM",
+    "MemoryRecordORM",
+    "MessageORM",
+    "ProfileORM",
+    "UserActiveModelORM",
+    "UserActiveProfileORM",
+    "UserORM",
+]

@@ -1,5 +1,7 @@
 # Структура проекта — MVP персонального AI-ассистента «Декодер»
 
+> **Статус: Недействителен.** Документ заменён версией 2.0 — см. [`docs/versions/03_project_structure_v2.0.md`](versions/03_project_structure_v2.0.md).
+
 Документ описывает структуру Python-репозитория, реализующую архитектуру из [`docs/02_system_architecture.md`](02_system_architecture.md) в рамках требований [`docs/01_requirements_analysis.md`](01_requirements_analysis.md). Оба документа не изменялись; настоящая структура — их прямое следствие, а не пересмотр.
 
 Структура создана без установки зависимостей, без подключения реальных API, без таблиц/миграций БД и без ORM-моделей. Все файлы — минимальные заглушки (Protocol-порты, dataclass-сущности, сигнатуры use case'ов, `raise NotImplementedError`).

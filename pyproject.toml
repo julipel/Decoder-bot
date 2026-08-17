@@ -7,12 +7,158 @@ name = "dekoder"
 version = "0.1.0"
 description = "MVP персонального AI-ассистента «Декодер» — модульный монолит (Clean Architecture / Ports & Adapters)"
 requires-python = ">=3.11"
-# Зависимости намеренно не зафиксированы на этом шаге (создаётся структура
-# проекта, установка пакетов не выполняется). Ожидаемые на этапе реализации:
-# fastapi, uvicorn, библиотека клиента Telegram Bot API (не выбрана в
-# утверждённых документах), qdrant-client, httpx (клиенты YandexGPT/OpenAI),
-# argon2-cffi или passlib (хеширование пароля администратора, docs/02, §13).
-dependencies = []
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "pydantic-settings",
+    "httpx",
+    "python-telegram-bot",
+    "structlog",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.22.1",
+    "alembic>=1.18.5",
+    "qdrant-client>=1.19.0",
+    "python-docx>=1.2.0",
+    "pypdf>=6.15.0",
+    # Sprint 8, S8-05 (ADR-8.6): multipart/form-data для POST /admin/documents
+    # (FastAPI Form/UploadFile требуют python-multipart на рантайме, не
+    # только для валидации схемы — без него запрос падает 500 при старте).
+    "python-multipart>=0.0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "respx",
+    "ruff",
+    "mypy",
+    "pre-commit",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# Sprint 4, задача S4-04 (ADR-4.2): сид-шаблоны Prompt Engine — плоские
+# текстовые файлы + JSON-манифест, не Python-модули, поэтому `packages.
+# find` (требует `__init__.py`) их не подхватывает сам по себе; без этой
+# записи `pip install .` (используется в `Dockerfile`) собрал бы пакет
+# без `infrastructure/prompts/templates/*`, и `FileTemplateRepository`
+# падал бы при старте внутри контейнера, работая только при локальном
+# запуске из исходников.
+"dekoder.infrastructure.prompts" = ["templates/*.txt", "templates/*.json"]
+# Sprint 7, задача S7-03 (ADR-7.4): статичный сид-каталог AI-моделей —
+# тот же класс проблемы, что и сид-шаблоны Prompt Engine выше: без этой
+# записи `pip install .` (используется в `Dockerfile`) собрал бы пакет
+# без `infrastructure/model_catalog/catalog.json`, и
+# `ConfigModelCatalogRepository` падал бы при старте внутри контейнера.
+"dekoder.infrastructure.model_catalog" = ["catalog.json"]
+
+[tool.ruff]
+target-version = "py311"
+# 120, а не типичные 88/100: кодовая база документирована на русском
+# (docstring'и/комментарии со ссылками на docs/NN, §…), что естественно
+# длиннее — иначе правило E501 создавало бы трение без пользы для MVP.
+line-length = 120
+src = ["src", "tests"]
+# claude.md — управляющий документ (проектные инструкции для Claude Code),
+# не код проекта; ruff 0.16+ форматирует Python-блоки внутри Markdown —
+# автоматическая правка этого файла без ревью здесь так же нежелательна,
+# как и для docs/ (см. .pre-commit-config.yaml).
+extend-exclude = ["claude.md"]
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors (синтаксис/стиль)
+    "W",     # pycodestyle warnings (стиль)
+    "F",     # pyflakes (неиспользуемые переменные/импорты, потенциальные ошибки)
+    "I",     # isort (импорты)
+    "UP",    # pyupgrade (устаревший синтаксис)
+    "B",     # flake8-bugbear (потенциальные ошибки)
+    "C4",    # flake8-comprehensions (упрощения)
+    "SIM",   # flake8-simplify (упрощения)
+    "ANN",   # flake8-annotations (аннотации типов)
+    "ASYNC", # flake8-async (асинхронный код)
+]
+# ANN401 (запрет Any) намеренно не включён — на этапе MVP типы адаптеров
+# внешних API (httpx-ответы, python-telegram-bot) не всегда можно выразить
+# точнее Any, а строгий запрет создавал бы трение без пользы для MVP.
+# UP042 (str+Enum -> StrEnum) намеренно не включён — потребовал бы правки
+# доменных enum'ов (knowledge_base/memory/search) вне рамок задачи S1-02
+# (настройка инструментов, не рефакторинг доменной модели).
+ignore = ["ANN401", "UP042"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dekoder"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Sprint 8 (S8-05): `Depends(...)` как значение по умолчанию параметра —
+# идиоматичный, официально рекомендованный FastAPI-паттерн DI (используется
+# буквально в сниппетах backlog_8.md, ADR-8.2/8.4), не изменяемый
+# аргумент по умолчанию в обычном смысле B008 — FastAPI резолвит его
+# заново на каждый запрос. `fastapi.Security`/`fastapi.Form` уже входят
+# в дефолтный allowlist bugbear, `fastapi.Depends` — нет, добавлено явно.
+extend-immutable-calls = ["fastapi.Depends"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+# 3.12, а не рантайм-цель проекта (`requires-python = ">=3.11"`, Dockerfile
+# — 3.11): numpy (транзитивная зависимость qdrant-client, Sprint 6, задача
+# S6-02) поставляет .pyi с PEP 695 `type X = ...` (синтаксис Python 3.12+)
+# — mypy отказывается их парсить при python_version="3.11" даже с
+# `follow_imports = "skip"` для numpy.* ниже (skip не спасает от ошибки
+# синтаксиса при парсинге, только от проверки содержимого). Поднимает
+# планку принимаемого mypy синтаксиса — не запрещает написать в src/
+# 3.12-only конструкцию, которая не запустится на рантайме 3.11 (это не
+# проверяется автоматически, остаётся ответственностью код-ревью).
+python_version = "3.12"
+mypy_path = "src"
+packages = ["dekoder"]
+warn_unused_configs = true
+# Первый этап (S1-02): осознанно не полный strict-режим — набор проверок
+# ниже сужен, чтобы не мешать разработке MVP; расширение до strict = true —
+# отдельное решение следующего этапа.
+check_untyped_defs = true
+disallow_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = "telegram.*"
+ignore_missing_imports = true
+
+# numpy — транзитивная зависимость qdrant-client (Sprint 6, задача S6-02),
+# не импортируется напрямую нигде в src/. Её собственные .pyi используют
+# PEP 695 `type X = ...` (синтаксис Python 3.12+), который mypy не может
+# разобрать при общепроектном `python_version = "3.11"` (задача S1-02,
+# осознанно не меняется ради одной транзитивной зависимости) — `follow_imports
+# = "skip"` останавливает мypy на границе пакета, не отключая проверку типов
+# в qdrant_client/нашем коде, использующем его.
+[[tool.mypy.overrides]]
+module = "numpy.*"
+follow_imports = "skip"
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+addopts = "--cov=dekoder --cov-report=term-missing"
+asyncio_mode = "auto"
+# Sprint 2 (задача S2-06): tests/support/ — общий helper (in-memory fake
+# репозитории) для нескольких тестовых модулей ProcessUserMessage;
+# без этого `tests` не резолвится как пакет для `tests.support....` импортов.
+pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["src/dekoder"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+]

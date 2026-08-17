@@ -1,0 +1,10 @@
+Параметры активного профиля пользователя:
+$system_instruction
+
+Стиль ответа: $response_style
+Целевая аудитория: $target_audience
+Уровень формальности: $formality_level
+Предпочитаемая структура ответа: $preferred_structure
+$forbidden_phrasing_line
+$response_length_line
+$additional_constraints_line

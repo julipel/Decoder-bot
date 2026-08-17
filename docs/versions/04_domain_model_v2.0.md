@@ -1,7 +1,7 @@
 # Доменная модель — MVP персонального AI-ассистента «Декодер» (версия 2.0)
 
 **Версия документа:** 2.0
-**Статус:** Draft
+**Статус:** Approved
 **Дата:** 2026-07-28
 **Основание:** [`01_requirements_analysis_v2.0.md`](01_requirements_analysis_v2.0.md) (требования, версия 2.0, Approved), [`02_system_architecture_v2.0.md`](02_system_architecture_v2.0.md) (архитектура, версия 2.0, Approved), [`03_project_structure_v2.0.md`](03_project_structure_v2.0.md) (структура проекта, версия 2.0)
 **Соотношение с версией 1.0:** [`docs/04_domain_model.md`](../04_domain_model.md) описывает доменную модель состава MVP версии 1.0 (единый профиль автора, `DialogueMessage`/`FactDraft`/`Fact`/`Document`/`Case`/`Fragment` в границах модулей `profile`/`memory`/`knowledge_base`/`search`) и не изменяется этим документом. Новые сущности версии 2.0 (`AuthorProfile` с множественностью, `ContentSkill`, `GenerationSession`, `ModelDefinition`) и переосмысление владения (RAG отделён от Knowledge Base, Session отделена от Memory — `02`, раздел 15) делают точечное редактирование модели версии 1.0 нецелесообразным — модель спроектирована заново.

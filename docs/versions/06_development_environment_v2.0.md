@@ -1,7 +1,7 @@
 # Окружение разработки — MVP персонального AI-ассистента «Декодер» (версия 2.0)
 
 **Версия документа:** 2.0
-**Статус:** Draft
+**Статус:** Approved
 **Дата:** 2026-07-28
 **Основание:** [`01_requirements_analysis_v2.0.md`](01_requirements_analysis_v2.0.md) (требования, версия 2.0, Approved), [`02_system_architecture_v2.0.md`](02_system_architecture_v2.0.md) (архитектура, версия 2.0, Approved), [`03_project_structure_v2.0.md`](03_project_structure_v2.0.md) (структура проекта, версия 2.0), [`04_domain_model_v2.0.md`](04_domain_model_v2.0.md) (доменная модель, версия 2.0), [`05_internal_interfaces_v2.0.md`](05_internal_interfaces_v2.0.md) (внутренние интерфейсы, версия 2.0)
 **Соотношение с версией 1.0:** [`docs/06_development_environment.md`](../06_development_environment.md) описывает окружение разработки для состава MVP версии 1.0 (единый профиль, одна модель, структура `modules/<module>/...`) и не изменяется этим документом. Новая структура проекта (`03`: `domain/application/infrastructure/interfaces/shared/composition`) и новый состав портов (`05`) требуют пересмотра состава сервисов Docker-окружения и переменных конфигурации — окружение описано заново, поверх уже утверждённых `01`–`05`.

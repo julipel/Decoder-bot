@@ -1,0 +1,139 @@
+services:
+  # Одноразовый job (Sprint 11, S11-04, ADR-11.4): применяет
+  # `alembic upgrade head` один раз перед тем, как `api`/`telegram-bot`
+  # начнут принимать трафик — устраняет реальную гонку (не гипотетический
+  # риск): оба долгоживущих сервиса пишут в один и тот же volume
+  # `dekoder_data` (SQLite), и если бы каждый сам запускал миграции в
+  # своём entrypoint при параллельном старте, `alembic_version` могла бы
+  # получить конкурентные `ALTER TABLE`. `restart: "no"` — критично: это
+  # не долгоживущий сервис, а завершающийся job (код 0 при успехе); любой
+  # другой `restart`-policy привёл бы к бесконечному рестарт-лупу после
+  # успешного завершения.
+  migrate:
+    build: .
+    image: dekoder:latest
+    command: ["alembic", "upgrade", "head"]
+    env_file:
+      - .env
+    environment:
+      QDRANT_HOST: qdrant
+    volumes:
+      - dekoder_data:/app/data
+    restart: "no"
+
+  api:
+    build: .
+    image: dekoder:latest
+    command: ["uvicorn", "dekoder.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    # QDRANT_HOST в .env по умолчанию — "localhost" (для запуска вне
+    # Docker, S6-02); внутри compose-сети Qdrant доступен по имени
+    # сервиса — переопределяем здесь, а не меняем значение по умолчанию
+    # в shared/config.py.
+    environment:
+      QDRANT_HOST: qdrant
+    depends_on:
+      # condition: service_completed_successfully (Compose v2, требует
+      # завершения migrate с кодом 0, не просто "запущен") — гарантирует
+      # порядок migrate -> api без гонки (Sprint 11, S11-04, ADR-11.4).
+      migrate:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_started
+    volumes:
+      - dekoder_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  telegram-bot:
+    build: .
+    image: dekoder:latest
+    command: ["python", "-m", "dekoder.telegram_main"]
+    env_file:
+      - .env
+    environment:
+      QDRANT_HOST: qdrant
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_started
+    volumes:
+      - dekoder_data:/app/data
+    restart: unless-stopped
+    # PTB polling не выставляет HTTP-эндпоинт — не может переиспользовать
+    # api-стиль healthcheck (urllib.request на /health). Единственный
+    # практичный сигнал внутри контейнера без новых системных пакетов —
+    # процесс-ориентированная проверка через /proc (Linux-специфично, но
+    # образ на python:3.11-slim — Linux): жив ли процесс с `telegram_main`
+    # в командной строке (Sprint 11, S11-04, ADR-11.4).
+    #
+    # Отклонение от буквального снипета ADR-11.4: `f'/proc/{p}/cmdline'`
+    # там ломается, потому что `pathlib.Path('/proc').iterdir()` уже
+    # возвращает АБСОЛЮТНЫЕ пути (`Path('/proc/1')`, не просто `Path('1')`)
+    # — подстановка `p` целиком в `/proc/{p}/cmdline` даёт задвоенный путь
+    # `/proc//proc/1/cmdline` (`FileNotFoundError`), проверено эмпирически
+    # (`docker inspect` показывал permanent `unhealthy`/`FailingStreak`
+    # растущий бесконечно, лог healthcheck — тот самый traceback). Исправлено
+    # на `p.name` (только имя каталога, само число PID) — не архитектурное
+    # изменение, тот же принцип проверки (`telegram_main` в cmdline любого
+    # процесса), просто рабочий путь к файлу.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import pathlib,sys; cmdlines=[open(f'/proc/{p.name}/cmdline').read() for p in pathlib.Path('/proc').iterdir() if p.name.isdigit()]; sys.exit(0 if any('telegram_main' in c for c in cmdlines) else 1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  qdrant:
+    # v1.19.0 — совпадает по major.minor с зависимостью qdrant-client в
+    # pyproject.toml (S6-11: клиент 1.19.0 ругался предупреждением о
+    # несовместимости версий с более старым сервером, обнаружено при
+    # проверке собственной сборкой образа).
+    image: qdrant/qdrant:v1.19.0
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    volumes:
+      - dekoder_qdrant_data:/qdrant/storage
+
+# Именованный volume для SQLite-файла (Sprint 2, S2-01: DATABASE_URL по
+# умолчанию — относительный путь `./data/app.db`, внутри контейнера это
+# `/app/data/app.db`, WORKDIR из Dockerfile). Без него каждый `docker
+# compose down && up` (и любая пересборка образа) стирал бы весь
+# постоянно сохранённый контейнером слой — пользователи/диалоги/сообщения
+# не пережили бы перезапуск, хотя приложение и `alembic upgrade head`
+# внутри контейнера отрабатывали бы штатно. Оба сервиса используют один и
+# тот же volume осознанно: `telegram-bot` — единственный сейчас писатель
+# (обрабатывает сообщения), `api` пока только читает состояние подключения
+# через `/health`; SQLite поддерживает одновременный доступ нескольких
+# процессов к одному файлу штатно (файловые блокировки), второй, отдельный
+# volume создал бы два независимых, расходящихся файла БД без всякой пользы.
+#
+# dekoder_qdrant_data (Sprint 6, S6-02) — отдельный volume для хранилища
+# Qdrant (`/qdrant/storage`): без него `docker compose down && up`/
+# пересборка стирали бы весь проиндексированный корпус базы знаний,
+# требуя повторной индексации всех документов.
+volumes:
+  dekoder_data:
+  dekoder_qdrant_data:

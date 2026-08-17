@@ -1,7 +1,7 @@
 # Внутренние интерфейсы — MVP персонального AI-ассистента «Декодер» (версия 2.0)
 
 **Версия документа:** 2.0
-**Статус:** Draft
+**Статус:** Approved
 **Дата:** 2026-07-28
 **Основание:** [`01_requirements_analysis_v2.0.md`](01_requirements_analysis_v2.0.md) (требования, версия 2.0, Approved), [`02_system_architecture_v2.0.md`](02_system_architecture_v2.0.md) (архитектура, версия 2.0, Approved), [`03_project_structure_v2.0.md`](03_project_structure_v2.0.md) (структура проекта, версия 2.0), [`04_domain_model_v2.0.md`](04_domain_model_v2.0.md) (доменная модель, версия 2.0)
 **Соотношение с версией 1.0:** [`docs/05_internal_interfaces.md`](../05_internal_interfaces.md) описывает внутренние интерфейсы состава MVP версии 1.0 (16 портов, единый профиль, одна модель) и не изменяется этим документом. Новый состав портов и команд версии 2.0 (Author Profile Service, Content Skill Service, Session Manager, Prompt Engine, Model Catalog отдельно от Model Gateway) делает точечное редактирование интерфейсов версии 1.0 нецелесообразным — контракты спроектированы заново, поверх уже утверждённых `01`–`04`.

@@ -1,0 +1,318 @@
+"""
+Тесты OpenAiCompatibleLLMAdapter — respx перехватывает HTTP на уровне
+транспорта `httpx.AsyncClient`, реальный внешний сервис никогда не
+вызывается.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import AsyncIterator
+from typing import Any
+
+import httpx
+import pytest
+import respx
+
+from dekoder.application.conversation.dto import LLMMessage, LLMRequest
+from dekoder.domain.conversation.value_objects import ModelId, ProviderId
+from dekoder.infrastructure.llm.openai_compatible_adapter import OpenAiCompatibleLLMAdapter
+from dekoder.shared.domain.identifiers import CorrelationId
+from dekoder.shared.errors import LLMProviderError
+from dekoder.shared.logging import configure_logging
+
+BASE_URL = "https://example-aggregator.test/v1"
+CHAT_COMPLETIONS_URL = f"{BASE_URL}/chat/completions"
+TEST_PROVIDER_ID = ProviderId("test-provider")
+
+
+@pytest.fixture
+async def client() -> AsyncIterator[httpx.AsyncClient]:
+    async with httpx.AsyncClient(base_url=BASE_URL) as http_client:
+        yield http_client
+
+
+def _make_request(model: str = "openai/gpt-4o-mini") -> LLMRequest:
+    return LLMRequest(
+        system_prompt="Ты — ассистент.",
+        messages=[LLMMessage(role="user", content="Привет!")],
+        model_id=ModelId(model),
+        temperature=0.7,
+        max_tokens=512,
+        correlation_id=CorrelationId("corr-1"),
+    )
+
+
+def _success_payload(model: str = "openai/gpt-4o-mini") -> dict[str, Any]:
+    return {
+        "id": "gen-1",
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "Здравствуйте!"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+
+
+class TestSuccessfulGeneration:
+    @respx.mock
+    async def test_returns_llm_response_built_from_provider_payload(self, client: httpx.AsyncClient) -> None:
+        route = respx.post(CHAT_COMPLETIONS_URL).mock(return_value=httpx.Response(200, json=_success_payload()))
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test", provider_id=TEST_PROVIDER_ID)
+
+        response = await adapter.generate(_make_request())
+
+        assert route.called
+        assert response.text == "Здравствуйте!"
+        assert response.provider_id.value == "test-provider"
+        assert response.model_id.value == "openai/gpt-4o-mini"
+        assert response.input_tokens == 10
+        assert response.output_tokens == 5
+        assert response.duration_ms >= 0
+
+    @respx.mock
+    async def test_sends_expected_body_and_bearer_header(self, client: httpx.AsyncClient) -> None:
+        route = respx.post(CHAT_COMPLETIONS_URL).mock(return_value=httpx.Response(200, json=_success_payload()))
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test-key", provider_id=TEST_PROVIDER_ID)
+
+        await adapter.generate(_make_request())
+
+        sent = route.calls.last.request
+        assert sent.headers["Authorization"] == "Bearer sk-test-key"
+        body = json.loads(sent.content)
+        assert body == {
+            "model": "openai/gpt-4o-mini",
+            "messages": [
+                {"role": "system", "content": "Ты — ассистент."},
+                {"role": "user", "content": "Привет!"},
+            ],
+            "temperature": 0.7,
+            "max_tokens": 512,
+        }
+
+    @respx.mock
+    async def test_sends_full_history_in_order_after_system_prompt(self, client: httpx.AsyncClient) -> None:
+        """Sprint 2 (S2-06): LLMRequest.messages несёт всю историю, адаптер строит [system, *history]."""
+        route = respx.post(CHAT_COMPLETIONS_URL).mock(return_value=httpx.Response(200, json=_success_payload()))
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test", provider_id=TEST_PROVIDER_ID)
+        request = LLMRequest(
+            system_prompt="Ты — ассистент.",
+            messages=[
+                LLMMessage(role="user", content="Привет!"),
+                LLMMessage(role="assistant", content="Здравствуйте!"),
+                LLMMessage(role="user", content="Как дела?"),
+            ],
+            model_id=ModelId("openai/gpt-4o-mini"),
+            temperature=0.7,
+            max_tokens=512,
+            correlation_id=CorrelationId("corr-1"),
+        )
+
+        await adapter.generate(request)
+
+        sent = route.calls.last.request
+        body = json.loads(sent.content)
+        assert body["messages"] == [
+            {"role": "system", "content": "Ты — ассистент."},
+            {"role": "user", "content": "Привет!"},
+            {"role": "assistant", "content": "Здравствуйте!"},
+            {"role": "user", "content": "Как дела?"},
+        ]
+
+    @respx.mock
+    async def test_adds_optional_headers_when_provided(self, client: httpx.AsyncClient) -> None:
+        route = respx.post(CHAT_COMPLETIONS_URL).mock(return_value=httpx.Response(200, json=_success_payload()))
+        adapter = OpenAiCompatibleLLMAdapter(
+            client=client,
+            api_key="sk-test",
+            provider_id=TEST_PROVIDER_ID,
+            http_referer="https://example.com",
+            x_title="Dekoder",
+        )
+
+        await adapter.generate(_make_request())
+
+        sent = route.calls.last.request
+        assert sent.headers["HTTP-Referer"] == "https://example.com"
+        assert sent.headers["X-Title"] == "Dekoder"
+
+    @respx.mock
+    async def test_omits_optional_headers_when_not_provided(self, client: httpx.AsyncClient) -> None:
+        route = respx.post(CHAT_COMPLETIONS_URL).mock(return_value=httpx.Response(200, json=_success_payload()))
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test", provider_id=TEST_PROVIDER_ID)
+
+        await adapter.generate(_make_request())
+
+        sent = route.calls.last.request
+        assert "HTTP-Referer" not in sent.headers
+        assert "X-Title" not in sent.headers
+
+    @respx.mock
+    async def test_falls_back_to_requested_model_when_response_omits_model(self, client: httpx.AsyncClient) -> None:
+        payload = _success_payload()
+        del payload["model"]
+        respx.post(CHAT_COMPLETIONS_URL).mock(return_value=httpx.Response(200, json=payload))
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test", provider_id=TEST_PROVIDER_ID)
+
+        response = await adapter.generate(_make_request(model="anthropic/claude-3-haiku"))
+
+        assert response.model_id.value == "anthropic/claude-3-haiku"
+
+    @respx.mock
+    async def test_usage_defaults_to_zero_when_absent(self, client: httpx.AsyncClient) -> None:
+        payload = _success_payload()
+        del payload["usage"]
+        respx.post(CHAT_COMPLETIONS_URL).mock(return_value=httpx.Response(200, json=payload))
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test", provider_id=TEST_PROVIDER_ID)
+
+        response = await adapter.generate(_make_request())
+
+        assert response.input_tokens == 0
+        assert response.output_tokens == 0
+
+
+class TestLlmGenerationCompletedLog:
+    """Sprint 9, задача S9-06 (ADR-9.5): метрика вызова LLM на успешном пути."""
+
+    @respx.mock
+    async def test_logs_llm_generation_completed_with_metrics(
+        self, client: httpx.AsyncClient, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure_logging(environment="test")
+        respx.post(CHAT_COMPLETIONS_URL).mock(return_value=httpx.Response(200, json=_success_payload()))
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test", provider_id=TEST_PROVIDER_ID)
+
+        response = await adapter.generate(_make_request())
+
+        out = capsys.readouterr().out.strip().splitlines()
+        entries = [json.loads(line) for line in out]
+        matches = [entry for entry in entries if entry.get("event") == "llm_generation_completed"]
+        assert len(matches) == 1
+        entry = matches[0]
+        assert entry["provider"] == "test-provider"
+        assert entry["model"] == "openai/gpt-4o-mini"
+        assert entry["input_tokens"] == response.input_tokens
+        assert entry["output_tokens"] == response.output_tokens
+        assert entry["correlation_id"] == "corr-1"
+        assert isinstance(entry["duration_ms"], (int, float))
+
+    @respx.mock
+    async def test_does_not_log_the_event_on_failure(
+        self, client: httpx.AsyncClient, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        configure_logging(environment="test")
+        respx.post(CHAT_COMPLETIONS_URL).mock(side_effect=httpx.TimeoutException("timed out"))
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test", provider_id=TEST_PROVIDER_ID)
+
+        with pytest.raises(LLMProviderError):
+            await adapter.generate(_make_request())
+
+        out = capsys.readouterr().out.strip().splitlines()
+        events = [json.loads(line).get("event") for line in out]
+        assert "llm_generation_completed" not in events
+
+
+class TestErrorScenarios:
+    @respx.mock
+    async def test_timeout_raises_llm_provider_error(self, client: httpx.AsyncClient) -> None:
+        respx.post(CHAT_COMPLETIONS_URL).mock(side_effect=httpx.TimeoutException("timed out"))
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test", provider_id=TEST_PROVIDER_ID)
+
+        with pytest.raises(LLMProviderError) as exc_info:
+            await adapter.generate(_make_request())
+
+        assert exc_info.value.code == "LLM_PROVIDER_TIMEOUT"
+
+    @respx.mock
+    async def test_network_error_raises_llm_provider_error(self, client: httpx.AsyncClient) -> None:
+        respx.post(CHAT_COMPLETIONS_URL).mock(side_effect=httpx.ConnectError("connection refused"))
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test", provider_id=TEST_PROVIDER_ID)
+
+        with pytest.raises(LLMProviderError) as exc_info:
+            await adapter.generate(_make_request())
+
+        assert exc_info.value.code == "LLM_PROVIDER_NETWORK_ERROR"
+
+    @respx.mock
+    async def test_unauthorized_raises_llm_provider_error(self, client: httpx.AsyncClient) -> None:
+        respx.post(CHAT_COMPLETIONS_URL).mock(
+            return_value=httpx.Response(401, json={"error": {"message": "invalid api key"}})
+        )
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-bad", provider_id=TEST_PROVIDER_ID)
+
+        with pytest.raises(LLMProviderError) as exc_info:
+            await adapter.generate(_make_request())
+
+        assert exc_info.value.code == "LLM_PROVIDER_UNAUTHORIZED"
+
+    @respx.mock
+    async def test_rate_limit_raises_llm_provider_error(self, client: httpx.AsyncClient) -> None:
+        respx.post(CHAT_COMPLETIONS_URL).mock(
+            return_value=httpx.Response(429, json={"error": {"message": "rate limited"}})
+        )
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test", provider_id=TEST_PROVIDER_ID)
+
+        with pytest.raises(LLMProviderError) as exc_info:
+            await adapter.generate(_make_request())
+
+        assert exc_info.value.code == "LLM_PROVIDER_RATE_LIMITED"
+
+    @respx.mock
+    async def test_server_error_raises_llm_provider_error(self, client: httpx.AsyncClient) -> None:
+        respx.post(CHAT_COMPLETIONS_URL).mock(return_value=httpx.Response(500, text="internal error"))
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test", provider_id=TEST_PROVIDER_ID)
+
+        with pytest.raises(LLMProviderError) as exc_info:
+            await adapter.generate(_make_request())
+
+        assert exc_info.value.code == "LLM_PROVIDER_SERVER_ERROR"
+
+    @respx.mock
+    async def test_malformed_json_raises_llm_provider_error(self, client: httpx.AsyncClient) -> None:
+        respx.post(CHAT_COMPLETIONS_URL).mock(
+            return_value=httpx.Response(200, content=b"not valid json", headers={"content-type": "application/json"})
+        )
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test", provider_id=TEST_PROVIDER_ID)
+
+        with pytest.raises(LLMProviderError) as exc_info:
+            await adapter.generate(_make_request())
+
+        assert exc_info.value.code == "LLM_PROVIDER_MALFORMED_RESPONSE"
+
+    @respx.mock
+    async def test_schema_mismatch_raises_llm_provider_error(self, client: httpx.AsyncClient) -> None:
+        respx.post(CHAT_COMPLETIONS_URL).mock(return_value=httpx.Response(200, json={"choices": "not-a-list"}))
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test", provider_id=TEST_PROVIDER_ID)
+
+        with pytest.raises(LLMProviderError) as exc_info:
+            await adapter.generate(_make_request())
+
+        assert exc_info.value.code == "LLM_PROVIDER_MALFORMED_RESPONSE"
+
+    @respx.mock
+    async def test_empty_choices_raises_llm_provider_error(self, client: httpx.AsyncClient) -> None:
+        payload = _success_payload()
+        payload["choices"] = []
+        respx.post(CHAT_COMPLETIONS_URL).mock(return_value=httpx.Response(200, json=payload))
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test", provider_id=TEST_PROVIDER_ID)
+
+        with pytest.raises(LLMProviderError) as exc_info:
+            await adapter.generate(_make_request())
+
+        assert exc_info.value.code == "LLM_PROVIDER_EMPTY_CHOICES"
+
+    @respx.mock
+    async def test_error_messages_never_contain_api_key(self, client: httpx.AsyncClient) -> None:
+        respx.post(CHAT_COMPLETIONS_URL).mock(return_value=httpx.Response(401, json={"error": {"message": "invalid"}}))
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="super-secret-key", provider_id=TEST_PROVIDER_ID)
+
+        with pytest.raises(LLMProviderError) as exc_info:
+            await adapter.generate(_make_request())
+
+        assert "super-secret-key" not in exc_info.value.message
+        assert "super-secret-key" not in exc_info.value.user_message
+        assert "super-secret-key" not in repr(exc_info.value)
