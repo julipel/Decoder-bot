@@ -24,9 +24,12 @@ class TestHandleStart:
 
         update.effective_message.reply_text.assert_awaited_once_with(START_MESSAGE)
 
-    async def test_greeting_mentions_the_assistant_name_and_current_limitations(self) -> None:
+    async def test_greeting_mentions_the_assistant_name_and_current_capabilities(self) -> None:
         assert "Декодер" in START_MESSAGE
-        assert "Память" in START_MESSAGE
+        assert "/remember" in START_MESSAGE
+        assert "/profile" in START_MESSAGE
+        assert "/model" in START_MESSAGE
+        assert "базовая версия" not in START_MESSAGE
 
     async def test_ignores_update_without_message(self) -> None:
         update = MagicMock(spec=Update)

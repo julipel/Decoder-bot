@@ -61,11 +61,11 @@
   {
     "id": "response_format",
     "name": "Требования к формату ответа",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "purpose": "response_format",
     "text_file": "response_format.txt",
     "required_variables": [],
     "status": "active",
-    "updated_at": "2026-01-01T00:00:00+00:00"
+    "updated_at": "2026-08-17T00:00:00+00:00"
   }
 ]
