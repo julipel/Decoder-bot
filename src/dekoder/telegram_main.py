@@ -119,7 +119,10 @@ def main() -> None:
         timeout=settings.llm.timeout,
     )
     qdrant_client = build_qdrant_client(settings.qdrant)
-    application = build_telegram_application(bot_token=settings.telegram.bot_token.get_secret_value())
+    application = build_telegram_application(
+        bot_token=settings.telegram.bot_token.get_secret_value(),
+        proxy_url=settings.telegram.proxy_url,
+    )
 
     # Заполняется внутри `_startup`, читается внутри `_shutdown` — оба
     # колбэка выполняются в одном и том же loop'е `run_polling()`, простая

@@ -12,7 +12,9 @@ dependencies = [
     "uvicorn",
     "pydantic",
     "pydantic-settings",
-    "httpx",
+    # [socks] — socksio, нужен для TELEGRAM_PROXY_URL=socks5://... (SOCKS5-прокси
+    # для api.telegram.org на серверах без прямого сетевого доступа к Telegram).
+    "httpx[socks]",
     "python-telegram-bot",
     "structlog",
     "sqlalchemy[asyncio]>=2.0",
