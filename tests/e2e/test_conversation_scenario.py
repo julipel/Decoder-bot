@@ -55,14 +55,16 @@ from dekoder.application.conversation.dto import (
 from dekoder.application.conversation.use_cases.clear_conversation import ClearConversation
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
+from dekoder.application.memory.use_cases.list_memory_records import ListMemoryRecordsUseCase
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
 from dekoder.presentation.telegram.bot import (
     build_telegram_application,
     register_clear_conversation_handler,
     register_message_handler,
+    register_start_handler,
 )
 from dekoder.presentation.telegram.handlers.messages import UNEXPECTED_ERROR_MESSAGE
-from dekoder.presentation.telegram.handlers.start import START_MESSAGE
+from dekoder.presentation.telegram.handlers.start import FIRST_TIME_GREETING
 from dekoder.presentation.telegram.mapper import TELEGRAM_SAFE_MESSAGE_LIMIT
 from dekoder.shared.errors import LLMProviderError
 
@@ -106,8 +108,14 @@ def _build_application(process_user_message: ProcessUserMessage) -> Application:
     # Sprint 12: ни один сценарий этого файла не выставляет PENDING_REMEMBER_KEY
     # (см. handlers/memory.py) — этот use case тут ни разу не исполняется,
     # но TextMessageHandler требует его в конструкторе.
-    create_memory_record = CreateMemoryRecordUseCase(repositories=make_in_memory_repositories_factory())
+    repositories_factory = make_in_memory_repositories_factory()
+    create_memory_record = CreateMemoryRecordUseCase(repositories=repositories_factory)
     register_message_handler(application, process_user_message, create_memory_record)
+    # Sprint 13: /start теперь тоже требует ListMemoryRecordsUseCase (проверяет
+    # известное имя пользователя) — свежие репозитории, без пересечения с
+    # process_user_message, ни один сценарий этого файла не сохраняет имя
+    # заранее, поэтому /start всегда идёт по ветке "первое знакомство".
+    register_start_handler(application, ListMemoryRecordsUseCase(repositories=repositories_factory))
     return application
 
 
@@ -146,9 +154,12 @@ class TestStartCommand:
         start_callback, _ = _handlers(application)
         update = _make_update()
 
-        await start_callback(update, MagicMock())
+        # `user_data` — настоящий `dict` (не `MagicMock`), тот же принцип, что
+        # и в остальном файле для контекста текстовых сообщений (Sprint 13:
+        # `/start` без известного имени выставляет PENDING_NAME_KEY туда же).
+        await start_callback(update, MagicMock(user_data={}))
 
-        update.effective_message.reply_text.assert_awaited_once_with(START_MESSAGE)
+        update.effective_message.reply_text.assert_awaited_once_with(FIRST_TIME_GREETING)
         assert provider.call_count == 0
 
 

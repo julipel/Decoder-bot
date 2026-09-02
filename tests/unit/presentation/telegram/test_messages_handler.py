@@ -35,6 +35,7 @@ from dekoder.presentation.telegram.handlers.messages import (
     UNEXPECTED_ERROR_MESSAGE,
     TextMessageHandler,
 )
+from dekoder.presentation.telegram.handlers.start import NAME_SAVED_TEMPLATE, PENDING_NAME_KEY
 from dekoder.presentation.telegram.mapper import TELEGRAM_SAFE_MESSAGE_LIMIT
 from dekoder.shared.errors import LLMProviderError
 from dekoder.shared.logging import clear_request_context, configure_logging
@@ -304,3 +305,46 @@ class TestPendingRememberCompletion:
 
         update.effective_message.reply_text.assert_awaited_once_with("Здравствуйте!")
         assert len(provider.received_requests) == 1
+
+
+class TestPendingNameCompletion:
+    """
+    Sprint 13: знакомство после `/start` без известного имени —
+    `handlers/start.py::StartCommandHandler` выставляет `PENDING_NAME_KEY`
+    в `context.user_data` и просит представиться; `TextMessageHandler`
+    должен перехватить следующий текст до `ProcessUserMessage`, сохранить
+    его как факт памяти категории `PERSONAL` и снять флаг.
+    """
+
+    async def test_saves_the_text_as_the_users_name_instead_of_calling_the_llm(self) -> None:
+        provider = FakeLLMProvider(response=_make_response())
+        handler = _make_handler(provider)
+        update = _make_update(text="Алекс")
+        context = _make_context({PENDING_NAME_KEY: True})
+
+        await handler(update, context)
+
+        update.effective_message.reply_text.assert_awaited_once_with(NAME_SAVED_TEMPLATE.format(name="Алекс"))
+        assert provider.received_requests == []
+
+    async def test_clears_the_pending_flag_after_saving(self) -> None:
+        provider = FakeLLMProvider(response=_make_response())
+        handler = _make_handler(provider)
+        update = _make_update(text="Алекс")
+        context = _make_context({PENDING_NAME_KEY: True})
+
+        await handler(update, context)
+
+        assert PENDING_NAME_KEY not in context.user_data
+
+    async def test_takes_priority_over_a_simultaneously_set_remember_flag(self) -> None:
+        """Оба флага взаимоисключающи на практике (см. докстринг messages.py), но порядок проверки детерминирован."""
+        provider = FakeLLMProvider(response=_make_response())
+        handler = _make_handler(provider)
+        update = _make_update(text="Алекс")
+        context = _make_context({PENDING_NAME_KEY: True, PENDING_REMEMBER_KEY: True})
+
+        await handler(update, context)
+
+        update.effective_message.reply_text.assert_awaited_once_with(NAME_SAVED_TEMPLATE.format(name="Алекс"))
+        assert PENDING_REMEMBER_KEY in context.user_data

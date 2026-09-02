@@ -56,6 +56,7 @@ from dekoder.application.memory.use_cases.create_memory_record import CreateMemo
 from dekoder.application.memory.use_cases.delete_memory_record import DeleteMemoryRecordUseCase
 from dekoder.application.memory.use_cases.list_memory_records import ListMemoryRecordsUseCase
 from dekoder.domain.memory.entities import MemoryRecord
+from dekoder.domain.memory.value_objects import MemoryCategory
 from dekoder.presentation.telegram.mapper import (
     to_create_memory_record_command,
     to_delete_memory_record_command,
@@ -133,16 +134,26 @@ async def save_memory_record_from_text(
     update: Update,
     message: Message,
     text: str,
+    *,
+    category: MemoryCategory = MemoryCategory.OTHER,
+    success_message: str = REMEMBER_SAVED_MESSAGE,
 ) -> None:
     """
-    Общая логика сохранения факта — вызывается и `RememberCommandHandler`
-    (однострочный `/remember <текст>`), и `TextMessageHandler` (текст,
+    Общая логика сохранения факта — вызывается `RememberCommandHandler`
+    (однострочный `/remember <текст>`), `TextMessageHandler` (текст,
     присланный после `/remember` без аргумента, см. `PENDING_REMEMBER_KEY`)
-    — единственное место, формирующее аудит-лог/обработку ошибок для
-    создания записи памяти, чтобы оба пути не расходились.
+    и `handlers/start.py::save_display_name_from_text` (имя пользователя,
+    введённое после `/start`, Sprint 13) — единственное место,
+    формирующее аудит-лог/обработку ошибок для создания записи памяти,
+    чтобы все пути не расходились.
+
+    `category`/`success_message` — необязательные параметры (Sprint 13):
+    по умолчанию поведение не меняется (`/remember`), но позволяют
+    переиспользовать эту же функцию для факта другой категории с другим
+    подтверждающим сообщением, не дублируя try/except/аудит-лог.
     """
     try:
-        command = to_create_memory_record_command(update, text)
+        command = to_create_memory_record_command(update, text, category=category)
     except ValueError:
         return
 
@@ -162,7 +173,7 @@ async def save_memory_record_from_text(
     finally:
         clear_request_context()
 
-    await message.reply_text(REMEMBER_SAVED_MESSAGE)
+    await message.reply_text(success_message)
 
 
 class RememberCommandHandler:
