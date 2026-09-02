@@ -84,17 +84,17 @@
     }
   },
   {
-    "model_id": "anthropic/claude-3-haiku",
-    "display_name": "Claude 3 Haiku (устарела)",
-    "provider": "anthropic",
-    "context_window": 200000,
-    "capabilities": ["text"],
-    "price_tier": "low",
-    "availability": "unavailable",
-    "recommended_for": ["быстрые ответы"],
+    "model_id": "qwen/qwen3-max",
+    "display_name": "Qwen3 Max",
+    "provider": "other",
+    "context_window": 262144,
+    "capabilities": ["text", "function_calling"],
+    "price_tier": "medium",
+    "availability": "available",
+    "recommended_for": ["общие задачи", "многоязычность"],
     "default_generation_settings": {
       "temperature": 0.7,
-      "max_tokens": 1024
+      "max_tokens": 2048
     }
   }
 ]
