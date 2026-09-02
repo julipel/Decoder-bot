@@ -29,9 +29,11 @@ init_database`) инициализируется и проверяется вн�
 `db_session_factory`, которая должна принадлежать loop'у `run_polling()`.
 Поэтому обработчик текстовых сообщений (`presentation/telegram/bot.py::
 register_message_handler`) регистрируется тоже внутри `post_init`, уже
-после того как `container.process_user_message` готов — `/start` не
-зависит от БД и регистрируется заранее, как и раньше, через
-`build_telegram_application()`.
+после того как `container.process_user_message` готов. До Sprint 13
+`/start` был исключением (не зависел от БД, регистрировался заранее
+через `build_telegram_application()`) — с Sprint 13 тоже зависит
+(проверяет память на известное имя пользователя) и регистрируется здесь
+же, `register_start_handler`.
 
 С задачи S2-08 по той же причине обработчик команды `/new`
 (`presentation/telegram/bot.py::register_new_conversation_handler`)
@@ -90,6 +92,7 @@ from dekoder.presentation.telegram.bot import (
     register_model_handlers,
     register_new_conversation_handler,
     register_profile_handlers,
+    register_start_handler,
     set_bot_commands,
 )
 from dekoder.shared.config import Settings
@@ -144,6 +147,7 @@ def main() -> None:
             _logger.error("qdrant_collection_unavailable_at_startup", error=str(error))
 
         container = build_container(settings, http_client, embedding_http_client, qdrant_client, db_session_factory)
+        register_start_handler(app, container.list_memory_records)
         register_message_handler(app, container.process_user_message, container.create_memory_record)
         register_new_conversation_handler(app, container.start_new_conversation)
         register_clear_conversation_handler(app, container.clear_conversation)

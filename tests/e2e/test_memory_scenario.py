@@ -310,8 +310,9 @@ class TestNoForgetCommand:
         callbacks = _handler_callbacks(application)
 
         assert "forget" not in callbacks
-        # "start" — регистрируется build_telegram_application() безусловно (не входит в объём этой задачи).
-        assert set(callbacks) == {"start", "remember", "memory", "memory_delete_callback"}
+        # "start" не в объёме этого сценария — с Sprint 13 регистрируется
+        # отдельной функцией register_start_handler(), не build_telegram_application().
+        assert set(callbacks) == {"remember", "memory", "memory_delete_callback"}
 
 
 class TestRememberAndDeleteAuditLog:

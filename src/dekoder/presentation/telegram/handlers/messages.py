@@ -14,6 +14,14 @@ Sprint 12: дополнительно принимает `CreateMemoryRecordUseC
 `context.user_data`, входящий текст трактуется как факт для памяти и
 сохраняется через `save_memory_record_from_text()` — до `ProcessUserMessage`,
 который в этом случае вообще не вызывается.
+
+Sprint 13: тем же способом завершается знакомство после `/start`
+(`handlers/start.py::StartCommandHandler`, `PENDING_NAME_KEY`) — входящий
+текст трактуется как имя пользователя и сохраняется через
+`save_display_name_from_text()`. Проверяется раньше `PENDING_REMEMBER_KEY`
+(оба флага взаимоисключающи — `/start` и `/remember` без аргумента не
+могут быть одновременно ожидаемы одним и тем же пользователем, порядок
+проверки значения не имеет, но фиксирован для читаемости).
 """
 
 from __future__ import annotations
@@ -24,6 +32,7 @@ from telegram.ext import ContextTypes
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.presentation.telegram.handlers.memory import PENDING_REMEMBER_KEY, save_memory_record_from_text
+from dekoder.presentation.telegram.handlers.start import PENDING_NAME_KEY, save_display_name_from_text
 from dekoder.presentation.telegram.mapper import split_message, to_command
 from dekoder.shared.errors import DekoderError
 from dekoder.shared.logging import bind_request_context, clear_request_context, get_logger
@@ -51,6 +60,9 @@ class TextMessageHandler:
         # многих e2e-сценариев передают `context=MagicMock()`: `MagicMock().
         # user_data.pop(...)` сам по себе truthy `MagicMock`, `is not None`
         # ложно сработал бы на каждом обычном сообщении в тех тестах.
+        if isinstance(user_data, dict) and user_data.pop(PENDING_NAME_KEY, False):
+            await save_display_name_from_text(self._create_memory_record, update, message, message.text.strip())
+            return
         if isinstance(user_data, dict) and user_data.pop(PENDING_REMEMBER_KEY, False):
             await save_memory_record_from_text(self._create_memory_record, update, message, message.text.strip())
             return

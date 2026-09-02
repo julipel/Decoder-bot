@@ -69,7 +69,7 @@ from dekoder.application.model_catalog.dto import (
 )
 from dekoder.application.profile.dto import GetActiveProfileCommand, SelectProfileCommand
 from dekoder.domain.conversation.value_objects import ModelId
-from dekoder.domain.memory.value_objects import MemorySource, MemoryStatus
+from dekoder.domain.memory.value_objects import MemoryCategory, MemorySource, MemoryStatus
 from dekoder.shared.domain.identifiers import CorrelationId
 
 # Реальный лимит Telegram на одно текстовое сообщение — 4096 символов;
@@ -159,7 +159,9 @@ def to_select_profile_command(update: Update, profile_id: UUID) -> SelectProfile
     )
 
 
-def to_create_memory_record_command(update: Update, text: str) -> CreateMemoryRecordCommand:
+def to_create_memory_record_command(
+    update: Update, text: str, category: MemoryCategory = MemoryCategory.OTHER
+) -> CreateMemoryRecordCommand:
     """
     Строит команду для обработчика `/remember` из входящего `Update` и
     уже извлечённого текста факта (разбор `"/remember <текст>"` —
@@ -168,6 +170,11 @@ def to_create_memory_record_command(update: Update, text: str) -> CreateMemoryRe
     (ADR-5.9): `/remember` сохраняет запись сразу подтверждённой, без
     двухшагового сценария. `correlation_id` (Sprint 9, S9-02) генерируется
     тем же способом, что и в `to_command()`.
+
+    `category` (Sprint 13) — по умолчанию `OTHER`, как и раньше для
+    `/remember`; вызывающий код может передать другую категорию — например,
+    `PERSONAL` для факта об имени пользователя из `/start`
+    (`presentation/telegram/handlers/start.py`).
     """
     user = update.effective_user
     if user is None:
@@ -178,6 +185,7 @@ def to_create_memory_record_command(update: Update, text: str) -> CreateMemoryRe
         text=text,
         status=MemoryStatus.CONFIRMED,
         source=MemorySource.USER_EXPLICIT,
+        category=category,
         correlation_id=CorrelationId(str(uuid.uuid4())),
     )
 

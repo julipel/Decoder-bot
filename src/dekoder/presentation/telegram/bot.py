@@ -56,6 +56,13 @@ Sprint 7 (задача S7-07, ADR-7.9): по той же причине кома
 уже собранных `ListAvailableModels`/`GetSelectedModel`/`SelectModel`.
 Callback выбора модели регистрируется с `pattern=r"^model:"` — дизъюнктен
 с уже занятыми `pattern=r"^profile:"`/`pattern=r"^memory_delete:"`.
+
+Sprint 13: `/start` перестаёт быть исключением, не зависящим от БД — теперь
+тоже проверяет долговременную память (известно ли имя пользователя,
+`ListMemoryRecordsUseCase`, `handlers/start.py::StartCommandHandler`),
+поэтому по той же причине (event loop/БД) регистрируется отдельной
+функцией `register_start_handler`, тоже вызываемой внутри `post_init` —
+не в `build_telegram_application()`, как было до этого спринта.
 """
 
 from __future__ import annotations
@@ -93,20 +100,23 @@ from dekoder.presentation.telegram.handlers.messages import TextMessageHandler
 from dekoder.presentation.telegram.handlers.model import ModelCommandHandler, ModelSelectionCallbackHandler
 from dekoder.presentation.telegram.handlers.new_conversation import NewConversationHandler
 from dekoder.presentation.telegram.handlers.profile import ProfileCommandHandler, ProfileSelectionCallbackHandler
-from dekoder.presentation.telegram.handlers.start import handle_start
+from dekoder.presentation.telegram.handlers.start import StartCommandHandler
 
 
 def build_telegram_application(bot_token: str, proxy_url: str | None = None) -> Application:
-    """Собирает `Application` и регистрирует `/start` — обработчики текста и `/new` добавляются отдельно."""
+    """Собирает `Application` без обработчиков — все команды (включая `/start`, Sprint 13) регистрируются отдельно."""
     # python-telegram-bot по умолчанию даёт connect/read_timeout=5с — недостаточно
     # на нестабильном сетевом пути до api.telegram.org, приводит к TimedOut даже
     # на успешно обработанных командах (ответ готов, но не успевает уйти).
     # proxy_url — TelegramSettings.proxy_url (TELEGRAM_PROXY_URL), нужен только
     # когда сеть развёртывания не имеет прямого доступа к Telegram.
     request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0, proxy=proxy_url)
-    application = ApplicationBuilder().token(bot_token).request(request).build()
-    application.add_handler(CommandHandler("start", handle_start))
-    return application
+    return ApplicationBuilder().token(bot_token).request(request).build()
+
+
+def register_start_handler(application: Application, list_memory_records: ListMemoryRecordsUseCase) -> None:
+    """Регистрирует команду `/start` поверх уже собранного `ListMemoryRecordsUseCase` (Sprint 13)."""
+    application.add_handler(CommandHandler("start", StartCommandHandler(list_memory_records)))
 
 
 def register_message_handler(
