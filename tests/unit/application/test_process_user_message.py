@@ -740,10 +740,13 @@ class TestPersonalization:
     """
 
     # Совпадает с текстом сид-шаблона `base_instruction`
-    # (`infrastructure/prompts/templates/base_instruction.txt`) — прежней
-    # константой `_DEFAULT_SYSTEM_PROMPT` (`bootstrap/container.py`) до
-    # её удаления в этой задаче (S4-07/ADR-4.7).
-    _BASE_INSTRUCTION_TEXT = "Ты — персональный ассистент «Декодер». Отвечай кратко и по делу."
+    # (`infrastructure/prompts/templates/base_instruction.txt`, версия 1.1.0
+    # после внеспринтового фикса 2026-09-02 — более человечный тон).
+    _BASE_INSTRUCTION_TEXT = (
+        "Ты — персональный ассистент «Декодер». Общайся с пользователем как живой человек в переписке — "
+        "естественным разговорным языком, без канцелярита и без ощущения, что отвечает бот. Отвечай по "
+        "существу вопроса, не растягивая ответ там, где хватит короткой фразы."
+    )
 
     async def test_system_prompt_contains_active_profile_instruction(self) -> None:
         profile = make_default_profile(name="Экспертный")

@@ -20,11 +20,16 @@ from dekoder.infrastructure.prompts.file_template_repository import (
 )
 from dekoder.shared.errors import InfrastructureError
 
-# Совпадает буквально с прежней константой `_DEFAULT_SYSTEM_PROMPT`
-# (`bootstrap/container.py`, до её удаления в задаче S4-07, ADR-4.7,
-# S4-04 AC-2) — не импортируется напрямую из bootstrap, чтобы тест
-# продолжал проходить и после того, как S4-07 уберёт саму константу.
-_EXPECTED_BASE_INSTRUCTION_TEXT = "Ты — персональный ассистент «Декодер». Отвечай кратко и по делу."
+# Текст сознательно меняется по продуктовым причинам (внеспринтовый
+# фикс 2026-09-02 — заказчик жаловался на «роботизированность» ответов,
+# base_instruction переписан на более человечный тон, версия шаблона
+# бумпнута 1.0.0 → 1.1.0 в manifest.json) — при следующем таком
+# изменении обновляйте эту константу вместе с файлом, не наоборот.
+_EXPECTED_BASE_INSTRUCTION_TEXT = (
+    "Ты — персональный ассистент «Декодер». Общайся с пользователем как живой человек в переписке — "
+    "естественным разговорным языком, без канцелярита и без ощущения, что отвечает бот. Отвечай по "
+    "существу вопроса, не растягивая ответ там, где хватит короткой фразы."
+)
 
 
 def _write_manifest(directory: Path, entries: list[dict[str, object]]) -> None:
@@ -161,7 +166,7 @@ class TestSeedTemplates:
             "response_format",
         }
 
-    def test_base_instruction_matches_former_default_system_prompt_constant(self) -> None:
+    def test_base_instruction_matches_expected_content(self) -> None:
         repository = FileTemplateRepository()
 
         template = repository.get("base_instruction")
