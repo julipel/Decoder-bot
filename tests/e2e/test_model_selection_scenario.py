@@ -5,19 +5,27 @@ test_profile_scenario.py`: реальный `telegram.ext.Application`, реал
 обработчики `presentation/telegram/`, реальные SQLAlchemy-репозитории
 (`bootstrap/repositories.py`) поверх временной SQLite (`tmp_path`, схема
 — `Base.metadata.create_all()`), реальный `ConfigModelCatalogRepository`
-(боевой сид-каталог `infrastructure/model_catalog/catalog.json`, не
-fixture) — единственная подмена, как и в остальных e2e Sprint 1-6,
-`FakeLLMProvider` (без сети, без реального Telegram API, без
-`OpenAiCompatibleLLMAdapter`): детерминированная проверка `LLMRequest.model_id`/
-`temperature`/`max_tokens`, не реальный вызов LLM — тот же приём, что
-S5-08 проверял `PromptBuildResult.system_prompt`.
+— единственная подмена, как и в остальных e2e Sprint 1-6, `FakeLLMProvider`
+(без сети, без реального Telegram API, без `OpenAiCompatibleLLMAdapter`):
+детерминированная проверка `LLMRequest.model_id`/`temperature`/`max_tokens`,
+не реальный вызов LLM — тот же приём, что S5-08 проверял
+`PromptBuildResult.system_prompt`.
 
-Боевой каталог (см. `infrastructure/model_catalog/catalog.json`)
-используется как есть: `openai/gpt-4o-mini` (умолчание, AVAILABLE),
-`anthropic/claude-sonnet-5` (AVAILABLE, другие `temperature`/
-`max_tokens`), `anthropic/claude-3-haiku` (UNAVAILABLE — уже в сид-данных,
-не создаётся тестом; сохранена в каталоге как устаревшая запись именно
-для этого сценария после смены агрегатора на RouterAI).
+Боевой каталог (см. `infrastructure/model_catalog/catalog.json`) читается
+как есть для AVAILABLE-моделей: `openai/gpt-4o-mini` (умолчание),
+`anthropic/claude-sonnet-5` (другие `temperature`/`max_tokens`).
+
+Sprint 13: UNAVAILABLE-модель для сценариев отката/отклонения (AC-2/AC-3)
+больше не хранится постоянно в боевом каталоге — раньше эту роль играла
+`anthropic/claude-3-haiku`, но она же видна пользователю в `/model` как
+устаревшая недоступная запись (по требованию ADR-7.9 «список не портится,
+запись видна»), что и было тем самым «мусором» в каталоге; убрана оттуда
+по явному запросу пользователя. Вместо этого фикстура `model_catalog`
+берёт боевые AVAILABLE-записи как есть и добавляет одну синтетическую
+UNAVAILABLE-запись (`_UNAVAILABLE_MODEL_ID`) только в тестовую копию
+файла (`tmp_path`) — прод-каталог ею не нагружается, а сценарии отката/
+отклонения по-прежнему проверяются через реальный `ConfigModelCatalogRepository`,
+не через полностью придуманный каталог.
 
 Четыре сценария (backlog_7_tasks.md, S7-08):
 
@@ -66,7 +74,7 @@ from dekoder.application.model_catalog.use_cases.list_models import ListAvailabl
 from dekoder.application.model_catalog.use_cases.select_model import SelectModel
 from dekoder.bootstrap.repositories import build_conversation_repositories_factory
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
-from dekoder.infrastructure.model_catalog.config_repository import ConfigModelCatalogRepository
+from dekoder.infrastructure.model_catalog.config_repository import DEFAULT_CATALOG_PATH, ConfigModelCatalogRepository
 from dekoder.infrastructure.persistence.base import Base
 from dekoder.infrastructure.persistence.engine import create_database_engine
 from dekoder.infrastructure.persistence.profile_orm import ProfileORM
@@ -88,7 +96,22 @@ _TEST_BOT_TOKEN = "123456:test-token"  # noqa: S105 - фиктивный ток�
 # Значения из боевого сид-каталога (infrastructure/model_catalog/catalog.json) — см. докстринг модуля.
 _DEFAULT_MODEL_ID = ModelId("openai/gpt-4o-mini")
 _SONNET_MODEL_ID = ModelId("anthropic/claude-sonnet-5")
-_UNAVAILABLE_MODEL_ID = ModelId("anthropic/claude-3-haiku")
+
+# Синтетическая запись (Sprint 13) — существует только в тестовой копии
+# каталога (см. фикстуру model_catalog), не в боевом catalog.json.
+_UNAVAILABLE_MODEL_ID = ModelId("test-provider/discontinued-model")
+_UNAVAILABLE_MODEL_DISPLAY_NAME = "Устаревшая тестовая модель"
+_UNAVAILABLE_MODEL_CATALOG_ENTRY = {
+    "model_id": _UNAVAILABLE_MODEL_ID.value,
+    "display_name": _UNAVAILABLE_MODEL_DISPLAY_NAME,
+    "provider": "other",
+    "context_window": 8000,
+    "capabilities": ["text"],
+    "price_tier": "low",
+    "availability": "unavailable",
+    "recommended_for": [],
+    "default_generation_settings": {"temperature": 0.7, "max_tokens": 512},
+}
 
 
 class FakeLLMProvider:
@@ -213,9 +236,18 @@ def repositories_factory(
 
 
 @pytest.fixture
-def model_catalog() -> ModelCatalogRepository:
-    """Реальный сид-каталог (не fixture-JSON) — та же боевая конфигурация, что грузит `bootstrap/container.py`."""
-    return ConfigModelCatalogRepository()
+def model_catalog(tmp_path: Path) -> ModelCatalogRepository:
+    """
+    Боевые AVAILABLE-записи (`infrastructure/model_catalog/catalog.json`,
+    та же конфигурация, что грузит `bootstrap/container.py`) + одна
+    синтетическая UNAVAILABLE-запись, дописанная только в эту временную
+    копию файла (Sprint 13, см. докстринг модуля) — прод-каталог не несёт
+    постоянной недоступной записи ради покрытия отката/отклонения.
+    """
+    real_models = json.loads(DEFAULT_CATALOG_PATH.read_text(encoding="utf-8"))
+    fixture_path = tmp_path / "model_catalog.json"
+    fixture_path.write_text(json.dumps([*real_models, _UNAVAILABLE_MODEL_CATALOG_ENTRY]), encoding="utf-8")
+    return ConfigModelCatalogRepository(catalog_path=fixture_path)
 
 
 @pytest.fixture
@@ -480,7 +512,7 @@ class TestFullModelSelectionCycle:
 
         keyboard = model_update.effective_message.reply_text.call_args.kwargs["reply_markup"]
         button_texts = [button.text for row in keyboard.inline_keyboard for button in row]
-        assert any("Claude 3 Haiku" in text and "недоступна" in text for text in button_texts)
+        assert any(_UNAVAILABLE_MODEL_DISPLAY_NAME in text and "недоступна" in text for text in button_texts)
 
         callback_update = _make_callback_update(_SONNET_MODEL_ID, user_id=9301)
         await callbacks["model_callback"](callback_update, MagicMock())  # type: ignore[operator]
