@@ -58,6 +58,13 @@ where = ["src"]
 # без `infrastructure/model_catalog/catalog.json`, и
 # `ConfigModelCatalogRepository` падал бы при старте внутри контейнера.
 "dekoder.infrastructure.model_catalog" = ["catalog.json"]
+# Внеспринтовая фича (claude.md §32): статичная HTML-страница админки
+# документов — та же проблема, что и два package-data выше: без записи
+# `pip install .` (используется в `Dockerfile`) соберёт пакет без
+# `static/admin_documents.html`, и `admin_ui.py` упадёт при импорте
+# (модуль читает файл на уровне модуля — fail-fast при старте, а не при
+# первом запросе).
+"dekoder.presentation.api" = ["static/*.html"]
 
 [tool.ruff]
 target-version = "py311"
