@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Декодер — документы базы знаний</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 960px; }
+  h1 { font-size: 1.3rem; }
+  fieldset { margin-bottom: 1.5rem; }
+  label { display: block; margin: 0.4rem 0 0.15rem; font-size: 0.9rem; }
+  input[type="text"], input[type="password"] { width: 100%; box-sizing: border-box; padding: 0.35rem; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+  th, td { text-align: left; border-bottom: 1px solid #8884; padding: 0.4rem 0.5rem; font-size: 0.85rem; vertical-align: top; }
+  button { cursor: pointer; padding: 0.3rem 0.7rem; }
+  button.danger { color: #b00020; }
+  #status { min-height: 1.4em; font-size: 0.9rem; }
+  #status.error { color: #b00020; }
+  #status.ok { color: #146c2e; }
+  .muted { opacity: 0.7; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+<h1>Декодер — документы базы знаний</h1>
+
+<fieldset id="auth-box">
+  <legend>Ключ администратора</legend>
+  <label for="admin-key">X-Admin-Api-Key</label>
+  <input type="password" id="admin-key" autocomplete="off" />
+  <p class="muted">Ключ хранится только в этой вкладке браузера (sessionStorage) и отправляется как HTTP-заголовок к уже существующему защищённому REST API — эта страница сама по себе не хранит и не проверяет данные.</p>
+  <button id="save-key">Сохранить и загрузить список</button>
+</fieldset>
+
+<fieldset>
+  <legend>Загрузить документ</legend>
+  <form id="upload-form">
+    <label for="file">Файл (txt / md / docx / pdf)</label>
+    <input type="file" id="file" name="file" required />
+    <label for="title">Название (необязательно)</label>
+    <input type="text" id="title" name="title" />
+    <label for="tags">Теги через запятую (необязательно)</label>
+    <input type="text" id="tags" name="tags" />
+    <label for="description">Описание (необязательно)</label>
+    <input type="text" id="description" name="description" />
+    <p></p>
+    <button type="submit">Загрузить и проиндексировать</button>
+  </form>
+</fieldset>
+
+<div id="status"></div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Название</th>
+      <th>Тип</th>
+      <th>Статус</th>
+      <th>Теги</th>
+      <th>Фрагментов</th>
+      <th>Обновлён</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody id="documents-body"></tbody>
+</table>
+
+<script>
+(function () {
+  "use strict";
+
+  var STORAGE_KEY = "dekoder_admin_api_key";
+  var keyInput = document.getElementById("admin-key");
+  var statusEl = document.getElementById("status");
+  var tbody = document.getElementById("documents-body");
+
+  keyInput.value = sessionStorage.getItem(STORAGE_KEY) || "";
+
+  function setStatus(message, kind) {
+    statusEl.textContent = message || "";
+    statusEl.className = kind || "";
+  }
+
+  function currentKey() {
+    return keyInput.value.trim();
+  }
+
+  async function api(path, options) {
+    options = options || {};
+    options.headers = Object.assign({}, options.headers, { "X-Admin-Api-Key": currentKey() });
+    var response = await fetch(path, options);
+    if (!response.ok) {
+      var message = "Ошибка " + response.status;
+      try {
+        var body = await response.json();
+        message = (body.error && body.error.message) || body.detail || message;
+      } catch (_) { /* тело не JSON — оставляем message как есть */ }
+      throw new Error(message);
+    }
+    if (response.status === 204) return null;
+    return response.json();
+  }
+
+  function formatDate(value) {
+    if (!value) return "—";
+    return new Date(value).toLocaleString("ru-RU");
+  }
+
+  function renderDocuments(documents) {
+    tbody.innerHTML = "";
+    documents.forEach(function (doc) {
+      var row = document.createElement("tr");
+
+      var title = document.createElement("td");
+      title.textContent = doc.title;
+      row.appendChild(title);
+
+      var type = document.createElement("td");
+      type.textContent = doc.document_type;
+      row.appendChild(type);
+
+      var status = document.createElement("td");
+      status.textContent = doc.status + (doc.error_message ? " (" + doc.error_message + ")" : "");
+      row.appendChild(status);
+
+      var tags = document.createElement("td");
+      tags.textContent = (doc.tags || []).join(", ");
+      row.appendChild(tags);
+
+      var chunks = document.createElement("td");
+      chunks.textContent = doc.chunk_count;
+      row.appendChild(chunks);
+
+      var updated = document.createElement("td");
+      updated.textContent = formatDate(doc.updated_at);
+      row.appendChild(updated);
+
+      var actions = document.createElement("td");
+
+      var reindexBtn = document.createElement("button");
+      reindexBtn.textContent = "Переиндексировать";
+      reindexBtn.addEventListener("click", function () { reindexDocument(doc.id); });
+      actions.appendChild(reindexBtn);
+
+      var deleteBtn = document.createElement("button");
+      deleteBtn.textContent = "Удалить";
+      deleteBtn.className = "danger";
+      deleteBtn.style.marginLeft = "0.4rem";
+      deleteBtn.addEventListener("click", function () { deleteDocument(doc.id, doc.title); });
+      actions.appendChild(deleteBtn);
+
+      row.appendChild(actions);
+      tbody.appendChild(row);
+    });
+  }
+
+  async function loadDocuments() {
+    if (!currentKey()) {
+      setStatus("Введите ключ администратора.", "error");
+      return;
+    }
+    setStatus("Загрузка...");
+    try {
+      var documents = await api("/admin/documents");
+      renderDocuments(documents);
+      setStatus(documents.length + " документ(ов).", "ok");
+    } catch (error) {
+      setStatus(error.message, "error");
+    }
+  }
+
+  async function deleteDocument(id, title) {
+    if (!window.confirm("Удалить документ «" + title + "»?")) return;
+    setStatus("Удаление...");
+    try {
+      await api("/admin/documents/" + id, { method: "DELETE" });
+      setStatus("Документ удалён.", "ok");
+      loadDocuments();
+    } catch (error) {
+      setStatus(error.message, "error");
+    }
+  }
+
+  async function reindexDocument(id) {
+    setStatus("Переиндексация...");
+    try {
+      await api("/admin/documents/" + id + "/reindex", { method: "POST" });
+      setStatus("Документ переиндексирован.", "ok");
+      loadDocuments();
+    } catch (error) {
+      setStatus(error.message, "error");
+    }
+  }
+
+  document.getElementById("save-key").addEventListener("click", function () {
+    sessionStorage.setItem(STORAGE_KEY, currentKey());
+    loadDocuments();
+  });
+
+  document.getElementById("upload-form").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    if (!currentKey()) {
+      setStatus("Введите ключ администратора.", "error");
+      return;
+    }
+    var fileInput = document.getElementById("file");
+    if (!fileInput.files.length) return;
+
+    var formData = new FormData();
+    formData.append("file", fileInput.files[0]);
+    var title = document.getElementById("title").value.trim();
+    var tags = document.getElementById("tags").value.trim();
+    var description = document.getElementById("description").value.trim();
+    if (title) formData.append("title", title);
+    if (tags) formData.append("tags", tags);
+    if (description) formData.append("description", description);
+
+    setStatus("Загрузка и индексация — это может занять некоторое время...");
+    try {
+      await api("/admin/documents", { method: "POST", body: formData });
+      setStatus("Документ загружен и проиндексирован.", "ok");
+      event.target.reset();
+      loadDocuments();
+    } catch (error) {
+      setStatus(error.message, "error");
+    }
+  });
+
+  if (currentKey()) {
+    loadDocuments();
+  }
+})();
+</script>
+</body>
+</html>
