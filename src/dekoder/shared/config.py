@@ -232,7 +232,14 @@ class KnowledgeSettings(BaseSettings):
     # создаётся автоматически `LocalDocumentStorageAdapter` при первой
     # записи, не здесь.
     storage_path: str = "./data/knowledge_documents"
-    min_relevance_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    # 0.35, а не более интуитивный 0.5 — эмпирическая проверка на проде
+    # (2026-09-03) показала, что для инструктивных/«промпт-шаблонных»
+    # markdown-документов из docs/knowledge/ cosine-релевантность реально
+    # релевантного топ-совпадения по короткому разговорному запросу может
+    # быть 0.28-0.43 (ниже прежнего порога 0.5), хотя Qdrant при этом
+    # корректно ранжирует нужный документ первым — порог 0.5 отсекал
+    # содержательные совпадения как «нерелевантные».
+    min_relevance_score: float = Field(default=0.35, ge=0.0, le=1.0)
 
 
 class ModelCatalogSettings(BaseSettings):
