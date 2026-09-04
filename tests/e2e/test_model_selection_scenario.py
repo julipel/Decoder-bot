@@ -88,7 +88,7 @@ from dekoder.presentation.telegram.bot import (
     register_message_handler,
     register_model_handlers,
 )
-from dekoder.presentation.telegram.handlers.model import MODEL_SELECTED_MESSAGE_TEMPLATE
+from dekoder.presentation.telegram.handlers.model import MODEL_SELECTED_WITH_RECOMMENDATION_TEMPLATE
 from dekoder.shared.domain.identifiers import CorrelationId
 from dekoder.shared.logging import clear_request_context, configure_logging
 
@@ -523,9 +523,15 @@ class TestFullModelSelectionCycle:
 
         callback_update.callback_query.answer.assert_awaited_once_with()
         callback_update.callback_query.edit_message_text.assert_awaited_once()
+        # Claude Sonnet 5 в боевом catalog.json несёт непустой recommended_for
+        # (см. докстринг модуля «Значения из боевого сид-каталога») — значит
+        # подтверждение идёт через MODEL_SELECTED_WITH_RECOMMENDATION_TEMPLATE,
+        # не через голый MODEL_SELECTED_MESSAGE_TEMPLATE (см. handlers/model.py).
         assert callback_update.callback_query.edit_message_text.call_args.args[
             0
-        ] == MODEL_SELECTED_MESSAGE_TEMPLATE.format(name="Claude Sonnet 5")
+        ] == MODEL_SELECTED_WITH_RECOMMENDATION_TEMPLATE.format(
+            name="Claude Sonnet 5", recommended_for="код, анализ, сложные задачи"
+        )
 
     async def test_selecting_unavailable_model_is_rejected_and_visible_to_the_user(
         self,

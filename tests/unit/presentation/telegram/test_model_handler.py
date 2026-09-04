@@ -188,6 +188,33 @@ class TestModelSelectionCallback:
         assert user is not None
         assert await model_selection.get_selected(user.id) == target.model_id
 
+    async def test_confirmation_includes_recommended_for_when_present(self) -> None:
+        """`AIModel.recommended_for` (ADR-7.3) — внеспринтовая правка 2026-09-04: теперь виден пользователю."""
+        target = make_ai_model(
+            "anthropic/claude-3.5-sonnet", display_name="Claude 3.5 Sonnet", recommended_for=("код", "анализ")
+        )
+        catalog = FakeModelCatalogRepository([target])
+        list_available_models, _, select_model, _, _ = _make_use_cases(model_catalog=catalog)
+        handler = ModelSelectionCallbackHandler(select_model, list_available_models)
+        update = _make_callback_update(data="model:anthropic/claude-3.5-sonnet", user_id=556)
+
+        await handler(update, MagicMock())
+
+        call_args = update.callback_query.edit_message_text.call_args
+        assert call_args.args[0] == "Активна модель: Claude 3.5 Sonnet — хорошо подходит для: код, анализ"
+
+    async def test_confirmation_omits_recommendation_when_catalog_entry_has_none(self) -> None:
+        target = make_ai_model("anthropic/claude-3.5-sonnet", display_name="Claude 3.5 Sonnet", recommended_for=())
+        catalog = FakeModelCatalogRepository([target])
+        list_available_models, _, select_model, _, _ = _make_use_cases(model_catalog=catalog)
+        handler = ModelSelectionCallbackHandler(select_model, list_available_models)
+        update = _make_callback_update(data="model:anthropic/claude-3.5-sonnet", user_id=557)
+
+        await handler(update, MagicMock())
+
+        call_args = update.callback_query.edit_message_text.call_args
+        assert call_args.args[0] == "Активна модель: Claude 3.5 Sonnet"
+
 
 class TestModelSelectionRejectsUnavailable:
     """AC-3 (S7-07)/AC-1 (S7-05, ADR-7.9): недоступная модель — отказ, видимый пользователю, список не портится."""

@@ -36,6 +36,14 @@ profile.py` почти буквально, ADR-7.9):
 другое исключение → нейтральное сообщение + `_logger.exception`, без
 утечки внутренних деталей пользователю — тот же принцип, что и у
 `ProfileCommandHandler`/`NewConversationHandler`.
+
+Внеспринтовая правка (2026-09-04): подтверждение выбора модели
+(`_format_model_selected_message`) дополнительно показывает
+`AIModel.recommended_for` («хорошо подходит для: …») — поле каталога
+существовало с Sprint 7 (ADR-7.3, «информационные поля MVP»), но нигде
+не отображалось пользователю. Названия кнопок (`_build_model_keyboard`)
+не менялись — Telegram не поддерживает подзаголовок у inline-кнопки,
+только однострочный текст.
 """
 
 from __future__ import annotations
@@ -67,6 +75,7 @@ MODEL_CURRENT_MESSAGE_TEMPLATE = "Текущая модель: {name}\n\n{list_m
 MODEL_ACTIVE_SUFFIX = " (текущая)"
 MODEL_UNAVAILABLE_SUFFIX = " (недоступна)"
 MODEL_SELECTED_MESSAGE_TEMPLATE = "Активна модель: {name}"
+MODEL_SELECTED_WITH_RECOMMENDATION_TEMPLATE = "Активна модель: {name} — хорошо подходит для: {recommended_for}"
 MODEL_NOT_FOUND_MESSAGE = "Эта модель больше недоступна. Отправьте /model, чтобы увидеть актуальный список."
 UNEXPECTED_ERROR_MESSAGE = "Произошла непредвиденная ошибка. Попробуйте ещё раз чуть позже."
 
@@ -89,6 +98,21 @@ def _build_model_keyboard(models: Sequence[AIModel], active_model_id: ModelId | 
             label = f"{label}{MODEL_UNAVAILABLE_SUFFIX}"
         rows.append([InlineKeyboardButton(text=label, callback_data=f"{_CALLBACK_DATA_PREFIX}{model.model_id.value}")])
     return InlineKeyboardMarkup(rows)
+
+
+def _format_model_selected_message(model: AIModel) -> str:
+    """
+    `recommended_for` (`domain/model_catalog/entities.py::AIModel`) — уже
+    существующее информационное поле каталога, до этой правки нигде не
+    отображалось пользователю. Пустой кортеж — штатный случай (не в
+    боевом каталоге, но допустим доменной моделью), тогда сообщение без
+    рекомендации, без пустого «хорошо подходит для: ».
+    """
+    if not model.recommended_for:
+        return MODEL_SELECTED_MESSAGE_TEMPLATE.format(name=model.display_name)
+    return MODEL_SELECTED_WITH_RECOMMENDATION_TEMPLATE.format(
+        name=model.display_name, recommended_for=", ".join(model.recommended_for)
+    )
 
 
 def _parse_model_callback_data(data: str) -> ModelId | None:
@@ -204,6 +228,4 @@ class ModelSelectionCallbackHandler:
         finally:
             clear_request_context()
         keyboard = _build_model_keyboard(list_result.models, active_model_id=list_result.active_model_id)
-        await query.edit_message_text(
-            MODEL_SELECTED_MESSAGE_TEMPLATE.format(name=result.model.display_name), reply_markup=keyboard
-        )
+        await query.edit_message_text(_format_model_selected_message(result.model), reply_markup=keyboard)
