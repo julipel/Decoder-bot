@@ -137,7 +137,7 @@ async def save_memory_record_from_text(
     *,
     category: MemoryCategory = MemoryCategory.OTHER,
     success_message: str = REMEMBER_SAVED_MESSAGE,
-) -> None:
+) -> bool:
     """
     Общая логика сохранения факта — вызывается `RememberCommandHandler`
     (однострочный `/remember <текст>`), `TextMessageHandler` (текст,
@@ -151,11 +151,17 @@ async def save_memory_record_from_text(
     по умолчанию поведение не меняется (`/remember`), но позволяют
     переиспользовать эту же функцию для факта другой категории с другим
     подтверждающим сообщением, не дублируя try/except/аудит-лог.
+
+    Возвращает `True`/`False` — сохранена ли запись: `save_display_name_from_text`
+    отправляет дополнительную подсказку о дальнейших действиях только
+    после реально успешного сохранения, не после сообщения об ошибке.
+    Существующие вызывающие (`RememberCommandHandler`, `TextMessageHandler`
+    для `/remember`) результат игнорируют — поведение не изменилось.
     """
     try:
         command = to_create_memory_record_command(update, text, category=category)
     except ValueError:
-        return
+        return False
 
     bind_request_context(correlation_id=command.correlation_id)
     try:
@@ -163,17 +169,18 @@ async def save_memory_record_from_text(
     except DekoderError as error:
         _logger.warning("create_memory_record_failed", error_code=error.code)
         await message.reply_text(error.user_message)
-        return
+        return False
     except Exception:
         _logger.exception("create_memory_record_unexpected_error")
         await message.reply_text(UNEXPECTED_ERROR_MESSAGE)
-        return
+        return False
     else:
         log_audit_event(_logger, "memory_record_created", record_id=str(result.record.id))
     finally:
         clear_request_context()
 
     await message.reply_text(success_message)
+    return True
 
 
 class RememberCommandHandler:

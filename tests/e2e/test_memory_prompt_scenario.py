@@ -63,6 +63,7 @@ from dekoder.application.memory.dto import (
 from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.application.memory.use_cases.delete_memory_record import DeleteMemoryRecordUseCase
 from dekoder.application.memory.use_cases.list_memory_records import ListMemoryRecordsUseCase
+from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
 from dekoder.bootstrap.repositories import build_conversation_repositories_factory
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
 from dekoder.domain.memory.value_objects import MemorySource, MemoryStatus
@@ -138,7 +139,10 @@ def _build_application(repositories_factory: ConversationRepositoriesFactory, pr
     application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
     create_memory_record = CreateMemoryRecordUseCase(repositories=repositories_factory)
     register_message_handler(
-        application, _make_process_user_message(repositories_factory, provider), create_memory_record
+        application,
+        _make_process_user_message(repositories_factory, provider),
+        create_memory_record,
+        GetActiveProfile(repositories=repositories_factory),
     )
     register_new_conversation_handler(application, StartNewConversation(repositories=repositories_factory))
     register_clear_conversation_handler(application, ClearConversation(repositories=repositories_factory))

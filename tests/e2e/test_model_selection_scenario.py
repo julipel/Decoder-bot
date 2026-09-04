@@ -72,6 +72,7 @@ from dekoder.application.model_catalog.ports import ModelCatalogRepository
 from dekoder.application.model_catalog.use_cases.get_selected_model import GetSelectedModel
 from dekoder.application.model_catalog.use_cases.list_models import ListAvailableModels
 from dekoder.application.model_catalog.use_cases.select_model import SelectModel
+from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
 from dekoder.bootstrap.repositories import build_conversation_repositories_factory
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
 from dekoder.infrastructure.model_catalog.config_repository import DEFAULT_CATALOG_PATH, ConfigModelCatalogRepository
@@ -193,7 +194,10 @@ def _build_application(
     """
     application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
     register_message_handler(
-        application, process_user_message, CreateMemoryRecordUseCase(repositories=repositories_factory)
+        application,
+        process_user_message,
+        CreateMemoryRecordUseCase(repositories=repositories_factory),
+        GetActiveProfile(repositories=repositories_factory),
     )
     register_model_handlers(application, list_available_models, get_selected_model, select_model)
     return application

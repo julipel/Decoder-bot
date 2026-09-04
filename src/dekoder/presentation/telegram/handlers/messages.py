@@ -22,6 +22,11 @@ Sprint 13: тем же способом завершается знакомст�
 (оба флага взаимоисключающи — `/start` и `/remember` без аргумента не
 могут быть одновременно ожидаемы одним и тем же пользователем, порядок
 проверки значения не имеет, но фиксирован для читаемости).
+
+Дополнительно принимает `GetActiveProfile` — не для обычного диалога, а
+только чтобы `save_display_name_from_text()` могла назвать реально
+активный профиль в подсказке о дальнейших действиях, отправляемой сразу
+после завершения знакомства (тот же use case, что и у `/profile`).
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ from telegram.ext import ContextTypes
 
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
+from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
 from dekoder.presentation.telegram.handlers.memory import PENDING_REMEMBER_KEY, save_memory_record_from_text
 from dekoder.presentation.telegram.handlers.start import PENDING_NAME_KEY, save_display_name_from_text
 from dekoder.presentation.telegram.mapper import split_message, to_command
@@ -44,10 +50,14 @@ UNEXPECTED_ERROR_MESSAGE = "Произошла непредвиденная ош
 
 class TextMessageHandler:
     def __init__(
-        self, process_user_message: ProcessUserMessage, create_memory_record: CreateMemoryRecordUseCase
+        self,
+        process_user_message: ProcessUserMessage,
+        create_memory_record: CreateMemoryRecordUseCase,
+        get_active_profile: GetActiveProfile,
     ) -> None:
         self._process_user_message = process_user_message
         self._create_memory_record = create_memory_record
+        self._get_active_profile = get_active_profile
 
     async def __call__(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
@@ -61,7 +71,9 @@ class TextMessageHandler:
         # user_data.pop(...)` сам по себе truthy `MagicMock`, `is not None`
         # ложно сработал бы на каждом обычном сообщении в тех тестах.
         if isinstance(user_data, dict) and user_data.pop(PENDING_NAME_KEY, False):
-            await save_display_name_from_text(self._create_memory_record, update, message, message.text.strip())
+            await save_display_name_from_text(
+                self._create_memory_record, self._get_active_profile, update, message, message.text.strip()
+            )
             return
         if isinstance(user_data, dict) and user_data.pop(PENDING_REMEMBER_KEY, False):
             await save_memory_record_from_text(self._create_memory_record, update, message, message.text.strip())

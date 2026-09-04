@@ -154,7 +154,10 @@ def _build_application(
     """
     application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
     register_message_handler(
-        application, process_user_message, CreateMemoryRecordUseCase(repositories=repositories_factory)
+        application,
+        process_user_message,
+        CreateMemoryRecordUseCase(repositories=repositories_factory),
+        get_active_profile,
     )
     register_profile_handlers(application, list_profiles, get_active_profile, select_profile)
     return application

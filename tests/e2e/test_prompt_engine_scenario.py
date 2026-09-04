@@ -45,6 +45,7 @@ from dekoder.application.conversation.dto import LLMRequest, LLMResponse
 from dekoder.application.conversation.ports import ConversationRepositoriesFactory
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
+from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
 from dekoder.application.prompt.services.prompt_builder import DeterministicPromptBuilder
 from dekoder.application.prompt.services.token_budget import estimate_size
 from dekoder.bootstrap.repositories import build_conversation_repositories_factory
@@ -130,7 +131,10 @@ def _build_application(
     # Sprint 12: сценарии этого файла не выставляют PENDING_REMEMBER_KEY —
     # CreateMemoryRecordUseCase здесь ни разу не исполняется.
     register_message_handler(
-        application, process_user_message, CreateMemoryRecordUseCase(repositories=repositories_factory)
+        application,
+        process_user_message,
+        CreateMemoryRecordUseCase(repositories=repositories_factory),
+        GetActiveProfile(repositories=repositories_factory),
     )
     return application
 

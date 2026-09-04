@@ -148,7 +148,9 @@ def main() -> None:
 
         container = build_container(settings, http_client, embedding_http_client, qdrant_client, db_session_factory)
         register_start_handler(app, container.list_memory_records)
-        register_message_handler(app, container.process_user_message, container.create_memory_record)
+        register_message_handler(
+            app, container.process_user_message, container.create_memory_record, container.get_active_profile
+        )
         register_new_conversation_handler(app, container.start_new_conversation)
         register_clear_conversation_handler(app, container.clear_conversation)
         register_profile_handlers(app, container.list_profiles, container.get_active_profile, container.select_profile)

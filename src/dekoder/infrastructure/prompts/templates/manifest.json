@@ -2,12 +2,12 @@
   {
     "id": "base_instruction",
     "name": "Базовая системная инструкция",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "purpose": "base_instruction",
     "text_file": "base_instruction.txt",
     "required_variables": [],
     "status": "active",
-    "updated_at": "2026-09-02T00:00:00+00:00"
+    "updated_at": "2026-09-04T00:00:00+00:00"
   },
   {
     "id": "safety_rules",

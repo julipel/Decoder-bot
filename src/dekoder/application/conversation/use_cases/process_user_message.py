@@ -158,6 +158,7 @@ from dekoder.application.conversation.ports import (
     LLMProvider,
 )
 from dekoder.application.knowledge.ports import KnowledgeSearchService
+from dekoder.application.memory.display_name import extract_display_name, is_display_name_fact
 from dekoder.application.model_catalog.ports import ModelCatalogRepository
 from dekoder.application.prompt.ports import PromptBuilder
 from dekoder.domain.conversation.entities import Message, MessageRole
@@ -215,7 +216,7 @@ class ProcessUserMessage:
     async def execute(self, command: ProcessUserMessageCommand) -> ProcessUserMessageResult:
         message_text = self._validate_message_text(command.message_text)
 
-        conversation_id, profile, memory_records, model_id = await self._save_user_message(
+        conversation_id, profile, memory_records, display_name, model_id = await self._save_user_message(
             command.telegram_user_id, message_text, command.model_id
         )
         history = await self._load_history(conversation_id)
@@ -224,7 +225,7 @@ class ProcessUserMessage:
         context = PromptContext(
             profile=profile,
             dialogue_history=history,
-            confirmed_memory_facts=[record.text for record in memory_records],
+            confirmed_memory_facts=_build_memory_facts(memory_records, display_name),
             knowledge_fragments=[_format_knowledge_fragment(result) for result in knowledge_results],
         )
         build_result = self._prompt_builder.build(context)
@@ -255,7 +256,7 @@ class ProcessUserMessage:
 
     async def _save_user_message(
         self, telegram_user_id: int, message_text: MessageText, override_model_id: ModelId | None
-    ) -> tuple[UUID, UserProfile, Sequence[MemoryRecord], ModelId]:
+    ) -> tuple[UUID, UserProfile, Sequence[MemoryRecord], str | None, ModelId]:
         """
         Транзакция 1 (backlog_2.md §9): получить/создать пользователя,
         получить/создать его активный диалог, прочитать его активный
@@ -270,28 +271,40 @@ class ProcessUserMessage:
         сохранения сообщения — LLM в этом случае не вызывается, см.
         докстринг модуля).
 
-        Возвращает `(conversation_id, profile, memory_records, model_id)`
-        (Sprint 4, задача S4-07, ADR-4.8; Sprint 5, задача S5-06, ADR-5.6;
-        Sprint 7, задача S7-06, ADR-7.7) — раньше (Sprint 2/3) возвращался
-        уже вычисленный `system_instruction: str` с fallback-логикой
-        внутри этого use case; теперь этот use case передаёт весь
-        `UserProfile` и уже отфильтрованные/отсортированные `MemoryRecord`
-        (`MemoryRepository.find_relevant`, единственная точка бизнес-
-        правила «неподтверждённая память не входит в контекст», ADR-5.6)
-        как есть — построение системной инструкции и рендер секции 4
-        промпта — ответственность `PromptBuilder`, не здесь; `model_id`
-        уже полностью разрешён (приоритет + откат при недоступности,
-        ADR-7.7) — `execute()` использует его как есть.
+        Возвращает `(conversation_id, profile, memory_records, display_name,
+        model_id)` (Sprint 4, задача S4-07, ADR-4.8; Sprint 5, задача
+        S5-06, ADR-5.6; Sprint 7, задача S7-06, ADR-7.7) — раньше
+        (Sprint 2/3) возвращался уже вычисленный `system_instruction: str`
+        с fallback-логикой внутри этого use case; теперь этот use case
+        передаёт весь `UserProfile` и уже отфильтрованные/отсортированные
+        `MemoryRecord` (`MemoryRepository.find_relevant`, единственная
+        точка бизнес-правила «неподтверждённая память не входит в
+        контекст», ADR-5.6) как есть — построение системной инструкции и
+        рендер секции 4 промпта — ответственность `PromptBuilder`, не
+        здесь; `model_id` уже полностью разрешён (приоритет + откат при
+        недоступности, ADR-7.7) — `execute()` использует его как есть.
+
+        `display_name` читается отдельным вызовом `list_confirmed_by_user`
+        (без `limit`), а не берётся из уже прочитанного `memory_records`:
+        `find_relevant` ограничен `self._max_relevant_memory` и
+        сортирует по `confidence DESC, created_at DESC` — факт об имени
+        сохраняется сразу после `/start`, раньше остальных, и при
+        накоплении новых фактов с той же уверенностью (`MEDIUM` по
+        умолчанию, ADR-5.3) вытесняется из этого окна первым. Обращение
+        по имени должно быть надёжным в каждом ответе, а не зависеть от
+        того, попал ли факт в топ `max_relevant_records`.
         """
         async with self._repositories() as repositories:
             user = await repositories.users.get_or_create_by_telegram_user_id(telegram_user_id)
             conversation = await repositories.conversations.get_or_create_active(user.id)
             profile = await repositories.profiles.get_active_profile(user.id)
             memory_records = await repositories.memory.find_relevant(user.id, limit=self._max_relevant_memory)
+            confirmed_memory = await repositories.memory.list_confirmed_by_user(user.id)
+            display_name = extract_display_name(confirmed_memory)
             model_id = await self._resolve_model_id(repositories, user.id, override_model_id)
             user_message = self._build_message(conversation.id, MessageRole.USER, message_text.value)
             await repositories.messages.save(user_message)
-            return conversation.id, profile, memory_records, model_id
+            return conversation.id, profile, memory_records, display_name, model_id
 
     async def _resolve_model_id(
         self, repositories: ConversationRepositories, user_id: UUID, override_model_id: ModelId | None
@@ -423,6 +436,21 @@ class ProcessUserMessage:
                 user_message="Сообщение не может быть пустым.",
                 cause=error,
             ) from error
+
+
+def _build_memory_facts(memory_records: Sequence[MemoryRecord], display_name: str | None) -> list[str]:
+    """
+    Секция 4 промпта (`PromptContext.confirmed_memory_facts`): обычные
+    факты из `find_relevant`, из которых исключён сырой факт об имени
+    (если он туда попал) — вместо него первой строкой добавляется явная
+    инструкция обращаться по имени в каждом ответе, а не просто «факт
+    среди фактов», на который модель не обязана реагировать одинаково
+    от сообщения к сообщению.
+    """
+    facts = [record.text for record in memory_records if not is_display_name_fact(record)]
+    if display_name is not None:
+        facts.insert(0, f"Пользователя зовут {display_name}. Обращайся к пользователю по имени в каждом ответе.")
+    return facts
 
 
 def _format_knowledge_fragment(result: SearchResult) -> str:

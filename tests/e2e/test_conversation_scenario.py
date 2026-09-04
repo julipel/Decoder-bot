@@ -56,6 +56,7 @@ from dekoder.application.conversation.use_cases.clear_conversation import ClearC
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.application.memory.use_cases.list_memory_records import ListMemoryRecordsUseCase
+from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
 from dekoder.presentation.telegram.bot import (
     build_telegram_application,
@@ -110,7 +111,9 @@ def _build_application(process_user_message: ProcessUserMessage) -> Application:
     # но TextMessageHandler требует его в конструкторе.
     repositories_factory = make_in_memory_repositories_factory()
     create_memory_record = CreateMemoryRecordUseCase(repositories=repositories_factory)
-    register_message_handler(application, process_user_message, create_memory_record)
+    register_message_handler(
+        application, process_user_message, create_memory_record, GetActiveProfile(repositories=repositories_factory)
+    )
     # Sprint 13: /start теперь тоже требует ListMemoryRecordsUseCase (проверяет
     # известное имя пользователя) — свежие репозитории, без пересечения с
     # process_user_message, ни один сценарий этого файла не сохраняет имя
@@ -298,7 +301,12 @@ class TestClearCommandRouting:
         clear_conversation = ClearConversation(repositories=factory)
 
         application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
-        register_message_handler(application, process_user_message, CreateMemoryRecordUseCase(repositories=factory))
+        register_message_handler(
+            application,
+            process_user_message,
+            CreateMemoryRecordUseCase(repositories=factory),
+            GetActiveProfile(repositories=factory),
+        )
         register_clear_conversation_handler(application, clear_conversation)
 
         registered = application.handlers[0]

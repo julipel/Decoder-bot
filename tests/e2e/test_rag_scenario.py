@@ -258,7 +258,10 @@ class TestRagScenario:
             process_user_message = app.state.container.process_user_message
             telegram_application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
             register_message_handler(
-                telegram_application, process_user_message, app.state.container.create_memory_record
+                telegram_application,
+                process_user_message,
+                app.state.container.create_memory_record,
+                app.state.container.get_active_profile,
             )
             text_handler = _text_handler_callback(telegram_application)
 
@@ -305,7 +308,10 @@ class TestRagScenario:
             process_user_message = app.state.container.process_user_message
             telegram_application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
             register_message_handler(
-                telegram_application, process_user_message, app.state.container.create_memory_record
+                telegram_application,
+                process_user_message,
+                app.state.container.create_memory_record,
+                app.state.container.get_active_profile,
             )
             text_handler = _text_handler_callback(telegram_application)
 
