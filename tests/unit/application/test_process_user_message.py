@@ -889,7 +889,7 @@ class TestMemoryIntegration:
         await use_case.execute(_make_command(telegram_user_id=903))
 
         request = provider.received_requests[0]
-        assert "Пользователя зовут Алекс" in request.system_prompt
+        assert "пользователя зовут Алекс" in request.system_prompt
         assert "в каждом ответе" in request.system_prompt
 
     async def test_display_name_survives_being_pushed_out_of_find_relevant_window(self) -> None:
@@ -918,7 +918,7 @@ class TestMemoryIntegration:
 
         request = provider.received_requests[0]
         assert "Живёт в Берлине." in request.system_prompt
-        assert "Пользователя зовут Алекс" in request.system_prompt
+        assert "пользователя зовут Алекс" in request.system_prompt
 
     async def test_find_relevant_is_called_within_the_existing_three_transactions(self) -> None:
         """

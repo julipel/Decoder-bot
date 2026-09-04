@@ -40,13 +40,13 @@
   },
   {
     "id": "memory_placeholder",
-    "name": "Плейсхолдер долговременной памяти (Этап 7)",
-    "version": "1.0.0",
+    "name": "Секция долговременной памяти",
+    "version": "1.1.0",
     "purpose": "memory_placeholder",
     "text_file": "memory_placeholder.txt",
     "required_variables": ["memory_facts"],
     "status": "active",
-    "updated_at": "2026-01-01T00:00:00+00:00"
+    "updated_at": "2026-09-04T00:00:00+00:00"
   },
   {
     "id": "knowledge_placeholder",
