@@ -123,14 +123,21 @@ def register_message_handler(
     application: Application,
     process_user_message: ProcessUserMessage,
     create_memory_record: CreateMemoryRecordUseCase,
+    get_active_profile: GetActiveProfile,
 ) -> None:
     """
     Регистрирует обработчик обычных текстовых сообщений поверх уже собранного
     `ProcessUserMessage`. `create_memory_record` (Sprint 12) — завершает
     двухшаговый `/remember` без аргумента, см. докстринг `TextMessageHandler`.
+    `get_active_profile` — тот же use case, что и `register_profile_handlers`
+    (не отдельный экземпляр контейнера), нужен только для подсказки о
+    дальнейших действиях после завершения знакомства (`/start`).
     """
     application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, TextMessageHandler(process_user_message, create_memory_record))
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            TextMessageHandler(process_user_message, create_memory_record, get_active_profile),
+        )
     )
 
 

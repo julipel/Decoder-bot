@@ -277,6 +277,7 @@ def _make_use_case(
     model_selection: FakeModelSelectionRepository | None = None,
     knowledge_search: KnowledgeSearchService | None = None,
     model_catalog: ModelCatalogRepository | None = None,
+    max_relevant_memory: int = 5,
 ) -> tuple[ProcessUserMessage, _Repos]:
     users = users if users is not None else FakeUserRepository()
     conversations = conversations if conversations is not None else FakeConversationRepository()
@@ -296,7 +297,7 @@ def _make_use_case(
         default_model=ModelId(default_model),
         temperature=0.7,
         max_tokens=512,
-        max_relevant_memory=5,
+        max_relevant_memory=max_relevant_memory,
     )
     return use_case, _Repos(users, conversations, messages, profiles, memory, model_selection)
 
@@ -740,12 +741,15 @@ class TestPersonalization:
     """
 
     # Совпадает с текстом сид-шаблона `base_instruction`
-    # (`infrastructure/prompts/templates/base_instruction.txt`, версия 1.1.0
-    # после внеспринтового фикса 2026-09-02 — более человечный тон).
+    # (`infrastructure/prompts/templates/base_instruction.txt`, версия 1.2.0
+    # после внеспринтовых фиксов 2026-09-02 — более человечный тон — и
+    # 2026-09-04 — мужской род при обращении о себе).
     _BASE_INSTRUCTION_TEXT = (
         "Ты — персональный ассистент «Декодер». Общайся с пользователем как живой человек в переписке — "
-        "естественным разговорным языком, без канцелярита и без ощущения, что отвечает бот. Отвечай по "
-        "существу вопроса, не растягивая ответ там, где хватит короткой фразы."
+        "естественным разговорным языком, без канцелярита и без ощущения, что отвечает бот. Говоря о себе, "
+        "используй мужской род («я готов помочь», «я понял», «я подумал», а не «готова», «поняла», "
+        "«подумала») — «Декодер» мужского рода. Отвечай по существу вопроса, не растягивая ответ там, где "
+        "хватит короткой фразы."
     )
 
     async def test_system_prompt_contains_active_profile_instruction(self) -> None:
@@ -865,6 +869,56 @@ class TestMemoryIntegration:
 
         request = provider.received_requests[0]
         assert request.system_prompt.strip()
+
+    async def test_system_prompt_instructs_addressing_user_by_known_display_name(self) -> None:
+        """
+        Факт об имени (`PERSONAL`, префикс `NAME_FACT_PREFIX` — см.
+        `application/memory/display_name.py`) превращается в явную
+        инструкцию «обращайся по имени в каждом ответе», не остаётся
+        голым фактом среди прочих.
+        """
+        users = FakeUserRepository()
+        user = await users.get_or_create_by_telegram_user_id(903)
+        name_record = _make_memory_record(
+            user.id, text="Обращение к пользователю: Алекс", category=MemoryCategory.PERSONAL
+        )
+        memory = FakeMemoryRepository([name_record])
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, users=users, memory=memory)
+
+        await use_case.execute(_make_command(telegram_user_id=903))
+
+        request = provider.received_requests[0]
+        assert "Пользователя зовут Алекс" in request.system_prompt
+        assert "в каждом ответе" in request.system_prompt
+
+    async def test_display_name_survives_being_pushed_out_of_find_relevant_window(self) -> None:
+        """
+        Имя сохраняется раньше остальных фактов (сразу после `/start`) и
+        с той же `MEDIUM`-уверенностью, что и любой `/remember`-факт —
+        `find_relevant` (сортировка `confidence DESC, created_at DESC`,
+        `limit=1` здесь) вытесняет его более новыми фактами. Обращение по
+        имени всё равно должно попасть в промпт — оно читается отдельно
+        от `find_relevant`, через `list_confirmed_by_user`.
+        """
+        users = FakeUserRepository()
+        user = await users.get_or_create_by_telegram_user_id(904)
+        name_record = _make_memory_record(
+            user.id,
+            text="Обращение к пользователю: Алекс",
+            category=MemoryCategory.PERSONAL,
+            created_at=datetime.now(UTC) - timedelta(days=1),
+        )
+        newer_fact = _make_memory_record(user.id, text="Живёт в Берлине.")
+        memory = FakeMemoryRepository([name_record, newer_fact])
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, users=users, memory=memory, max_relevant_memory=1)
+
+        await use_case.execute(_make_command(telegram_user_id=904))
+
+        request = provider.received_requests[0]
+        assert "Живёт в Берлине." in request.system_prompt
+        assert "Пользователя зовут Алекс" in request.system_prompt
 
     async def test_find_relevant_is_called_within_the_existing_three_transactions(self) -> None:
         """

@@ -22,6 +22,7 @@ from tests.support.fake_conversation_repositories import (
 from dekoder.application.memory.dto import ListMemoryRecordsCommand
 from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.application.memory.use_cases.list_memory_records import ListMemoryRecordsUseCase
+from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
 from dekoder.domain.memory.entities import MemoryRecord
 from dekoder.domain.memory.value_objects import MemoryCategory, MemoryConfidence, MemorySource, MemoryStatus
 from dekoder.presentation.telegram.handlers.start import (
@@ -30,6 +31,8 @@ from dekoder.presentation.telegram.handlers.start import (
     FIRST_TIME_GREETING,
     NAME_FACT_PREFIX,
     NAME_SAVED_TEMPLATE,
+    NEXT_STEPS_HINT_FALLBACK,
+    NEXT_STEPS_HINT_TEMPLATE,
     PENDING_NAME_KEY,
     RETURNING_GREETING_TEMPLATE,
     StartCommandHandler,
@@ -155,24 +158,64 @@ class TestMessageConstants:
 
 class TestSaveDisplayNameFromText:
     async def test_saves_a_personal_memory_record_and_confirms_by_name(self) -> None:
-        create_memory_record = CreateMemoryRecordUseCase(repositories=make_in_memory_repositories_factory())
+        factory = make_in_memory_repositories_factory()
+        create_memory_record = CreateMemoryRecordUseCase(repositories=factory)
+        get_active_profile = GetActiveProfile(repositories=factory)
         update = _make_update(text="Алекс")
         message = update.effective_message
 
-        await save_display_name_from_text(create_memory_record, update, message, "Алекс")
+        await save_display_name_from_text(create_memory_record, get_active_profile, update, message, "Алекс")
 
-        message.reply_text.assert_awaited_once_with(NAME_SAVED_TEMPLATE.format(name="Алекс"))
+        replies = [call.args[0] for call in message.reply_text.await_args_list]
+        assert replies[0] == NAME_SAVED_TEMPLATE.format(name="Алекс")
 
     async def test_strips_surrounding_whitespace(self) -> None:
         factory = make_in_memory_repositories_factory()
         create_memory_record = CreateMemoryRecordUseCase(repositories=factory)
+        get_active_profile = GetActiveProfile(repositories=factory)
         list_memory_records = ListMemoryRecordsUseCase(repositories=factory)
         update = _make_update(text="  Алекс  ")
         message = update.effective_message
 
-        await save_display_name_from_text(create_memory_record, update, message, "  Алекс  ")
+        await save_display_name_from_text(create_memory_record, get_active_profile, update, message, "  Алекс  ")
 
         result = await list_memory_records.execute(
             ListMemoryRecordsCommand(telegram_user_id=_TELEGRAM_USER_ID, correlation_id=CorrelationId(str(uuid4())))
         )
         assert result.records[0].text == f"{NAME_FACT_PREFIX}Алекс"
+
+    async def test_sends_a_next_steps_hint_naming_the_active_profile(self) -> None:
+        """Второе сообщение после сохранения имени — подсказка о /profile, /model и обычном сообщении."""
+        factory = make_in_memory_repositories_factory()
+        create_memory_record = CreateMemoryRecordUseCase(repositories=factory)
+        get_active_profile = GetActiveProfile(repositories=factory)
+        update = _make_update(text="Алекс")
+        message = update.effective_message
+
+        await save_display_name_from_text(create_memory_record, get_active_profile, update, message, "Алекс")
+
+        replies = [call.args[0] for call in message.reply_text.await_args_list]
+        assert len(replies) == 2
+        assert replies[1] == NEXT_STEPS_HINT_TEMPLATE.format(profile_name="Тестовый")
+
+    async def test_falls_back_to_a_generic_hint_when_active_profile_cannot_be_read(self) -> None:
+        """Устойчивость: сбой чтения активного профиля не должен ломать знакомство целиком."""
+
+        class _BrokenGetActiveProfile:
+            async def execute(self, command: object) -> None:
+                raise RuntimeError("boom")
+
+        create_memory_record = CreateMemoryRecordUseCase(repositories=make_in_memory_repositories_factory())
+        update = _make_update(text="Алекс")
+        message = update.effective_message
+
+        await save_display_name_from_text(
+            create_memory_record,
+            _BrokenGetActiveProfile(),
+            update,
+            message,
+            "Алекс",  # type: ignore[arg-type]
+        )
+
+        replies = [call.args[0] for call in message.reply_text.await_args_list]
+        assert replies[1] == NEXT_STEPS_HINT_FALLBACK

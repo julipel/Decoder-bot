@@ -29,13 +29,18 @@ from tests.support.prompt_engine import make_test_prompt_builder
 from dekoder.application.conversation.dto import LLMRequest, LLMResponse
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
+from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
 from dekoder.presentation.telegram.handlers.memory import PENDING_REMEMBER_KEY, REMEMBER_SAVED_MESSAGE
 from dekoder.presentation.telegram.handlers.messages import (
     UNEXPECTED_ERROR_MESSAGE,
     TextMessageHandler,
 )
-from dekoder.presentation.telegram.handlers.start import NAME_SAVED_TEMPLATE, PENDING_NAME_KEY
+from dekoder.presentation.telegram.handlers.start import (
+    NAME_SAVED_TEMPLATE,
+    NEXT_STEPS_HINT_TEMPLATE,
+    PENDING_NAME_KEY,
+)
 from dekoder.presentation.telegram.mapper import TELEGRAM_SAFE_MESSAGE_LIMIT
 from dekoder.shared.errors import LLMProviderError
 from dekoder.shared.logging import clear_request_context, configure_logging
@@ -84,15 +89,19 @@ def _make_process_user_message(provider: FakeLLMProvider) -> ProcessUserMessage:
     )
 
 
-def _make_create_memory_record() -> CreateMemoryRecordUseCase:
-    return CreateMemoryRecordUseCase(repositories=make_in_memory_repositories_factory())
-
-
-def _make_handler(
-    provider: FakeLLMProvider, create_memory_record: CreateMemoryRecordUseCase | None = None
-) -> TextMessageHandler:
+def _make_handler(provider: FakeLLMProvider) -> TextMessageHandler:
+    """
+    `create_memory_record`/`get_active_profile` делят один factory —
+    `save_display_name_from_text` (Sprint 13/14) читает активный профиль
+    того же только что созданного пользователя, которому только что
+    сохранён факт об имени; на разных factory `GetActiveProfile` не нашёл
+    бы пользователя.
+    """
+    memory_repositories = make_in_memory_repositories_factory()
     return TextMessageHandler(
-        _make_process_user_message(provider), create_memory_record or _make_create_memory_record()
+        _make_process_user_message(provider),
+        CreateMemoryRecordUseCase(repositories=memory_repositories),
+        GetActiveProfile(repositories=memory_repositories),
     )
 
 
@@ -324,8 +333,22 @@ class TestPendingNameCompletion:
 
         await handler(update, context)
 
-        update.effective_message.reply_text.assert_awaited_once_with(NAME_SAVED_TEMPLATE.format(name="Алекс"))
+        replies = [call.args[0] for call in update.effective_message.reply_text.await_args_list]
+        assert replies[0] == NAME_SAVED_TEMPLATE.format(name="Алекс")
         assert provider.received_requests == []
+
+    async def test_sends_a_next_steps_hint_naming_the_active_profile_after_saving(self) -> None:
+        """Второе сообщение после знакомства — подсказка о /profile, /model и обычном сообщении, с именем профиля."""
+        provider = FakeLLMProvider(response=_make_response())
+        handler = _make_handler(provider)
+        update = _make_update(text="Алекс")
+        context = _make_context({PENDING_NAME_KEY: True})
+
+        await handler(update, context)
+
+        replies = [call.args[0] for call in update.effective_message.reply_text.await_args_list]
+        assert len(replies) == 2
+        assert replies[1] == NEXT_STEPS_HINT_TEMPLATE.format(profile_name="Тестовый")
 
     async def test_clears_the_pending_flag_after_saving(self) -> None:
         provider = FakeLLMProvider(response=_make_response())
@@ -346,5 +369,6 @@ class TestPendingNameCompletion:
 
         await handler(update, context)
 
-        update.effective_message.reply_text.assert_awaited_once_with(NAME_SAVED_TEMPLATE.format(name="Алекс"))
+        replies = [call.args[0] for call in update.effective_message.reply_text.await_args_list]
+        assert replies[0] == NAME_SAVED_TEMPLATE.format(name="Алекс")
         assert PENDING_REMEMBER_KEY in context.user_data

@@ -18,25 +18,46 @@
 тексте confirmed-записи категории `PERSONAL`; отдельного поля/схемы «имя
 пользователя» в домене памяти нет и не оправдано (claude.md §29, YAGNI) —
 та же свободнотекстовая модель, что и любой другой факт `/remember`.
+
+`NAME_FACT_PREFIX`/`format_display_name_fact`/`extract_display_name`
+переехали в `application/memory/display_name.py` — этой же логикой
+теперь пользуется и `ProcessUserMessage` (обращение по имени в каждом
+ответе), а presentation не может быть зависимостью application-слоя
+(claude.md §6). Здесь оставлены только реэкспорт-импорты, чтобы не
+трогать существующие вызовы/тесты этого модуля.
+
+После успешного сохранения имени `save_display_name_from_text` присылает
+второе сообщение — краткую подсказку о дальнейших действиях (профиль,
+модель или обычное сообщение), с именем реально активного профиля
+(`GetActiveProfile`, тот же use case, что и у `/profile`) — не хардкод
+названия профиля по умолчанию, т.к. персональный выбор мог быть сделан
+раньше (в теории — на практике невозможно раньше первого `/start`, но
+`GetActiveProfile` — уже существующий безусловный источник истины, не
+дублируется отдельным чтением каталога).
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 from telegram import Message, Update
 from telegram.ext import ContextTypes
 
+from dekoder.application.memory.display_name import (
+    NAME_FACT_PREFIX,
+    extract_display_name,
+    format_display_name_fact,
+)
 from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.application.memory.use_cases.list_memory_records import ListMemoryRecordsUseCase
-from dekoder.domain.memory.entities import MemoryRecord
+from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
 from dekoder.domain.memory.value_objects import MemoryCategory
 from dekoder.presentation.telegram.handlers.memory import save_memory_record_from_text
-from dekoder.presentation.telegram.mapper import to_list_memory_records_command
+from dekoder.presentation.telegram.mapper import to_get_active_profile_command, to_list_memory_records_command
 from dekoder.shared.errors import DekoderError
 from dekoder.shared.logging import bind_request_context, clear_request_context, get_logger
 
 _logger = get_logger(__name__)
+
+__all__ = ["NAME_FACT_PREFIX", "StartCommandHandler", "save_display_name_from_text"]
 
 CAPABILITIES_MESSAGE = (
     "Здравствуйте! Я — персональный AI-ассистент «Декодер».\n"
@@ -51,26 +72,19 @@ ASK_NAME_MESSAGE = "Как я могу к вам обращаться?"
 FIRST_TIME_GREETING = f"{CAPABILITIES_MESSAGE}\n\n{ASK_NAME_MESSAGE}"
 RETURNING_GREETING_TEMPLATE = "С возвращением, {name}!\n\n" + CAPABILITIES_MESSAGE
 NAME_SAVED_TEMPLATE = "Приятно познакомиться, {name}! Буду обращаться к вам так."
+NEXT_STEPS_HINT_TEMPLATE = (
+    "Чтобы продолжить, вы можете выбрать профиль (/profile), выбрать модель (/model) "
+    "или просто написать сообщение — и я отвечу. Сейчас включён профиль «{profile_name}»."
+)
+NEXT_STEPS_HINT_FALLBACK = (
+    "Чтобы продолжить, вы можете выбрать профиль (/profile), выбрать модель (/model) "
+    "или просто написать сообщение — и я отвечу."
+)
 
 # Ключ в context.user_data — тот же принцип, что PENDING_REMEMBER_KEY
 # (handlers/memory.py): выставляется StartCommandHandler, читается и
 # снимается TextMessageHandler (presentation/telegram/handlers/messages.py).
 PENDING_NAME_KEY = "awaiting_display_name"
-
-# Метка, по которой факт об имени отличается среди PERSONAL-записей памяти
-# при следующем /start — обычный текстовый префикс, не сериализация.
-NAME_FACT_PREFIX = "Обращение к пользователю: "
-
-
-def _format_name_fact(name: str) -> str:
-    return f"{NAME_FACT_PREFIX}{name}"
-
-
-def _extract_known_name(records: Sequence[MemoryRecord]) -> str | None:
-    for record in records:
-        if record.category is MemoryCategory.PERSONAL and record.text.startswith(NAME_FACT_PREFIX):
-            return record.text[len(NAME_FACT_PREFIX) :].strip()
-    return None
 
 
 class StartCommandHandler:
@@ -113,22 +127,61 @@ class StartCommandHandler:
         finally:
             clear_request_context()
 
-        return _extract_known_name(result.records)
+        return extract_display_name(result.records)
 
 
 async def save_display_name_from_text(
     create_memory_record: CreateMemoryRecordUseCase,
+    get_active_profile: GetActiveProfile,
     update: Update,
     message: Message,
     raw_name: str,
 ) -> None:
-    """Завершает знакомство: сохраняет имя как `PERSONAL`-факт памяти (см. `TextMessageHandler`/`PENDING_NAME_KEY`)."""
+    """
+    Завершает знакомство: сохраняет имя как `PERSONAL`-факт памяти (см.
+    `TextMessageHandler`/`PENDING_NAME_KEY`), затем — только если факт
+    реально сохранён, не после сообщения об ошибке — присылает вторым
+    сообщением подсказку о дальнейших действиях.
+    """
     name = raw_name.strip()
-    await save_memory_record_from_text(
+    saved = await save_memory_record_from_text(
         create_memory_record,
         update,
         message,
-        _format_name_fact(name),
+        format_display_name_fact(name),
         category=MemoryCategory.PERSONAL,
         success_message=NAME_SAVED_TEMPLATE.format(name=name),
     )
+    if saved:
+        await message.reply_text(await _build_next_steps_hint(get_active_profile, update))
+
+
+async def _build_next_steps_hint(get_active_profile: GetActiveProfile, update: Update) -> str:
+    """
+    Имя активного профиля — не хардкод: пользователь только что создан
+    (`save_memory_record_from_text` уже вызвал `get_or_create_by_telegram_user_id`),
+    `GetActiveProfile` вернёт профиль с `is_default=True` (тот же путь,
+    что и `/profile`). Сбой этого чтения не должен ломать знакомство —
+    та же устойчивость, что и `StartCommandHandler._find_known_name`:
+    при ошибке просто отправляется подсказка без названия профиля.
+    """
+    try:
+        command = to_get_active_profile_command(update)
+    except ValueError:
+        return NEXT_STEPS_HINT_FALLBACK
+
+    bind_request_context(correlation_id=command.correlation_id)
+    try:
+        result = await get_active_profile.execute(command)
+    except DekoderError as error:
+        _logger.warning("start_get_active_profile_failed", error_code=error.code)
+        return NEXT_STEPS_HINT_FALLBACK
+    except Exception:
+        _logger.exception("start_get_active_profile_unexpected_error")
+        return NEXT_STEPS_HINT_FALLBACK
+    finally:
+        clear_request_context()
+
+    if result.profile is None:
+        return NEXT_STEPS_HINT_FALLBACK
+    return NEXT_STEPS_HINT_TEMPLATE.format(profile_name=result.profile.name)

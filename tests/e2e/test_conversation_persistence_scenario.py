@@ -65,6 +65,7 @@ from dekoder.application.conversation.use_cases.clear_conversation import ClearC
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
 from dekoder.application.conversation.use_cases.start_new_conversation import StartNewConversation
 from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
+from dekoder.application.profile.use_cases.get_active_profile import GetActiveProfile
 from dekoder.bootstrap.repositories import (
     build_conversation_repositories_factory,
     build_conversation_repository,
@@ -171,7 +172,10 @@ def _build_application(
     """
     application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
     register_message_handler(
-        application, process_user_message, CreateMemoryRecordUseCase(repositories=repositories_factory)
+        application,
+        process_user_message,
+        CreateMemoryRecordUseCase(repositories=repositories_factory),
+        GetActiveProfile(repositories=repositories_factory),
     )
     if start_new_conversation is not None:
         register_new_conversation_handler(application, start_new_conversation)
