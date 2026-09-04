@@ -104,14 +104,34 @@ from dekoder.presentation.telegram.handlers.start import StartCommandHandler
 
 
 def build_telegram_application(bot_token: str, proxy_url: str | None = None) -> Application:
-    """Собирает `Application` без обработчиков — все команды (включая `/start`, Sprint 13) регистрируются отдельно."""
-    # python-telegram-bot по умолчанию даёт connect/read_timeout=5с — недостаточно
-    # на нестабильном сетевом пути до api.telegram.org, приводит к TimedOut даже
-    # на успешно обработанных командах (ответ готов, но не успевает уйти).
-    # proxy_url — TelegramSettings.proxy_url (TELEGRAM_PROXY_URL), нужен только
-    # когда сеть развёртывания не имеет прямого доступа к Telegram.
+    """
+    Собирает `Application` без обработчиков — все команды (включая `/start`, Sprint 13) регистрируются отдельно.
+
+    python-telegram-bot по умолчанию даёт connect/read_timeout=5с — недостаточно
+    на нестабильном сетевом пути до api.telegram.org, приводит к TimedOut даже
+    на успешно обработанных командах (ответ готов, но не успевает уйти).
+    proxy_url — TelegramSettings.proxy_url (TELEGRAM_PROXY_URL), нужен только
+    когда сеть развёртывания не имеет прямого доступа к Telegram.
+
+    Критично: `telegram.Bot` держит ДВА независимых HTTP-клиента —
+    `request` (обычные вызовы: sendMessage, getMe и т.д.) и отдельный
+    `get_updates_request` (только для long-polling `getUpdates`). Если
+    передать прокси только в `.request(...)`, как было раньше,
+    `ApplicationBuilder`/`Bot` молча создают `get_updates_request` со
+    значениями по умолчанию — БЕЗ прокси и с read_timeout=5с. Именно
+    этот клиент отвечает за приём входящих сообщений (`run_polling()`);
+    он пытался идти к Telegram напрямую, что на сети некоторых
+    развёртываний блокируется — бот выглядел «живым» (обычные вызовы
+    через `request` с прокси работали), но не получал ни одного
+    сообщения, стабильно падая по TimedOut ровно на ~5с. Обнаружено и
+    подтверждено вживую на проде 2026-09-04 — до этой правки баг
+    маскировался под «нестабильность сетевого туннеля».
+    `connection_pool_size=1` — как в дефолтном `get_updates_request`
+    самого PTB (одно долгоживущее соединение, не пул).
+    """
     request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0, proxy=proxy_url)
-    return ApplicationBuilder().token(bot_token).request(request).build()
+    get_updates_request = HTTPXRequest(connection_pool_size=1, connect_timeout=30.0, read_timeout=30.0, proxy=proxy_url)
+    return ApplicationBuilder().token(bot_token).request(request).get_updates_request(get_updates_request).build()
 
 
 def register_start_handler(application: Application, list_memory_records: ListMemoryRecordsUseCase) -> None:
