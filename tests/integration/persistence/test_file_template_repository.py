@@ -193,14 +193,29 @@ class TestSeedTemplates:
             "additional_constraints_line",
         }
 
-    def test_memory_and_knowledge_placeholders_reference_future_stages(self) -> None:
+    def test_knowledge_placeholder_still_references_its_future_stage(self) -> None:
+        """RAG-плейсхолдер (Этап 8) — не менялся этой задачей, в отличие от memory_placeholder ниже."""
+        repository = FileTemplateRepository()
+
+        knowledge = repository.get("knowledge_placeholder")
+
+        assert "Этап 8" in knowledge.text
+
+    def test_memory_placeholder_no_longer_claims_to_be_disconnected(self) -> None:
+        """
+        Память подключена и активна с Sprint 5 — старый текст «Этап 7 —
+        сейчас не подключена» (правился до 2026-09-04) не просто устарел,
+        а активно вводил модель в заблуждение насчёт статуса секции
+        (живая проверка на проде нашла это как один из факторов, почему
+        `openai/gpt-4o-mini` игнорировала инструкцию обращаться по имени).
+        """
         repository = FileTemplateRepository()
 
         memory = repository.get("memory_placeholder")
-        knowledge = repository.get("knowledge_placeholder")
 
-        assert "Этап 7" in memory.text
-        assert "Этап 8" in knowledge.text
+        assert "Этап 7" not in memory.text
+        assert "не подключена" not in memory.text
+        assert "Подтверждённые факты о пользователе" in memory.text
 
     def test_templates_dir_constant_points_at_seed_directory(self) -> None:
         assert DEFAULT_TEMPLATES_DIR.name == "templates"
