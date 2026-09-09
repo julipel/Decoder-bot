@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from dekoder.presentation.telegram.bot import build_telegram_application
+from unittest.mock import AsyncMock, MagicMock
+
+from telegram import Update
+
+from dekoder.presentation.telegram.bot import (
+    UNHANDLED_ERROR_MESSAGE,
+    _handle_unhandled_error,
+    build_telegram_application,
+)
 
 _TEST_BOT_TOKEN = "123456:test-token"  # noqa: S105 - фиктивный токен для теста, не секрет
 
@@ -40,3 +48,53 @@ class TestBuildTelegramApplication:
         application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
 
         assert application.bot._request[0] is not application.bot._request[1]
+
+    def test_registers_a_global_error_handler(self) -> None:
+        """
+        Без глобального error handler'а необработанное исключение внутри
+        обработчика приводит к полной тишине для пользователя —
+        python-telegram-bot по умолчанию просто логирует ошибку своим
+        внутренним логгером и не отвечает в чат (найдено при
+        расследовании жалобы «после приветствия — тишина», 2026-09-09).
+        """
+        application = build_telegram_application(bot_token=_TEST_BOT_TOKEN)
+
+        assert application.error_handlers
+
+
+class TestHandleUnhandledError:
+    async def test_replies_with_neutral_message_when_update_has_a_message(self) -> None:
+        update = MagicMock(spec=Update)
+        update.effective_message = MagicMock()
+        update.effective_message.reply_text = AsyncMock()
+        context = MagicMock()
+        context.error = RuntimeError("boom")
+
+        await _handle_unhandled_error(update, context)
+
+        update.effective_message.reply_text.assert_awaited_once_with(UNHANDLED_ERROR_MESSAGE)
+
+    async def test_does_not_raise_when_update_has_no_message(self) -> None:
+        update = MagicMock(spec=Update)
+        update.effective_message = None
+        context = MagicMock()
+        context.error = RuntimeError("boom")
+
+        await _handle_unhandled_error(update, context)  # не должно бросить исключение
+
+    async def test_does_not_raise_when_update_is_not_a_telegram_update(self) -> None:
+        """`context.error` может быть поднято до создания `Update` (например, в самом PTB) — update тогда `None`."""
+        context = MagicMock()
+        context.error = RuntimeError("boom")
+
+        await _handle_unhandled_error(None, context)  # не должно бросить исключение
+
+    async def test_does_not_raise_when_replying_itself_fails(self) -> None:
+        """Сбой самой отправки ответа (например, Telegram недоступен) не должен ронять обработку дальше."""
+        update = MagicMock(spec=Update)
+        update.effective_message = MagicMock()
+        update.effective_message.reply_text = AsyncMock(side_effect=RuntimeError("network error"))
+        context = MagicMock()
+        context.error = RuntimeError("boom")
+
+        await _handle_unhandled_error(update, context)  # не должно бросить исключение
