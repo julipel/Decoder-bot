@@ -175,6 +175,46 @@ class TestSuccessfulGeneration:
         assert response.output_tokens == 0
 
 
+class TestWebSearchPlugin:
+    """
+    Внеспринтовая задача (2026-09-09): `LLMRequest.web_search` переводится
+    в `plugins=[{"id": "web"}]` (OpenRouter-совместимый параметр,
+    поддержан RouterAI). `web_search=False` (штатный случай) не должен
+    добавлять `plugins` в тело запроса вовсе — не отправлять `null`.
+    """
+
+    @respx.mock
+    async def test_adds_web_plugin_when_web_search_enabled(self, client: httpx.AsyncClient) -> None:
+        route = respx.post(CHAT_COMPLETIONS_URL).mock(return_value=httpx.Response(200, json=_success_payload()))
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test", provider_id=TEST_PROVIDER_ID)
+        request = LLMRequest(
+            system_prompt="Ты — ассистент.",
+            messages=[LLMMessage(role="user", content="Привет!")],
+            model_id=ModelId("openai/gpt-4o-mini"),
+            temperature=0.7,
+            max_tokens=512,
+            correlation_id=CorrelationId("corr-1"),
+            web_search=True,
+        )
+
+        await adapter.generate(request)
+
+        sent = route.calls.last.request
+        body = json.loads(sent.content)
+        assert body["plugins"] == [{"id": "web"}]
+
+    @respx.mock
+    async def test_omits_plugins_key_entirely_when_web_search_disabled(self, client: httpx.AsyncClient) -> None:
+        route = respx.post(CHAT_COMPLETIONS_URL).mock(return_value=httpx.Response(200, json=_success_payload()))
+        adapter = OpenAiCompatibleLLMAdapter(client=client, api_key="sk-test", provider_id=TEST_PROVIDER_ID)
+
+        await adapter.generate(_make_request())
+
+        sent = route.calls.last.request
+        body = json.loads(sent.content)
+        assert "plugins" not in body
+
+
 class TestLlmGenerationCompletedLog:
     """Sprint 9, задача S9-06 (ADR-9.5): метрика вызова LLM на успешном пути."""
 

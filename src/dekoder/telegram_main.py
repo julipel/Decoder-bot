@@ -73,6 +73,11 @@ fail-fast (см. `bootstrap/application.py` — тот же принцип дл�
 тоже внутри `post_init`, сразу после обработчиков `/remember`/`/memory`,
 поверх уже собранных `container.list_available_models`/
 `container.get_selected_model`/`container.select_model`.
+
+Внеспринтовая задача (2026-09-09) по той же причине: обработчики команды
+`/websearch` (`presentation/telegram/bot.py::register_web_search_handlers`)
+регистрируются тоже внутри `post_init`, сразу после `/model`, поверх уже
+собранных `container.get_web_search_status`/`container.set_web_search_enabled`.
 """
 
 from __future__ import annotations
@@ -93,6 +98,7 @@ from dekoder.presentation.telegram.bot import (
     register_new_conversation_handler,
     register_profile_handlers,
     register_start_handler,
+    register_web_search_handlers,
     set_bot_commands,
 )
 from dekoder.shared.config import Settings
@@ -165,6 +171,11 @@ def main() -> None:
             container.list_available_models,
             container.get_selected_model,
             container.select_model,
+        )
+        register_web_search_handlers(
+            app,
+            container.get_web_search_status,
+            container.set_web_search_enabled,
         )
 
     async def _shutdown(_: Application) -> None:

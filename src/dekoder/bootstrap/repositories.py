@@ -53,6 +53,7 @@ from dekoder.application.conversation.ports import (
     ConversationRepositoriesFactory,
     ConversationRepository,
     MessageRepository,
+    WebSearchSettingRepository,
 )
 from dekoder.application.knowledge.ports import KnowledgeDocumentRepository
 from dekoder.application.memory.ports import MemoryRepository
@@ -67,6 +68,9 @@ from dekoder.infrastructure.persistence.profile_repository import SQLAlchemyProf
 from dekoder.infrastructure.persistence.session import session_scope
 from dekoder.infrastructure.persistence.sqlalchemy_model_selection_repository import (
     SQLAlchemyModelSelectionRepository,
+)
+from dekoder.infrastructure.persistence.sqlalchemy_web_search_setting_repository import (
+    SQLAlchemyWebSearchSettingRepository,
 )
 from dekoder.infrastructure.persistence.user_repository import SQLAlchemyUserRepository
 
@@ -101,6 +105,11 @@ def build_model_selection_repository(session: AsyncSession) -> ModelSelectionRep
     return SQLAlchemyModelSelectionRepository(session)
 
 
+def build_web_search_setting_repository(session: AsyncSession) -> WebSearchSettingRepository:
+    """Собирает `WebSearchSettingRepository` поверх переданной `AsyncSession` (внеспринтовая задача, 2026-09-09)."""
+    return SQLAlchemyWebSearchSettingRepository(session)
+
+
 def build_knowledge_document_repository(session: AsyncSession) -> KnowledgeDocumentRepository:
     """Собирает `KnowledgeDocumentRepository` поверх переданной `AsyncSession` (Sprint 6, задача S6-09)."""
     return SQLAlchemyKnowledgeDocumentRepository(session)
@@ -128,6 +137,7 @@ def build_conversation_repositories_factory(
                 profiles=build_profile_repository(session),
                 memory=build_memory_repository(session),
                 model_selection=build_model_selection_repository(session),
+                web_search=build_web_search_setting_repository(session),
             )
 
     return _open_repositories

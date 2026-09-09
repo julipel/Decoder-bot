@@ -22,6 +22,7 @@ from tests.support.fake_conversation_repositories import (
     FakeMemoryRepository,
     FakeModelSelectionRepository,
     FakeProfileRepository,
+    FakeWebSearchSettingRepository,
     make_default_profile,
 )
 from tests.support.fake_knowledge_repositories import FakeKnowledgeSearchService
@@ -204,10 +205,12 @@ def _make_repositories_factory(
     profiles: FakeProfileRepository | None = None,
     memory: FakeMemoryRepository | None = None,
     model_selection: FakeModelSelectionRepository | None = None,
+    web_search: FakeWebSearchSettingRepository | None = None,
 ) -> ConversationRepositoriesFactory:
     profiles = profiles if profiles is not None else FakeProfileRepository()
     memory = memory if memory is not None else FakeMemoryRepository()
     model_selection = model_selection if model_selection is not None else FakeModelSelectionRepository()
+    web_search = web_search if web_search is not None else FakeWebSearchSettingRepository()
 
     @asynccontextmanager
     async def _factory() -> AsyncIterator[ConversationRepositories]:
@@ -218,6 +221,7 @@ def _make_repositories_factory(
             profiles=profiles,
             memory=memory,
             model_selection=model_selection,
+            web_search=web_search,
         )
 
     return _factory
@@ -246,7 +250,7 @@ def _make_command(
 
 
 class _Repos:
-    __slots__ = ("users", "conversations", "messages", "profiles", "memory", "model_selection")
+    __slots__ = ("users", "conversations", "messages", "profiles", "memory", "model_selection", "web_search")
 
     def __init__(
         self,
@@ -256,6 +260,7 @@ class _Repos:
         profiles: FakeProfileRepository,
         memory: FakeMemoryRepository,
         model_selection: FakeModelSelectionRepository,
+        web_search: FakeWebSearchSettingRepository,
     ) -> None:
         self.users = users
         self.conversations = conversations
@@ -263,6 +268,7 @@ class _Repos:
         self.profiles = profiles
         self.memory = memory
         self.model_selection = model_selection
+        self.web_search = web_search
 
 
 def _make_use_case(
@@ -275,6 +281,7 @@ def _make_use_case(
     profiles: FakeProfileRepository | None = None,
     memory: FakeMemoryRepository | None = None,
     model_selection: FakeModelSelectionRepository | None = None,
+    web_search: FakeWebSearchSettingRepository | None = None,
     knowledge_search: KnowledgeSearchService | None = None,
     model_catalog: ModelCatalogRepository | None = None,
     max_relevant_memory: int = 5,
@@ -285,9 +292,10 @@ def _make_use_case(
     profiles = profiles if profiles is not None else FakeProfileRepository()
     memory = memory if memory is not None else FakeMemoryRepository()
     model_selection = model_selection if model_selection is not None else FakeModelSelectionRepository()
+    web_search = web_search if web_search is not None else FakeWebSearchSettingRepository()
     knowledge_search = knowledge_search if knowledge_search is not None else FakeKnowledgeSearchService()
     model_catalog = model_catalog if model_catalog is not None else default_test_catalog(default_model)
-    factory = _make_repositories_factory(users, conversations, messages, profiles, memory, model_selection)
+    factory = _make_repositories_factory(users, conversations, messages, profiles, memory, model_selection, web_search)
     use_case = ProcessUserMessage(
         llm_provider=provider,
         repositories=factory,
@@ -299,7 +307,7 @@ def _make_use_case(
         max_tokens=512,
         max_relevant_memory=max_relevant_memory,
     )
-    return use_case, _Repos(users, conversations, messages, profiles, memory, model_selection)
+    return use_case, _Repos(users, conversations, messages, profiles, memory, model_selection, web_search)
 
 
 class TestNewUser:
@@ -600,6 +608,68 @@ class TestModelResolution:
         await use_case.execute(_make_command(telegram_user_id=1004, model_id=None))
 
         assert provider.received_requests[0].model_id == ModelId("openai/gpt-4o-mini")
+
+
+class TestWebSearchResolution:
+    """
+    Внеспринтовая задача (2026-09-09): персональный переключатель
+    веб-поиска (`repositories.web_search.get_enabled`) применяется
+    независимо от разрешённого `model_id`, читается тем же приёмом, что и
+    `model_selection` — внутри транзакции 1.
+    """
+
+    async def test_llm_request_web_search_false_by_default(self) -> None:
+        """Отсутствие записи для пользователя — штатное «выключено» (`LLMRequest.web_search` по умолчанию `False`)."""
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider)
+
+        await use_case.execute(_make_command(telegram_user_id=2001))
+
+        assert provider.received_requests[0].web_search is False
+
+    async def test_llm_request_web_search_true_when_enabled(self) -> None:
+        users = FakeUserRepository()
+        user = await users.get_or_create_by_telegram_user_id(2002)
+        web_search = FakeWebSearchSettingRepository({user.id: True})
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, users=users, web_search=web_search)
+
+        await use_case.execute(_make_command(telegram_user_id=2002))
+
+        assert provider.received_requests[0].web_search is True
+
+    async def test_web_search_applies_regardless_of_selected_model(self) -> None:
+        """Веб-поиск — не свойство конкретной модели каталога, применяется вместе с любым разрешённым `model_id`."""
+        selected_model = make_ai_model("anthropic/claude-3.5-sonnet", availability=ModelAvailability.AVAILABLE)
+        catalog = FakeModelCatalogRepository([make_ai_model("openai/gpt-4o-mini"), selected_model])
+        users = FakeUserRepository()
+        user = await users.get_or_create_by_telegram_user_id(2003)
+        model_selection = FakeModelSelectionRepository({user.id: selected_model.model_id})
+        web_search = FakeWebSearchSettingRepository({user.id: True})
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(
+            provider, users=users, model_selection=model_selection, web_search=web_search, model_catalog=catalog
+        )
+
+        await use_case.execute(_make_command(telegram_user_id=2003, model_id=None))
+
+        request = provider.received_requests[0]
+        assert request.model_id == selected_model.model_id
+        assert request.web_search is True
+
+    async def test_two_users_keep_independent_web_search_settings(self) -> None:
+        users = FakeUserRepository()
+        user_a = await users.get_or_create_by_telegram_user_id(2004)
+        await users.get_or_create_by_telegram_user_id(2005)
+        web_search = FakeWebSearchSettingRepository({user_a.id: True})
+        provider = FakeLLMProvider(response=_make_response())
+        use_case, _ = _make_use_case(provider, users=users, web_search=web_search)
+
+        await use_case.execute(_make_command(telegram_user_id=2004))
+        await use_case.execute(_make_command(telegram_user_id=2005))
+
+        assert provider.received_requests[0].web_search is True
+        assert provider.received_requests[1].web_search is False
 
 
 class TestLLMError:
