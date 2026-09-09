@@ -61,6 +61,33 @@ class LLMProvider(Protocol):
 
 
 @runtime_checkable
+class WebSearchSettingRepository(Protocol):
+    """
+    `@runtime_checkable` — как у `LLMProvider`/`ConversationRepository`.
+
+    Персональный переключатель веб-поиска (внеспринтовая задача,
+    2026-09-09) — включается/выключается командой `/websearch`,
+    применяется ко ВСЕМ последующим сообщениям пользователя независимо от
+    выбранной модели (RouterAI реализует веб-поиск как middleware поверх
+    любой модели агрегатора — подтверждено эмпирически, не свойство
+    конкретной модели каталога, поэтому без отдельного поля в `AIModel`).
+
+    Стиль — как `ModelSelectionRepository`: у связи «пользователь →
+    включён ли веб-поиск» нет собственного поведения, только атомарная
+    замена значения; отдельная доменная сущность не создаётся (по тому же
+    прецеденту, что и `user_active_models`, ADR-7.5).
+    """
+
+    async def get_enabled(self, user_id: UUID) -> bool:
+        """Возвращает `True`, если пользователь включил веб-поиск; отсутствие записи — штатное «выключено»."""
+        ...
+
+    async def set_enabled(self, user_id: UUID, enabled: bool) -> None:
+        """Атомарно устанавливает персональный переключатель — upsert по `user_id`."""
+        ...
+
+
+@runtime_checkable
 class ConversationRepository(Protocol):
     """
     `@runtime_checkable` — как у `LLMProvider`/`UserRepository`: позволяет
@@ -220,6 +247,14 @@ class ConversationRepositories:
     case'ы каталога моделей (`application/model_catalog/use_cases/*`)
     читают это поле через собственную короткую транзакцию, не
     `ModelCatalogRepository` (тот внедряется отдельно, ADR-7.4).
+
+    `web_search` добавлен внеспринтовой задачей (2026-09-09) тем же
+    приёмом — `ProcessUserMessage` читает `repositories.web_search.
+    get_enabled(user.id)` внутри той же транзакции 1, сразу после
+    разрешения `model_id`; use case'ы переключателя (`GetWebSearchStatus`/
+    `SetWebSearchEnabled`, `application/conversation/use_cases/`) читают
+    его через собственную короткую транзакцию, как `GetSelectedModel`/
+    `SelectModel`.
     """
 
     users: UserRepository
@@ -228,6 +263,7 @@ class ConversationRepositories:
     profiles: ProfileRepository
     memory: MemoryRepository
     model_selection: ModelSelectionRepository
+    web_search: WebSearchSettingRepository
 
 
 ConversationRepositoriesFactory = Callable[[], AbstractAsyncContextManager[ConversationRepositories]]

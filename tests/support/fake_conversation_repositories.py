@@ -285,6 +285,27 @@ class FakeMemoryRepository:
             del self._by_id[record_id]
 
 
+class FakeWebSearchSettingRepository:
+    """
+    In-memory fake порта `WebSearchSettingRepository` (внеспринтовая
+    задача, 2026-09-09).
+
+    `set_enabled` — upsert по `user_id`, тем же приёмом, что и реальный
+    `SQLAlchemyWebSearchSettingRepository`/`user_web_search_settings`.
+    Отсутствие записи для пользователя — штатное «выключено» (`False`),
+    не исключение.
+    """
+
+    def __init__(self, settings: dict[UUID, bool] | None = None) -> None:
+        self._by_user: dict[UUID, bool] = dict(settings) if settings is not None else {}
+
+    async def get_enabled(self, user_id: UUID) -> bool:
+        return self._by_user.get(user_id, False)
+
+    async def set_enabled(self, user_id: UUID, enabled: bool) -> None:
+        self._by_user[user_id] = enabled
+
+
 class FakeModelSelectionRepository:
     """
     In-memory fake порта `ModelSelectionRepository` (Sprint 7, задача
@@ -311,6 +332,7 @@ def make_in_memory_repositories_factory(
     profiles: FakeProfileRepository | None = None,
     memory: FakeMemoryRepository | None = None,
     model_selection: FakeModelSelectionRepository | None = None,
+    web_search: FakeWebSearchSettingRepository | None = None,
 ) -> ConversationRepositoriesFactory:
     """
     Собирает `ConversationRepositoriesFactory` поверх in-memory fake-реализаций.
@@ -323,6 +345,7 @@ def make_in_memory_repositories_factory(
     profiles = profiles if profiles is not None else FakeProfileRepository()
     memory = memory if memory is not None else FakeMemoryRepository()
     model_selection = model_selection if model_selection is not None else FakeModelSelectionRepository()
+    web_search = web_search if web_search is not None else FakeWebSearchSettingRepository()
 
     @asynccontextmanager
     async def _factory() -> AsyncIterator[ConversationRepositories]:
@@ -333,6 +356,7 @@ def make_in_memory_repositories_factory(
             profiles=profiles,
             memory=memory,
             model_selection=model_selection,
+            web_search=web_search,
         )
 
     return _factory

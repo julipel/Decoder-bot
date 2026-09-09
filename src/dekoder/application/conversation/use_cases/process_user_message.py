@@ -216,9 +216,14 @@ class ProcessUserMessage:
     async def execute(self, command: ProcessUserMessageCommand) -> ProcessUserMessageResult:
         message_text = self._validate_message_text(command.message_text)
 
-        conversation_id, profile, memory_records, display_name, model_id = await self._save_user_message(
-            command.telegram_user_id, message_text, command.model_id
-        )
+        (
+            conversation_id,
+            profile,
+            memory_records,
+            display_name,
+            model_id,
+            web_search_enabled,
+        ) = await self._save_user_message(command.telegram_user_id, message_text, command.model_id)
         history = await self._load_history(conversation_id)
         knowledge_results = await self._search_knowledge(message_text.value)
 
@@ -238,6 +243,7 @@ class ProcessUserMessage:
             temperature=temperature,
             max_tokens=max_tokens,
             correlation_id=command.correlation_id,
+            web_search=web_search_enabled,
         )
         response = await self._llm_provider.generate(request)
 
@@ -256,7 +262,7 @@ class ProcessUserMessage:
 
     async def _save_user_message(
         self, telegram_user_id: int, message_text: MessageText, override_model_id: ModelId | None
-    ) -> tuple[UUID, UserProfile, Sequence[MemoryRecord], str | None, ModelId]:
+    ) -> tuple[UUID, UserProfile, Sequence[MemoryRecord], str | None, ModelId, bool]:
         """
         Транзакция 1 (backlog_2.md §9): получить/создать пользователя,
         получить/создать его активный диалог, прочитать его активный
@@ -272,8 +278,9 @@ class ProcessUserMessage:
         докстринг модуля).
 
         Возвращает `(conversation_id, profile, memory_records, display_name,
-        model_id)` (Sprint 4, задача S4-07, ADR-4.8; Sprint 5, задача
-        S5-06, ADR-5.6; Sprint 7, задача S7-06, ADR-7.7) — раньше
+        model_id, web_search_enabled)` (Sprint 4, задача S4-07, ADR-4.8;
+        Sprint 5, задача S5-06, ADR-5.6; Sprint 7, задача S7-06, ADR-7.7;
+        `web_search_enabled` — внеспринтовая задача 2026-09-09) — раньше
         (Sprint 2/3) возвращался уже вычисленный `system_instruction: str`
         с fallback-логикой внутри этого use case; теперь этот use case
         передаёт весь `UserProfile` и уже отфильтрованные/отсортированные
@@ -283,6 +290,11 @@ class ProcessUserMessage:
         рендер секции 4 промпта — ответственность `PromptBuilder`, не
         здесь; `model_id` уже полностью разрешён (приоритет + откат при
         недоступности, ADR-7.7) — `execute()` использует его как есть.
+        `web_search_enabled` — персональный переключатель пользователя
+        (`repositories.web_search.get_enabled`, тем же приёмом, что и
+        `model_selection`), применяется независимо от разрешённого
+        `model_id` — не свойство конкретной модели каталога (RouterAI
+        реализует веб-поиск как middleware поверх любой модели).
 
         `display_name` читается отдельным вызовом `list_confirmed_by_user`
         (без `limit`), а не берётся из уже прочитанного `memory_records`:
@@ -302,9 +314,10 @@ class ProcessUserMessage:
             confirmed_memory = await repositories.memory.list_confirmed_by_user(user.id)
             display_name = extract_display_name(confirmed_memory)
             model_id = await self._resolve_model_id(repositories, user.id, override_model_id)
+            web_search_enabled = await repositories.web_search.get_enabled(user.id)
             user_message = self._build_message(conversation.id, MessageRole.USER, message_text.value)
             await repositories.messages.save(user_message)
-            return conversation.id, profile, memory_records, display_name, model_id
+            return conversation.id, profile, memory_records, display_name, model_id, web_search_enabled
 
     async def _resolve_model_id(
         self, repositories: ConversationRepositories, user_id: UUID, override_model_id: ModelId | None

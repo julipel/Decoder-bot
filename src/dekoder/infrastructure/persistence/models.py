@@ -20,6 +20,7 @@ from dekoder.infrastructure.persistence.profile_orm import ProfileORM
 from dekoder.infrastructure.persistence.user_active_model_orm import UserActiveModelORM
 from dekoder.infrastructure.persistence.user_active_profile_orm import UserActiveProfileORM
 from dekoder.infrastructure.persistence.user_orm import UserORM
+from dekoder.infrastructure.persistence.user_web_search_setting_orm import UserWebSearchSettingORM
 
 __all__ = [
     "ConversationORM",
@@ -30,4 +31,5 @@ __all__ = [
     "UserActiveModelORM",
     "UserActiveProfileORM",
     "UserORM",
+    "UserWebSearchSettingORM",
 ]

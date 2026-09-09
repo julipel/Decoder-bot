@@ -18,10 +18,12 @@ from dekoder.presentation.telegram.mapper import (
     to_delete_memory_record_command,
     to_get_active_profile_command,
     to_get_selected_model_command,
+    to_get_web_search_status_command,
     to_list_available_models_command,
     to_list_memory_records_command,
     to_select_model_command,
     to_select_profile_command,
+    to_set_web_search_enabled_command,
     to_start_new_conversation_command,
 )
 
@@ -345,6 +347,57 @@ class TestToSelectModelCommand:
 
         with pytest.raises(ValueError):
             to_select_model_command(update, ModelId("anthropic/claude-3.5-sonnet"))
+
+
+class TestToGetWebSearchStatusCommand:
+    def test_maps_telegram_user_id(self) -> None:
+        command = to_get_web_search_status_command(_make_update(user_id=999))
+
+        assert command.telegram_user_id == 999
+
+    def test_generates_a_correlation_id(self) -> None:
+        command = to_get_web_search_status_command(_make_update())
+
+        assert command.correlation_id
+
+    def test_generates_a_fresh_correlation_id_each_call(self) -> None:
+        first = to_get_web_search_status_command(_make_update())
+        second = to_get_web_search_status_command(_make_update())
+
+        assert first.correlation_id != second.correlation_id
+
+    def test_raises_when_user_is_missing(self) -> None:
+        update = _make_update()
+        update.effective_user = None
+
+        with pytest.raises(ValueError):
+            to_get_web_search_status_command(update)
+
+
+class TestToSetWebSearchEnabledCommand:
+    def test_maps_telegram_user_id_and_enabled_from_callback_query(self) -> None:
+        command = to_set_web_search_enabled_command(_make_callback_update(user_id=999), True)
+
+        assert command.telegram_user_id == 999
+        assert command.enabled is True
+
+    def test_generates_a_correlation_id(self) -> None:
+        command = to_set_web_search_enabled_command(_make_callback_update(), False)
+
+        assert command.correlation_id
+
+    def test_generates_a_fresh_correlation_id_each_call(self) -> None:
+        first = to_set_web_search_enabled_command(_make_callback_update(), True)
+        second = to_set_web_search_enabled_command(_make_callback_update(), True)
+
+        assert first.correlation_id != second.correlation_id
+
+    def test_raises_when_callback_query_is_missing(self) -> None:
+        update = _make_callback_update()
+        update.callback_query = None
+
+        with pytest.raises(ValueError):
+            to_set_web_search_enabled_command(update, True)
 
 
 class TestSplitMessage:

@@ -141,7 +141,9 @@ from qdrant_client import AsyncQdrantClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from dekoder.application.conversation.use_cases.clear_conversation import ClearConversation
+from dekoder.application.conversation.use_cases.get_web_search_status import GetWebSearchStatus
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
+from dekoder.application.conversation.use_cases.set_web_search_enabled import SetWebSearchEnabled
 from dekoder.application.conversation.use_cases.start_new_conversation import StartNewConversation
 from dekoder.application.health.use_cases.check_external_services import CheckExternalServicesHealthUseCase
 from dekoder.application.knowledge.services.semantic_search_service import SemanticSearchService
@@ -189,6 +191,8 @@ class ApplicationContainer:
     list_available_models: ListAvailableModels
     get_selected_model: GetSelectedModel
     select_model: SelectModel
+    get_web_search_status: GetWebSearchStatus
+    set_web_search_enabled: SetWebSearchEnabled
     create_profile: CreateProfile
     update_profile: UpdateProfile
     deactivate_profile: DeactivateProfile
@@ -267,6 +271,8 @@ def build_container(
     list_available_models = ListAvailableModels(repositories=repositories_factory, model_catalog=model_catalog)
     get_selected_model = GetSelectedModel(repositories=repositories_factory, model_catalog=model_catalog)
     select_model = SelectModel(repositories=repositories_factory, model_catalog=model_catalog)
+    get_web_search_status = GetWebSearchStatus(repositories=repositories_factory)
+    set_web_search_enabled = SetWebSearchEnabled(repositories=repositories_factory)
     create_profile = CreateProfile(repositories=repositories_factory)
     update_profile = UpdateProfile(repositories=repositories_factory)
     deactivate_profile = DeactivateProfile(repositories=repositories_factory)
@@ -303,6 +309,8 @@ def build_container(
         list_available_models=list_available_models,
         get_selected_model=get_selected_model,
         select_model=select_model,
+        get_web_search_status=get_web_search_status,
+        set_web_search_enabled=set_web_search_enabled,
         create_profile=create_profile,
         update_profile=update_profile,
         deactivate_profile=deactivate_profile,

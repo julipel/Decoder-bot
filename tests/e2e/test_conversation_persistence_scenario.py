@@ -74,6 +74,7 @@ from dekoder.bootstrap.repositories import (
     build_model_selection_repository,
     build_profile_repository,
     build_user_repository,
+    build_web_search_setting_repository,
 )
 from dekoder.domain.conversation.entities import Message
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
@@ -683,6 +684,7 @@ def _make_faulty_repositories_factory(
                 profiles=build_profile_repository(session),
                 memory=build_memory_repository(session),
                 model_selection=build_model_selection_repository(session),
+                web_search=build_web_search_setting_repository(session),
             )
 
     return _open_repositories

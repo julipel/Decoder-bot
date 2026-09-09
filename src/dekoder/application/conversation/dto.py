@@ -157,6 +157,14 @@ class LLMRequest:
     temperature: float
     max_tokens: int
     correlation_id: CorrelationId
+    # Персональный переключатель веб-поиска (внеспринтовая задача,
+    # 2026-09-09) — `False` по умолчанию, trailing-поле по аналогии с
+    # `ProcessUserMessageResult.prompt_template_versions`, существующие
+    # частично-позиционные вызовы конструктора продолжают работать без
+    # изменений. `OpenAiCompatibleLLMAdapter` переводит его в
+    # провайдер-специфичный `plugins`-параметр запроса (не домен/application
+    # — claude.md §10).
+    web_search: bool = False
 
 
 @dataclass(frozen=True)
@@ -199,3 +207,28 @@ class ClearConversationResult:
     status: ClearConversationStatus
     conversation_id: UUID | None
     deleted_count: int
+
+
+@dataclass(frozen=True)
+class GetWebSearchStatusCommand:
+    telegram_user_id: int
+    correlation_id: CorrelationId
+
+
+@dataclass(frozen=True)
+class GetWebSearchStatusResult:
+    """`enabled=False` — пользователь неизвестен ИЛИ переключатель не был включён; оба штатные, не исключение."""
+
+    enabled: bool
+
+
+@dataclass(frozen=True)
+class SetWebSearchEnabledCommand:
+    telegram_user_id: int
+    enabled: bool
+    correlation_id: CorrelationId
+
+
+@dataclass(frozen=True)
+class SetWebSearchEnabledResult:
+    enabled: bool

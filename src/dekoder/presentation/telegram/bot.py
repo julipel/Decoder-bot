@@ -63,6 +63,13 @@ Sprint 13: `/start` перестаёт быть исключением, не з�
 поэтому по той же причине (event loop/БД) регистрируется отдельной
 функцией `register_start_handler`, тоже вызываемой внутри `post_init` —
 не в `build_telegram_application()`, как было до этого спринта.
+
+Внеспринтовая задача (2026-09-09): по той же причине команда `/websearch`
+(+ callback переключения) регистрируется отдельной функцией
+`register_web_search_handlers`, поверх уже собранных
+`GetWebSearchStatus`/`SetWebSearchEnabled`. Callback регистрируется с
+`pattern=r"^websearch:(on|off)$"` — дизъюнктен с уже занятыми
+`pattern=r"^model:"`/`pattern=r"^profile:"`/`pattern=r"^memory_delete:"`.
 """
 
 from __future__ import annotations
@@ -79,7 +86,9 @@ from telegram.ext import (
 from telegram.request import HTTPXRequest
 
 from dekoder.application.conversation.use_cases.clear_conversation import ClearConversation
+from dekoder.application.conversation.use_cases.get_web_search_status import GetWebSearchStatus
 from dekoder.application.conversation.use_cases.process_user_message import ProcessUserMessage
+from dekoder.application.conversation.use_cases.set_web_search_enabled import SetWebSearchEnabled
 from dekoder.application.conversation.use_cases.start_new_conversation import StartNewConversation
 from dekoder.application.memory.use_cases.create_memory_record import CreateMemoryRecordUseCase
 from dekoder.application.memory.use_cases.delete_memory_record import DeleteMemoryRecordUseCase
@@ -101,6 +110,7 @@ from dekoder.presentation.telegram.handlers.model import ModelCommandHandler, Mo
 from dekoder.presentation.telegram.handlers.new_conversation import NewConversationHandler
 from dekoder.presentation.telegram.handlers.profile import ProfileCommandHandler, ProfileSelectionCallbackHandler
 from dekoder.presentation.telegram.handlers.start import StartCommandHandler
+from dekoder.presentation.telegram.handlers.web_search import WebSearchCommandHandler, WebSearchToggleCallbackHandler
 
 
 def build_telegram_application(bot_token: str, proxy_url: str | None = None) -> Application:
@@ -216,6 +226,18 @@ def register_model_handlers(
     )
 
 
+def register_web_search_handlers(
+    application: Application,
+    get_web_search_status: GetWebSearchStatus,
+    set_web_search_enabled: SetWebSearchEnabled,
+) -> None:
+    """Регистрирует команду `/websearch` и callback переключения поверх уже собранных use case'ов."""
+    application.add_handler(CommandHandler("websearch", WebSearchCommandHandler(get_web_search_status)))
+    application.add_handler(
+        CallbackQueryHandler(WebSearchToggleCallbackHandler(set_web_search_enabled), pattern=r"^websearch:(on|off)$")
+    )
+
+
 _BOT_COMMANDS = (
     BotCommand("start", "Начать работу с ботом"),
     BotCommand("new", "Начать новый диалог"),
@@ -224,6 +246,7 @@ _BOT_COMMANDS = (
     BotCommand("model", "Выбрать AI-модель"),
     BotCommand("remember", "Сохранить факт в долговременную память"),
     BotCommand("memory", "Показать сохранённые факты памяти"),
+    BotCommand("websearch", "Включить/выключить веб-поиск"),
 )
 
 

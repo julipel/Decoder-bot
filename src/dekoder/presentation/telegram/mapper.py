@@ -54,7 +54,9 @@ from telegram import Update
 
 from dekoder.application.conversation.dto import (
     ClearConversationCommand,
+    GetWebSearchStatusCommand,
     ProcessUserMessageCommand,
+    SetWebSearchEnabledCommand,
     StartNewConversationCommand,
 )
 from dekoder.application.memory.dto import (
@@ -268,6 +270,33 @@ def to_select_model_command(update: Update, model_id: ModelId) -> SelectModelCom
     return SelectModelCommand(
         telegram_user_id=query.from_user.id,
         model_id=model_id,
+        correlation_id=CorrelationId(str(uuid.uuid4())),
+    )
+
+
+def to_get_web_search_status_command(update: Update) -> GetWebSearchStatusCommand:
+    """Строит команду для обработчика `/websearch` — тот же принцип, что и `to_get_selected_model_command()`."""
+    user = update.effective_user
+    if user is None:
+        raise ValueError("Update does not contain a known user")
+
+    return GetWebSearchStatusCommand(telegram_user_id=user.id, correlation_id=CorrelationId(str(uuid.uuid4())))
+
+
+def to_set_web_search_enabled_command(update: Update, enabled: bool) -> SetWebSearchEnabledCommand:
+    """
+    Строит команду для callback'а переключения веб-поиска из входящего
+    `Update`. `telegram_user_id` извлекается из
+    `update.callback_query.from_user` — тот же принцип, что и
+    `to_select_model_command()`.
+    """
+    query = update.callback_query
+    if query is None or query.from_user is None:
+        raise ValueError("Update does not contain a callback query from a known user")
+
+    return SetWebSearchEnabledCommand(
+        telegram_user_id=query.from_user.id,
+        enabled=enabled,
         correlation_id=CorrelationId(str(uuid.uuid4())),
     )
 

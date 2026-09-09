@@ -29,6 +29,13 @@ Sprint 2 (задача S2-06): `LLMRequest.messages` несёт всю исто�
 `ChatCompletionRequestMessage` один в один (`role`/`content`), никакой
 дополнительной интерпретации истории здесь нет: решение о том, какие
 сообщения входят в контекст, принимает `ProcessUserMessage`, не адаптер.
+
+Внеспринтовая задача (2026-09-09): `LLMRequest.web_search: bool`
+переводится в `plugins=[{"id": "web"}]` (OpenRouter-совместимый параметр,
+поддержан RouterAI, эмпирически проверен вживую) — включает веб-поиск как
+middleware поверх любой модели агрегатора. `None` (веб-поиск выключен,
+штатный случай) не попадает в тело запроса (`model_dump(exclude_none=True)`),
+а не отправляется как `"plugins": null`.
 """
 
 from __future__ import annotations
@@ -42,6 +49,7 @@ from dekoder.application.conversation.dto import LLMRequest, LLMResponse
 from dekoder.application.conversation.ports import LLMProvider
 from dekoder.domain.conversation.value_objects import ModelId, ProviderId
 from dekoder.infrastructure.llm.schemas import (
+    ChatCompletionPlugin,
     ChatCompletionRequest,
     ChatCompletionRequestMessage,
     ChatCompletionResponse,
@@ -81,6 +89,7 @@ class OpenAiCompatibleLLMAdapter(LLMProvider):
             ],
             temperature=request.temperature,
             max_tokens=request.max_tokens,
+            plugins=[ChatCompletionPlugin(id="web")] if request.web_search else None,
         )
 
         started_at = time.monotonic()
@@ -105,7 +114,10 @@ class OpenAiCompatibleLLMAdapter(LLMProvider):
         try:
             return await self._client.post(
                 _CHAT_COMPLETIONS_PATH,
-                json=payload.model_dump(),
+                # exclude_none — `plugins` отсутствует в теле запроса, если
+                # веб-поиск выключен (штатный случай для подавляющего
+                # большинства запросов), а не отправляется как `null`.
+                json=payload.model_dump(exclude_none=True),
                 headers=self._build_headers(),
             )
         except httpx.TimeoutException as error:

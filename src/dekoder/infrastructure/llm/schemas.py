@@ -20,11 +20,25 @@ class ChatCompletionRequestMessage(BaseModel):
     content: str
 
 
+class ChatCompletionPlugin(BaseModel):
+    """
+    Провайдер-специфичное расширение Chat Completions API (OpenRouter-
+    совместимый `plugins`-параметр, поддержан RouterAI, ADR: внеспринтовая
+    задача 2026-09-09) — единственное применение сейчас: `{"id": "web"}`
+    включает веб-поиск как middleware поверх любой модели агрегатора.
+    Живёт только в `infrastructure/` (docstring модуля) — application не
+    знает об этом формате, только о `LLMRequest.web_search: bool`.
+    """
+
+    id: str
+
+
 class ChatCompletionRequest(BaseModel):
     model: str
     messages: list[ChatCompletionRequestMessage]
     temperature: float
     max_tokens: int
+    plugins: list[ChatCompletionPlugin] | None = None
 
 
 class ChatCompletionResponseMessage(BaseModel):

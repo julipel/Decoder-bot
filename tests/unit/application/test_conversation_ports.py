@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from dekoder.application.conversation.ports import ConversationRepositories
+from dekoder.application.conversation.ports import ConversationRepositories, WebSearchSettingRepository
 from dekoder.application.memory.ports import MemoryRepository
 
 
@@ -49,3 +49,36 @@ class TestMemoryRepositoryProtocol:
             async def delete(self, record_id: object, user_id: object) -> None: ...
 
         assert isinstance(_Fake(), MemoryRepository)
+
+
+class TestConversationRepositoriesHasWebSearchField:
+    """Внеспринтовая задача (2026-09-09) — `WebSearchSettingRepository` встроен в существующую группу репозиториев."""
+
+    def test_web_search_field_present_with_correct_type(self) -> None:
+        field_names = {field.name: field.type for field in dataclasses.fields(ConversationRepositories)}
+
+        assert "web_search" in field_names
+
+    def test_web_search_setting_repository_protocol_is_the_declared_type(self) -> None:
+        annotations = ConversationRepositories.__annotations__
+
+        assert annotations["web_search"] == "WebSearchSettingRepository"
+
+    def test_no_second_repositories_factory_type_exists(self) -> None:
+        import dekoder.application.conversation.ports as ports_module
+
+        factory_like_names = [name for name in dir(ports_module) if "RepositoriesFactory" in name]
+        assert factory_like_names == ["ConversationRepositoriesFactory"]
+
+
+class TestWebSearchSettingRepositoryProtocol:
+    def test_is_runtime_checkable_protocol(self) -> None:
+        assert hasattr(WebSearchSettingRepository, "_is_protocol")
+        assert WebSearchSettingRepository._is_protocol is True
+
+    def test_structural_conformance_of_a_fake(self) -> None:
+        class _Fake:
+            async def get_enabled(self, user_id: object) -> bool: ...
+            async def set_enabled(self, user_id: object, enabled: bool) -> None: ...
+
+        assert isinstance(_Fake(), WebSearchSettingRepository)
