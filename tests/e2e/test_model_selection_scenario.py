@@ -12,7 +12,7 @@ test_profile_scenario.py`: реальный `telegram.ext.Application`, реал
 `PromptBuildResult.system_prompt`.
 
 Боевой каталог (см. `infrastructure/model_catalog/catalog.json`) читается
-как есть для AVAILABLE-моделей: `openai/gpt-5.6-luna-pro` (умолчание,
+как есть для AVAILABLE-моделей: `yandex/aliceai-llm` (умолчание,
 см. `.env::LLM_PROVIDER_DEFAULT_MODEL`), `anthropic/claude-sonnet-5`
 (другие `temperature`/`max_tokens`).
 
@@ -96,7 +96,7 @@ from dekoder.shared.logging import clear_request_context, configure_logging
 _TEST_BOT_TOKEN = "123456:test-token"  # noqa: S105 - фиктивный токен для теста, не секрет
 
 # Значения из боевого сид-каталога (infrastructure/model_catalog/catalog.json) — см. докстринг модуля.
-_DEFAULT_MODEL_ID = ModelId("openai/gpt-5.6-luna-pro")
+_DEFAULT_MODEL_ID = ModelId("yandex/aliceai-llm")
 _SONNET_MODEL_ID = ModelId("anthropic/claude-sonnet-5")
 
 # Синтетическая запись (Sprint 13) — существует только в тестовой копии

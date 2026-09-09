@@ -110,5 +110,33 @@
       "temperature": 0.7,
       "max_tokens": 4096
     }
+  },
+  {
+    "model_id": "yandex/gpt-pro-5.1",
+    "display_name": "YandexGPT Pro 5.1",
+    "provider": "yandex",
+    "context_window": 32768,
+    "capabilities": ["text"],
+    "price_tier": "low",
+    "availability": "available",
+    "recommended_for": ["русскоязычные тексты", "бизнес-задачи"],
+    "default_generation_settings": {
+      "temperature": 0.7,
+      "max_tokens": 2048
+    }
+  },
+  {
+    "model_id": "yandex/aliceai-llm",
+    "display_name": "Alice AI LLM",
+    "provider": "yandex",
+    "context_window": 32768,
+    "capabilities": ["text"],
+    "price_tier": "medium",
+    "availability": "available",
+    "recommended_for": ["общие задачи", "русскоязычное общение"],
+    "default_generation_settings": {
+      "temperature": 0.7,
+      "max_tokens": 2048
+    }
   }
 ]
