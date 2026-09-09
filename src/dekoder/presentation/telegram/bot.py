@@ -74,12 +74,13 @@ Sprint 13: `/start` перестаёт быть исключением, не з�
 
 from __future__ import annotations
 
-from telegram import BotCommand
+from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
     ApplicationBuilder,
     CallbackQueryHandler,
     CommandHandler,
+    ContextTypes,
     MessageHandler,
     filters,
 )
@@ -111,6 +112,9 @@ from dekoder.presentation.telegram.handlers.new_conversation import NewConversat
 from dekoder.presentation.telegram.handlers.profile import ProfileCommandHandler, ProfileSelectionCallbackHandler
 from dekoder.presentation.telegram.handlers.start import StartCommandHandler
 from dekoder.presentation.telegram.handlers.web_search import WebSearchCommandHandler, WebSearchToggleCallbackHandler
+from dekoder.shared.logging import get_logger
+
+_logger = get_logger(__name__)
 
 
 def build_telegram_application(bot_token: str, proxy_url: str | None = None) -> Application:
@@ -141,7 +145,49 @@ def build_telegram_application(bot_token: str, proxy_url: str | None = None) -> 
     """
     request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0, proxy=proxy_url)
     get_updates_request = HTTPXRequest(connection_pool_size=1, connect_timeout=30.0, read_timeout=30.0, proxy=proxy_url)
-    return ApplicationBuilder().token(bot_token).request(request).get_updates_request(get_updates_request).build()
+    application = (
+        ApplicationBuilder().token(bot_token).request(request).get_updates_request(get_updates_request).build()
+    )
+    application.add_error_handler(_handle_unhandled_error)
+    return application
+
+
+UNHANDLED_ERROR_MESSAGE = "Произошла непредвиденная ошибка. Попробуйте ещё раз чуть позже."
+
+
+async def _handle_unhandled_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Глобальный fallback (внеспринтовая задача, 2026-09-09) — без него
+    исключение, не пойманное внутри самого обработчика (`Command`/
+    `MessageHandler`/`CallbackQueryHandler`), приводило к полной тишине
+    для пользователя: python-telegram-bot по умолчанию просто логирует
+    ошибку своим внутренним логгером и НИЧЕГО не отвечает в чат.
+    Найдено при расследовании жалобы «после приветствия — тишина»
+    (`/start` → двухшаговое сохранение имени, `handlers/start.py`): ни
+    один из существующих try/except в этой цепочке не покрывает
+    исключения вне уже обёрнутых блоков (например, внутри самого
+    `python-telegram-bot`, при отправке ответа и т.п.) — такие ошибки
+    были полностью невидимы и для пользователя, и для нашего
+    структурированного лога.
+
+    Регистрируется через `application.add_error_handler(...)` —
+    единственный глобальный перехватчик на весь `Application`, не
+    привязан к конкретному обработчику. Не заменяет точечную обработку
+    `DekoderError` внутри самих хендлеров (`except DekoderError`/
+    `except Exception` в `messages.py`/`model.py`/`web_search.py` и др.)
+    — это последний рубеж для того, что через них не прошло.
+    """
+    error = context.error
+    _logger.error(
+        "telegram_update_unhandled_error",
+        error=repr(error),
+        error_type=type(error).__name__ if error is not None else None,
+    )
+    if isinstance(update, Update) and update.effective_message is not None:
+        try:
+            await update.effective_message.reply_text(UNHANDLED_ERROR_MESSAGE)
+        except Exception:
+            _logger.error("telegram_error_handler_reply_failed")
 
 
 def register_start_handler(application: Application, list_memory_records: ListMemoryRecordsUseCase) -> None:
