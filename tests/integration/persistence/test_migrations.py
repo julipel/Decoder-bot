@@ -168,16 +168,20 @@ class TestInitialMigrationCycle:
 class TestProfileCatalogSeedMigration:
     """Тесты сид-миграции каталога профилей (задача S3-04, ADR-3.4)."""
 
-    def test_upgrade_head_creates_exactly_four_active_system_profiles(
+    def test_upgrade_head_creates_exactly_five_active_system_profiles(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """
+        4 сид-профиля (S3-04) + «Без роли» (внеспринтовая миграция
+        2195e1a0a840, 2026-09-09) — на текущем head их пять.
+        """
         db_path = tmp_path / "seed-upgrade.db"
         config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
 
         command.upgrade(config, "head")
 
         rows = _profile_rows(db_path)
-        assert len(rows) == 4
+        assert len(rows) == 5
         assert all(is_active for _, _, _, is_active, _ in rows)
         assert all(is_system for _, _, _, _, is_system in rows)
 
@@ -204,7 +208,8 @@ class TestProfileCatalogSeedMigration:
         config = _alembic_config(f"sqlite+aiosqlite:///{db_path}", monkeypatch)
 
         command.upgrade(config, "head")
-        assert len(_profile_rows(db_path)) == 4
+        # 4 сид-профиля (S3-04) + «Без роли» (2195e1a0a840, 2026-09-09).
+        assert len(_profile_rows(db_path)) == 5
 
         # Явный целевой ревижн "14bf7e3ae815" (схема profiles/user_active_
         # profiles, до сид-миграции 27c4e9f2a103), а не относительный "-1":
@@ -232,7 +237,8 @@ class TestProfileCatalogSeedMigration:
         ids_after = {row[0] for row in _profile_rows(db_path)}
 
         assert ids_before == ids_after
-        assert len(ids_after) == 4
+        # 4 сид-профиля (S3-04) + «Без роли» (2195e1a0a840, 2026-09-09).
+        assert len(ids_after) == 5
 
 
 class TestMemoryRecordsSchemaMigration:
@@ -435,7 +441,14 @@ class TestProfileCatalogPersonaMigration:
 
         rows = _profile_rows(db_path)
         names = {row[1] for row in rows}
-        assert names == {"Честный друг", "Психолог-наставник", "Личный ассистент", "Контент-стратег"}
+        # На реальном head (после 2195e1a0a840, 2026-09-09) к 4 персонам добавляется «Без роли».
+        assert names == {
+            "Честный друг",
+            "Психолог-наставник",
+            "Личный ассистент",
+            "Контент-стратег",
+            "Без роли",
+        }
 
         default_rows = [row for row in rows if row[2] == 1]
         assert len(default_rows) == 1
@@ -482,5 +495,12 @@ class TestProfileCatalogPersonaMigration:
         names_after = {row[1] for row in rows_after}
 
         assert ids_after == ids_before
-        assert len(ids_after) == 4
-        assert names_after == {"Честный друг", "Психолог-наставник", "Личный ассистент", "Контент-стратег"}
+        # 4 сид-профиля (S3-04) + «Без роли» (2195e1a0a840, 2026-09-09).
+        assert len(ids_after) == 5
+        assert names_after == {
+            "Честный друг",
+            "Психолог-наставник",
+            "Личный ассистент",
+            "Контент-стратег",
+            "Без роли",
+        }
